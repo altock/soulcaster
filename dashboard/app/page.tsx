@@ -1,184 +1,71 @@
-'use client';
-
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { ClusterListItem } from '@/types';
 
-/**
- * Renders a client-side page that lists issue clusters and handles loading, error, and empty states.
- *
- * Fetches clusters from /api/clusters on mount and displays them in a table with title, summary,
- * count, source icons, status badges, and a link to view details.
- *
- * @returns The React element for the clusters list page.
- */
-export default function ClustersListPage() {
-  const [clusters, setClusters] = useState<ClusterListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchClusters();
-  }, []);
-
-  const fetchClusters = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch('/api/clusters');
-      if (!response.ok) {
-        throw new Error('Failed to fetch clusters');
-      }
-      const data = await response.json();
-      setClusters(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusBadgeClass = (status: ClusterListItem['status']) => {
-    const baseClass = 'px-2 py-1 text-xs font-medium rounded-full';
-    switch (status) {
-      case 'new':
-        return `${baseClass} bg-blue-100 text-blue-800`;
-      case 'fixing':
-        return `${baseClass} bg-yellow-100 text-yellow-800`;
-      case 'pr_opened':
-        return `${baseClass} bg-green-100 text-green-800`;
-      case 'failed':
-        return `${baseClass} bg-red-100 text-red-800`;
-      default:
-        return `${baseClass} bg-gray-100 text-gray-800`;
-    }
-  };
-
-  const getSourceIcon = (source: 'reddit' | 'sentry') => {
-    switch (source) {
-      case 'reddit':
-        return '🗨️';
-      case 'sentry':
-        return '⚠️';
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading clusters...</div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-md bg-red-50 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error loading clusters</h3>
-            <div className="mt-2 text-sm text-red-700">{error}</div>
-            <button
-              onClick={fetchClusters}
-              className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
-            >
-              Try again
-            </button>
-          </div>
+export default function LandingPage() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[80vh]">
+      {/* Hero Section */}
+      <div className="text-center max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-20">
+        <h1 className="text-4xl sm:text-6xl font-extrabold text-gray-900 tracking-tight mb-6">
+          <span className="block">FeedbackAgent</span>
+          <span className="block text-blue-600 mt-2">The Self-Healing Dev Loop</span>
+        </h1>
+        <p className="mt-4 text-xl text-gray-600 max-w-2xl mx-auto">
+          Automate your bug triage and fixing workflow. From user report to pull request in minutes, not days.
+        </p>
+        <div className="mt-10 flex justify-center gap-4">
+          <Link
+            href="/clusters"
+            className="px-8 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 md:py-4 md:text-lg md:px-10 shadow-lg transition-all hover:scale-105"
+          >
+            Enter Dashboard
+          </Link>
+          <a
+            href="https://github.com/altock/soulcaster"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-8 py-3 border border-gray-300 text-base font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 md:py-4 md:text-lg md:px-10 shadow-sm transition-all hover:scale-105"
+          >
+            View on GitHub
+          </a>
         </div>
       </div>
-    );
-  }
 
-  if (clusters.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <h3 className="text-lg font-medium text-gray-900">No clusters found</h3>
-        <p className="mt-2 text-sm text-gray-500">
-          Start ingesting feedback from Reddit or Sentry to see clusters appear here.
-        </p>
-      </div>
-    );
-  }
+      {/* Features Grid */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {/* Feature 1: Listen */}
+          <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 text-2xl">
+              👂
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Listen</h3>
+            <p className="text-gray-600">
+              Automatically ingests feedback from Reddit communities and Sentry error reports in real-time.
+            </p>
+          </div>
 
-  return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">Issue Clusters</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Clustered feedback from Reddit and Sentry
-        </p>
-      </div>
+          {/* Feature 2: Think */}
+          <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+            <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4 text-2xl">
+              🧠
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Think</h3>
+            <p className="text-gray-600">
+              Intelligent agents cluster related issues, summarize the problem, and identify the root cause.
+            </p>
+          </div>
 
-      <div className="bg-white shadow-sm rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Title
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Summary
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Count
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Sources
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {clusters.map((cluster) => (
-              <tr key={cluster.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4">
-                  <Link
-                    href={`/clusters/${cluster.id}`}
-                    className="text-sm font-medium text-blue-600 hover:text-blue-800"
-                  >
-                    {cluster.title}
-                  </Link>
-                </td>
-                <td className="px-6 py-4">
-                  <div className="text-sm text-gray-900 line-clamp-2">
-                    {cluster.summary}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{cluster.count}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex gap-1">
-                    {Array.from(new Set(cluster.sources)).map((source) => (
-                      <span key={source} title={source}>
-                        {getSourceIcon(source)}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={getStatusBadgeClass(cluster.status)}>
-                    {cluster.status.replace('_', ' ')}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <Link
-                    href={`/clusters/${cluster.id}`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
-                  >
-                    View Details
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          {/* Feature 3: Act */}
+          <div className="bg-white p-6 rounded-xl shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
+            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4 text-2xl">
+              ⚡
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Act</h3>
+            <p className="text-gray-600">
+              Generates code fixes and opens Pull Requests automatically. Review and merge with confidence.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
