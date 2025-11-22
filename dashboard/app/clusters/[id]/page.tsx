@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import type { ClusterDetail } from '@/types';
+import type { ClusterDetail, FeedbackSource } from '@/types';
 
 /**
  * Client React component that renders details for a single cluster, its feedback items, and actions related to generating fixes.
@@ -83,12 +83,14 @@ export default function ClusterDetailPage() {
     }
   };
 
-  const getSourceIcon = (source: 'reddit' | 'sentry') => {
+  const getSourceIcon = (source: FeedbackSource) => {
     switch (source) {
       case 'reddit':
         return '🗨️ Reddit';
       case 'sentry':
         return '⚠️ Sentry';
+      case 'manual':
+        return '✍️ Manual';
     }
   };
 
