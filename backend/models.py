@@ -1,7 +1,7 @@
 """Domain models for FeedbackAgent data ingestion layer."""
 
 from datetime import datetime
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -31,3 +31,19 @@ class FeedbackItem(BaseModel):
     body: str
     metadata: Dict = {}
     created_at: datetime
+
+
+class IssueCluster(BaseModel):
+    """Represents a cluster of related feedback items."""
+
+    id: UUID
+    title: str
+    summary: str
+    feedback_ids: List[UUID]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    embedding_centroid: Optional[List[float]] = None
+    github_branch: Optional[str] = None
+    github_pr_url: Optional[str] = None
+    error_message: Optional[str] = None

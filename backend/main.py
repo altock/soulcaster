@@ -7,13 +7,20 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 """
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .models import FeedbackItem
-from .store import add_feedback_item
+from .models import FeedbackItem, IssueCluster
+from .store import (
+    add_cluster,
+    add_feedback_item,
+    get_all_clusters,
+    get_feedback_item,
+    get_cluster,
+    update_cluster,
+)
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -119,3 +126,101 @@ def ingest_manual(request: ManualIngestRequest):
     )
     add_feedback_item(item)
     return {"status": "ok", "id": str(item.id)}
+
+
+@app.get("/clusters")
+def list_clusters():
+    """List all issue clusters with aggregated metadata."""
+
+    clusters = get_all_clusters()
+    results = []
+    for cluster in clusters:
+        feedback_items = [get_feedback_item(fid) for fid in cluster.feedback_ids]
+        sources = sorted({item.source for item in feedback_items if item})
+        results.append(
+            {
+                "id": cluster.id,
+                "title": cluster.title,
+                "summary": cluster.summary,
+                "count": len(cluster.feedback_ids),
+                "status": cluster.status,
+                "sources": sources,
+                "github_pr_url": cluster.github_pr_url,
+            }
+        )
+    return results
+
+
+@app.get("/clusters/{cluster_id}")
+def get_cluster_detail(cluster_id: UUID):
+    """Retrieve a cluster with its feedback items."""
+
+    cluster = get_cluster(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    feedback_items = [get_feedback_item(fid) for fid in cluster.feedback_ids]
+    response = cluster.model_dump()
+    response["feedback_items"] = [item for item in feedback_items if item]
+    return response
+
+
+@app.post("/clusters/{cluster_id}/start_fix")
+def start_cluster_fix(cluster_id: UUID):
+    """Begin fix generation for a cluster (stub implementation)."""
+
+    cluster = get_cluster(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    updated_cluster = update_cluster(cluster_id, status="fixing")
+    return {"status": "ok", "message": "Fix generation started", "cluster_id": updated_cluster.id}
+
+
+def seed_mock_data():
+    """Seed a handful of feedback items and clusters for local testing."""
+
+    now = datetime.now(timezone.utc)
+
+    feedback_one = FeedbackItem(
+        id=uuid4(),
+        source="reddit",
+        external_id="t3_mock1",
+        title="Export crashes on Safari",
+        body="App crashes when exporting on Safari 16.",
+        metadata={"subreddit": "mock_sub"},
+        created_at=now,
+    )
+    feedback_two = FeedbackItem(
+        id=uuid4(),
+        source="sentry",
+        external_id="evt_mock2",
+        title="TypeError in export job",
+        body="TypeError: cannot read properties of undefined",
+        metadata={},
+        created_at=now,
+    )
+    feedback_three = FeedbackItem(
+        id=uuid4(),
+        source="manual",
+        title="Export broken",
+        body="Manual report of export failing on Firefox",
+        metadata={},
+        created_at=now,
+    )
+
+    for item in (feedback_one, feedback_two, feedback_three):
+        add_feedback_item(item)
+
+    cluster = IssueCluster(
+        id=uuid4(),
+        title="Export failures",
+        summary="Users report export crashes across browsers.",
+        feedback_ids=[feedback_one.id, feedback_two.id, feedback_three.id],
+        status="new",
+        created_at=now,
+        updated_at=now,
+    )
+
+    add_cluster(cluster)
+    return {"cluster_id": cluster.id, "feedback_ids": [feedback_one.id, feedback_two.id, feedback_three.id]}
