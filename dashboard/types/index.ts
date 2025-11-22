@@ -1,18 +1,35 @@
 // Shared TypeScript types for FeedbackAgent dashboard
 
-export type FeedbackSource = 'reddit' | 'sentry';
+export type FeedbackSource = 'reddit' | 'sentry' | 'manual';
 
 export type ClusterStatus = 'new' | 'fixing' | 'pr_opened' | 'failed';
 
 export interface FeedbackItem {
   id: string;
   source: FeedbackSource;
-  external_id: string;
+  external_id?: string | null;
   title: string;
   body: string;
   metadata: Record<string, any>;
   created_at: string;
   embedding?: number[];
+}
+
+export interface FeedbackListResponse {
+  items: FeedbackItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface StatsResponse {
+  total_feedback: number;
+  by_source: {
+    reddit: number;
+    sentry: number;
+    manual: number;
+  };
+  total_clusters: number;
 }
 
 export interface IssueCluster {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
+import DashboardHeader from '@/components/DashboardHeader';
 
 /**
  * Renders a client-side page that lists issue clusters and handles loading, error, and empty states.
@@ -54,55 +55,81 @@ export default function ClustersListPage() {
     }
   };
 
-  const getSourceIcon = (source: 'reddit' | 'sentry') => {
+  const getSourceIcon = (source: 'reddit' | 'sentry' | 'manual') => {
     switch (source) {
       case 'reddit':
         return '🗨️';
       case 'sentry':
         return '⚠️';
+      case 'manual':
+        return '✍️';
     }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading clusters...</div>
-      </div>
+      <>
+        <DashboardHeader activePage="clusters" className="mb-8" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-center py-12">
+            <div className="text-gray-500">Loading clusters...</div>
+          </div>
+        </div>
+      </>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-md bg-red-50 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error loading clusters</h3>
-            <div className="mt-2 text-sm text-red-700">{error}</div>
-            <button
-              onClick={fetchClusters}
-              className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
-            >
-              Try again
-            </button>
+      <>
+        <DashboardHeader activePage="clusters" className="mb-8" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="rounded-md bg-red-50 p-4">
+            <div className="flex">
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">Error loading clusters</h3>
+                <div className="mt-2 text-sm text-red-700">{error}</div>
+                <button
+                  onClick={fetchClusters}
+                  className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
+                >
+                  Try again
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (clusters.length === 0) {
     return (
-      <div className="text-center py-12">
-        <h3 className="text-lg font-medium text-gray-900">No clusters found</h3>
-        <p className="mt-2 text-sm text-gray-500">
-          Start ingesting feedback from Reddit or Sentry to see clusters appear here.
-        </p>
-      </div>
+      <>
+        <DashboardHeader activePage="clusters" className="mb-8" />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center py-12 bg-purple-50 border border-purple-200 rounded-lg">
+            <h3 className="text-lg font-medium text-purple-900 mb-2">🧠 Clustering Not Yet Implemented</h3>
+            <p className="mt-2 text-sm text-purple-700 mb-4">
+              The clustering feature will automatically group related feedback items using AI embeddings.
+            </p>
+            <p className="text-sm text-purple-700">
+              For now, view all feedback in the{' '}
+              <Link href="/feedback" className="font-semibold underline">
+                Feedback tab
+              </Link>
+              . Clustering integration points are ready for implementation.
+            </p>
+          </div>
+        </div>
+      </>
     );
   }
 
   return (
-    <div>
+    <>
+      <DashboardHeader activePage="clusters" className="mb-8" />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="mb-6">
         <h2 className="text-lg font-semibold text-gray-900">Issue Clusters</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -181,5 +208,6 @@ export default function ClustersListPage() {
         </table>
       </div>
     </div>
+    </>
   );
 }

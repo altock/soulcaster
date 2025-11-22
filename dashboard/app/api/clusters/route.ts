@@ -20,7 +20,9 @@ export async function GET() {
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    // Backend returns { clusters: [], total: 0 }
+    // Frontend expects array directly for now
+    return NextResponse.json(data.clusters || []);
   } catch (error) {
     console.error('Error fetching clusters:', error);
     return NextResponse.json(
