@@ -5,6 +5,13 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { ClusterDetail } from '@/types';
 
+/**
+ * Client React component that renders details for a single cluster, its feedback items, and actions related to generating fixes.
+ *
+ * Displays loading and error states, the cluster summary (timestamps, source counts, GitHub links/branch, and any error message), a list of feedback items, and an action to start fix generation. While a cluster is in the "fixing" status the component polls the API for updates.
+ *
+ * @returns The rendered JSX element for the cluster detail page
+ */
 export default function ClusterDetailPage() {
   const params = useParams();
   const router = useRouter();

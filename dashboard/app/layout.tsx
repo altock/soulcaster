@@ -6,6 +6,14 @@ export const metadata: Metadata = {
   description: 'Self-healing dev loop triage dashboard',
 };
 
+/**
+ * Provides the root HTML layout for the FeedbackAgent dashboard.
+ *
+ * Renders the document scaffold including <html lang="en">, a styled <body>, a header with the dashboard title, and a main content area that hosts `children`.
+ *
+ * @param children - The React node(s) to render inside the main content area
+ * @returns The root JSX element representing the dashboard layout
+ */
 export default function RootLayout({
   children,
 }: Readonly<{

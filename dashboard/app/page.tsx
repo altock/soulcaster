@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
 
+/**
+ * Renders a client-side page that lists issue clusters and handles loading, error, and empty states.
+ *
+ * Fetches clusters from /api/clusters on mount and displays them in a table with title, summary,
+ * count, source icons, status badges, and a link to view details.
+ *
+ * @returns The React element for the clusters list page.
+ */
 export default function ClustersListPage() {
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
