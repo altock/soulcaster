@@ -55,7 +55,7 @@ export REDDIT_POLL_INTERVAL_SECONDS=300          # optional, defaults to 300s
 export BACKEND_URL="http://localhost:8000"       # where to send ingested items
 
 # Run the poller (uses Reddit's public JSON endpoints; no OAuth needed)
-python -m backend.reddit_poller
+python -m reddit_poller
 
 ## Enabling Redis (optional, Upstash-friendly)
 - By default the store is in-memory. Set `REDIS_URL` (or `UPSTASH_REDIS_URL`) to enable Redis via redis-py.

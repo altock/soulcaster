@@ -89,9 +89,9 @@ export default function ClustersListPage() {
       if (!silent) {
         alert(
           `Clustering complete!\n` +
-            `- Processed: ${result.clustered} items\n` +
-            `- New clusters: ${result.newClusters}\n` +
-            `- Updated clusters: ${result.updatedClusters || 0}`
+          `- Processed: ${result.clustered} items\n` +
+          `- New clusters: ${result.newClusters}\n` +
+          `- Updated clusters: ${result.updatedClusters || 0}`
         );
       }
     } catch (err) {
@@ -107,35 +107,8 @@ export default function ClustersListPage() {
     }
   };
 
-  const handleRunClustering = async () => {
+  const triggerClustering = async () => {
     await runClustering(false);
-  };
-
-  const getStatusBadgeClass = (status: ClusterListItem['status']) => {
-    const baseClass = 'px-2 py-1 text-xs font-medium rounded-full';
-    switch (status) {
-      case 'new':
-        return `${baseClass} bg-blue-100 text-blue-800`;
-      case 'fixing':
-        return `${baseClass} bg-yellow-100 text-yellow-800`;
-      case 'pr_opened':
-        return `${baseClass} bg-green-100 text-green-800`;
-      case 'failed':
-        return `${baseClass} bg-red-100 text-red-800`;
-      default:
-        return `${baseClass} bg-gray-100 text-gray-800`;
-    }
-  };
-
-  const getSourceIcon = (source: 'reddit' | 'sentry' | 'manual') => {
-    switch (source) {
-      case 'reddit':
-        return '🗨️';
-      case 'sentry':
-        return '⚠️';
-      case 'manual':
-        return '✍️';
-    }
   };
 
   if (loading) {
@@ -200,106 +173,134 @@ export default function ClustersListPage() {
   }
 
   return (
-    <>
+    <div className="min-h-screen bg-matrix-black pb-12">
       <DashboardHeader activePage="clusters" className="mb-8" />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="flex justify-between items-center mb-8">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Issue Clusters</h2>
-            <p className="mt-1 text-sm text-gray-500">Clustered feedback from Reddit and Sentry</p>
+            <h1 className="text-3xl font-bold text-white tracking-tight">Issue Clusters</h1>
+            <p className="mt-2 text-gray-400">
+              Grouped feedback items ready for analysis and action.
+            </p>
           </div>
-          {unclusteredCount > 0 && (
-            <button
-              onClick={handleRunClustering}
-              disabled={isClustering}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 text-sm font-medium flex items-center gap-2"
-            >
-              {isClustering ? (
-                <>
-                  <span className="animate-spin">⏳</span>
-                  Clustering...
-                </>
-              ) : (
-                <>
-                  Run Clustering
-                  <span className="px-2 py-0.5 bg-blue-500 rounded-full text-xs">
-                    {unclusteredCount}
-                  </span>
-                </>
-              )}
-            </button>
-          )}
+          <button
+            onClick={triggerClustering}
+            disabled={isClustering}
+            className={`px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${isClustering ? 'animate-pulse' : ''
+              }`}
+          >
+            {isClustering ? 'Running AI Clustering...' : 'Run Clustering'}
+          </button>
         </div>
 
-        <div className="bg-white shadow-sm rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Title
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Summary
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Count
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Sources
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {clusters.map((cluster) => (
-                <tr key={cluster.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <Link
-                      href={`/clusters/${cluster.id}`}
-                      className="text-sm font-medium text-blue-600 hover:text-blue-800"
-                    >
-                      {cluster.title}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-900 line-clamp-2">{cluster.summary}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{cluster.count}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex gap-1">
-                      {Array.from(new Set(cluster.sources)).map((source) => (
-                        <span key={source} title={source}>
-                          {getSourceIcon(source)}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={getStatusBadgeClass(cluster.status)}>
-                      {cluster.status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <Link
-                      href={`/clusters/${cluster.id}`}
-                      className="text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      View Details
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {error && (
+          <div className="rounded-lg bg-red-900/20 p-4 mb-6 border border-red-900/50">
+            <div className="flex">
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-400">Error</h3>
+                <div className="mt-2 text-sm text-red-300">{error}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="animate-in delay-200 overflow-hidden sm:p-8 hover-card-effect group bg-gradient-to-br from-emerald-500/5 to-emerald-600/10 rounded-3xl pt-6 pr-6 pb-6 pl-6 relative shadow-[0_0_60px_rgba(16,185,129,0.1)] border border-white/10">
+          <div className="pointer-events-none absolute inset-0 opacity-30">
+            <div className="absolute right-0 top-0 h-96 w-96 -translate-y-10 translate-x-10 rounded-full bg-emerald-500/10 blur-3xl"></div>
+          </div>
+
+          <div className="relative flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-normal uppercase tracking-[0.12em] text-emerald-300/70">
+                  Infrastructure Map
+                </p>
+                <h2 className="mt-1 text-2xl font-medium tracking-tight text-slate-50">
+                  Active Clusters
+                </h2>
+              </div>
+              <div className="flex gap-2">
+                <button className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-white/10">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+                    <path d="M3 3v5h5"></path>
+                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+                    <path d="M16 16h5v5"></path>
+                  </svg>
+                  Refresh
+                </button>
+                <button className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12h14"></path>
+                    <path d="M12 5v14"></path>
+                  </svg>
+                  Add Cluster
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-white/5 bg-black/40 backdrop-blur-sm">
+              <table className="w-full text-left text-sm text-slate-400">
+                <thead className="bg-white/5 text-xs uppercase text-slate-200">
+                  <tr>
+                    <th className="px-6 py-4 font-medium tracking-wider">Cluster Name</th>
+                    <th className="px-6 py-4 font-medium tracking-wider">Status</th>
+                    <th className="px-6 py-4 font-medium tracking-wider">Feedback</th>
+                    <th className="px-6 py-4 font-medium tracking-wider text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {clusters.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
+                        No clusters found. Run clustering to group feedback items.
+                      </td>
+                    </tr>
+                  ) : (
+                    clusters.map((cluster) => (
+                      <tr key={cluster.id} className="group transition-colors hover:bg-white/5">
+                        <td className="px-6 py-4 font-medium text-slate-200 group-hover:text-emerald-300 transition-colors">
+                          {cluster.title || 'Untitled Cluster'}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border ${cluster.status === 'new' || cluster.status === 'pr_opened' || cluster.status === 'fixing'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                            }`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${cluster.status === 'new' || cluster.status === 'pr_opened' || cluster.status === 'fixing'
+                              ? 'bg-emerald-400 animate-pulse'
+                              : 'bg-rose-400'
+                              }`}></span>
+                            {cluster.status.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-200">{cluster.count}</span>
+                            <span className="text-xs text-slate-500">items</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <Link
+                            href={`/clusters/${cluster.id}`}
+                            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-emerald-500 hover:text-black hover:border-emerald-500"
+                          >
+                            View Details
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M5 12h14"></path>
+                              <path d="m12 5 7 7-7 7"></path>
+                            </svg>
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
