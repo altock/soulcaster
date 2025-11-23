@@ -7,6 +7,10 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 """
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID, uuid4

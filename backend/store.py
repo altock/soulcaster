@@ -7,7 +7,7 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Any
 from uuid import UUID
 
 import requests
@@ -69,6 +69,21 @@ class UpstashRESTClient:
 
     def get(self, key: str) -> Optional[str]:
         return self._cmd("GET", key)
+
+    def hset(self, key: str, mapping: Dict[str, Any]):
+        # Upstash REST HSET supports: ["HSET", key, field1, value1, field2, value2, ...]
+        args = ["HSET", key]
+        for field, value in mapping.items():
+            args.extend([field, str(value)])
+        return self._cmd(*args)
+
+    def hgetall(self, key: str) -> Dict[str, str]:
+        # Upstash REST HGETALL returns ["field1", "value1", ...]
+        result = self._cmd("HGETALL", key)
+        if not result:
+            return {}
+        # Convert list to dict
+        return dict(zip(result[0::2], result[1::2]))
 
     def zadd(self, key: str, score: float, member: str):
         return self._cmd("ZADD", key, str(score), member)
@@ -218,10 +233,17 @@ class RedisStore:
         payload = item.model_dump()
         if isinstance(payload["created_at"], datetime):
             payload["created_at"] = _dt_to_iso(payload["created_at"])
+        
+        # Serialize metadata if present
+        if isinstance(payload.get("metadata"), dict):
+            payload["metadata"] = json.dumps(payload["metadata"])
 
-        serialized = json.dumps(payload)
+        # Use HSET (Hash) instead of SET (JSON)
+        # Convert all values to strings for HSET
+        hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        
         key = self._feedback_key(item.id)
-        self._set(key, serialized)
+        self._hset(key, hash_payload)
 
         ts = item.created_at.timestamp() if isinstance(item.created_at, datetime) else time.time()
         self._zadd(self._feedback_created_key(), ts, str(item.id))
@@ -231,21 +253,48 @@ class RedisStore:
         return item
 
     def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
-        raw = self._get(self._feedback_key(item_id))
-        if not raw:
-            return None
-        data = json.loads(raw)
+        # Try HGETALL first (new format)
+        key = self._feedback_key(item_id)
+        data = self._hgetall(key)
+        
+        if not data:
+            # Fallback for old data or if HGETALL failed silently?
+            # Actually, if key exists as string, HGETALL might error or return empty.
+            # But let's assume we migrated or only care about new data for now.
+            # If empty, try GET (legacy JSON string)
+            raw = self._get(key)
+            if raw:
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    return None
+            else:
+                return None
+
+        # Parse fields
         if isinstance(data.get("created_at"), str):
             data["created_at"] = _iso_to_dt(data["created_at"])
+        
+        # Parse metadata from JSON string if it's a string
+        if isinstance(data.get("metadata"), str):
+            try:
+                data["metadata"] = json.loads(data["metadata"])
+            except json.JSONDecodeError:
+                data["metadata"] = {}
+
         return FeedbackItem(**data)
 
     def get_all_feedback_items(self) -> List[FeedbackItem]:
         ids = self._zrange(self._feedback_created_key(), 0, -1)
         items: List[FeedbackItem] = []
         for item_id in ids:
-            item = self.get_feedback_item(UUID(item_id))
-            if item:
-                items.append(item)
+            try:
+                # ids are stored as strings in redis, convert to UUID
+                item = self.get_feedback_item(UUID(item_id))
+                if item:
+                    items.append(item)
+            except ValueError:
+                continue
         return items
 
     def clear_feedback_items(self):
@@ -265,34 +314,76 @@ class RedisStore:
         for field in ("created_at", "updated_at"):
             if isinstance(payload.get(field), datetime):
                 payload[field] = _dt_to_iso(payload[field])
-        serialized = json.dumps(payload)
+        
+        # Serialize centroid if present
+        if isinstance(payload.get("centroid"), list):
+            payload["centroid"] = json.dumps(payload["centroid"])
+            
+        # Exclude feedback_ids from Hash (stored in set)
+        if "feedback_ids" in payload:
+            del payload["feedback_ids"]
+
+        # Use HSET (Hash)
+        hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
         key = self._cluster_key(cluster.id)
-        self._set(key, serialized)
+        self._hset(key, hash_payload)
+        
         self._sadd(self._cluster_all_key(), str(cluster.id))
+        
         # store cluster items set
         items_key = self._cluster_items_key(cluster.id)
-        for fid in cluster.feedback_ids:
-            self._sadd(items_key, str(fid))
+        if cluster.feedback_ids:
+            for fid in cluster.feedback_ids:
+                self._sadd(items_key, str(fid))
         return cluster
 
     def get_cluster(self, cluster_id: UUID) -> Optional[IssueCluster]:
-        raw = self._get(self._cluster_key(cluster_id))
-        if not raw:
-            return None
-        data = json.loads(raw)
+        key = self._cluster_key(cluster_id)
+        # Try HGETALL first
+        data = self._hgetall(key)
+        
+        if not data:
+            # Fallback to GET (legacy)
+            raw = self._get(key)
+            if raw:
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    return None
+            else:
+                return None
+        
+        # Parse fields
         for field in ("created_at", "updated_at"):
             if isinstance(data.get(field), str):
                 data[field] = _iso_to_dt(data[field])
-        # feedback_ids stored as strings; ensure UUID conversion handled by Pydantic
+
+        # Parse centroid
+        if isinstance(data.get("centroid"), str):
+            try:
+                data["centroid"] = json.loads(data["centroid"])
+            except json.JSONDecodeError:
+                data["centroid"] = []
+        
+        # Fetch feedback_ids from set if not present (Hash doesn't have it, JSON does)
+        if "feedback_ids" not in data or not data["feedback_ids"]:
+            items_key = self._cluster_items_key(cluster_id)
+            ids = self._smembers(items_key)
+            data["feedback_ids"] = ids
+
         return IssueCluster(**data)
 
     def get_all_clusters(self) -> List[IssueCluster]:
         ids = self._smembers(self._cluster_all_key())
         clusters: List[IssueCluster] = []
         for cid in ids:
-            cluster = self.get_cluster(UUID(cid))
-            if cluster:
-                clusters.append(cluster)
+            try:
+                # ids are stored as strings in redis, convert to UUID
+                cluster = self.get_cluster(UUID(cid))
+                if cluster:
+                    clusters.append(cluster)
+            except ValueError:
+                continue
         return clusters
 
     def update_cluster(self, cluster_id: UUID, **updates) -> IssueCluster:
@@ -373,6 +464,18 @@ class RedisStore:
             yield from self.client.scan_iter(pattern)
         else:
             yield from self.client.scan_iter(pattern)
+
+    def _hset(self, key: str, mapping: Dict[str, Any]):
+        if self.mode == "redis":
+            self.client.hset(key, mapping=mapping)
+        else:
+            self.client.hset(key, mapping)
+
+    def _hgetall(self, key: str) -> Dict[str, str]:
+        if self.mode == "redis":
+            return self.client.hgetall(key)
+        else:
+            return self.client.hgetall(key)
 
 
 # ---------- Store selector ----------
