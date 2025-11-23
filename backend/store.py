@@ -57,7 +57,7 @@ class UpstashRESTClient:
         resp = self.session.post(
             self.base_url,
             headers={"Authorization": f"Bearer {self.token}"},
-            json={"command": list(args)},
+            json=list(args),
             timeout=10,
         )
         resp.raise_for_status()
@@ -155,13 +155,13 @@ class InMemoryStore:
         self.issue_clusters[cluster.id] = cluster
         return cluster
 
-    def get_cluster(self, cluster_id: UUID) -> Optional[IssueCluster]:
+    def get_cluster(self, cluster_id: str) -> Optional[IssueCluster]:
         return self.issue_clusters.get(cluster_id)
 
     def get_all_clusters(self) -> List[IssueCluster]:
         return list(self.issue_clusters.values())
 
-    def update_cluster(self, cluster_id: UUID, **updates) -> IssueCluster:
+    def update_cluster(self, cluster_id: str, **updates) -> IssueCluster:
         cluster = self.issue_clusters[cluster_id]
         updated_cluster = cluster.model_copy(update=updates)
         self.issue_clusters[cluster_id] = updated_cluster
@@ -195,7 +195,7 @@ class InMemoryStore:
         self.agent_jobs[job_id] = updated_job
         return updated_job
 
-    def get_jobs_by_cluster(self, cluster_id: UUID) -> List[AgentJob]:
+    def get_jobs_by_cluster(self, cluster_id: str) -> List[AgentJob]:
         return [
             job for job in self.agent_jobs.values() if job.cluster_id == cluster_id
         ]
@@ -236,11 +236,11 @@ class RedisStore:
         return f"feedback:external:{source}:{external_id}"
 
     @staticmethod
-    def _cluster_key(cluster_id: UUID) -> str:
+    def _cluster_key(cluster_id: str) -> str:
         return f"cluster:{cluster_id}"
 
     @staticmethod
-    def _cluster_items_key(cluster_id: UUID) -> str:
+    def _cluster_items_key(cluster_id: str) -> str:
         return f"cluster:items:{cluster_id}"
 
     @staticmethod
@@ -256,7 +256,7 @@ class RedisStore:
         return f"job:{job_id}"
 
     @staticmethod
-    def _cluster_jobs_key(cluster_id: UUID) -> str:
+    def _cluster_jobs_key(cluster_id: str) -> str:
         return f"cluster:jobs:{cluster_id}"
 
     # Feedback
@@ -368,7 +368,7 @@ class RedisStore:
                 self._sadd(items_key, str(fid))
         return cluster
 
-    def get_cluster(self, cluster_id: UUID) -> Optional[IssueCluster]:
+    def get_cluster(self, cluster_id: str) -> Optional[IssueCluster]:
         key = self._cluster_key(cluster_id)
         # Try HGETALL first
         data = self._hgetall(key)
@@ -408,16 +408,13 @@ class RedisStore:
         ids = self._smembers(self._cluster_all_key())
         clusters: List[IssueCluster] = []
         for cid in ids:
-            try:
-                # ids are stored as strings in redis, convert to UUID
-                cluster = self.get_cluster(UUID(cid))
-                if cluster:
-                    clusters.append(cluster)
-            except ValueError:
-                continue
+            # ids are stored as strings in redis (can be UUID or custom format)
+            cluster = self.get_cluster(cid)
+            if cluster:
+                clusters.append(cluster)
         return clusters
 
-    def update_cluster(self, cluster_id: UUID, **updates) -> IssueCluster:
+    def update_cluster(self, cluster_id: str, **updates) -> IssueCluster:
         cluster = self.get_cluster(cluster_id)
         if not cluster:
             raise KeyError(f"Cluster {cluster_id} not found")
@@ -486,7 +483,7 @@ class RedisStore:
         updated = job.model_copy(update=updates)
         return self.add_job(updated)
 
-    def get_jobs_by_cluster(self, cluster_id: UUID) -> List[AgentJob]:
+    def get_jobs_by_cluster(self, cluster_id: str) -> List[AgentJob]:
         key = self._cluster_jobs_key(cluster_id)
         ids = self._zrange(key, 0, -1, rev=True)  # Newest first
         jobs: List[AgentJob] = []
@@ -599,7 +596,7 @@ def add_cluster(cluster: IssueCluster) -> IssueCluster:
     return _STORE.add_cluster(cluster)
 
 
-def get_cluster(cluster_id: UUID) -> Optional[IssueCluster]:
+def get_cluster(cluster_id: str) -> Optional[IssueCluster]:
     return _STORE.get_cluster(cluster_id)
 
 
@@ -607,7 +604,7 @@ def get_all_clusters() -> List[IssueCluster]:
     return _STORE.get_all_clusters()
 
 
-def update_cluster(cluster_id: UUID, **updates) -> IssueCluster:
+def update_cluster(cluster_id: str, **updates) -> IssueCluster:
     return _STORE.update_cluster(cluster_id, **updates)
 
 
@@ -641,7 +638,7 @@ def update_job(job_id: UUID, **updates) -> AgentJob:
     return _STORE.update_job(job_id, **updates)
 
 
-def get_jobs_by_cluster(cluster_id: UUID) -> List[AgentJob]:
+def get_jobs_by_cluster(cluster_id: str) -> List[AgentJob]:
     return _STORE.get_jobs_by_cluster(cluster_id)
 
 
