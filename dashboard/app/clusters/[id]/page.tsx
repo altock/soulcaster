@@ -228,56 +228,27 @@ export default function ClusterDetailPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-medium tracking-tight text-slate-50 flex items-center gap-2">
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Live Feed
-              </h2>
-              <div className="flex gap-2">
-                <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-slate-400">Real-time</span>
-                <span className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400">Connected</span>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {cluster.feedback_items.map((item) => (
-                <FeedbackCard key={item.id} item={item} />
-              ))}
-              {cluster.feedback_items.length === 0 && (
-                <div className="text-center py-12 rounded-3xl border border-white/10 bg-white/5 border-dashed">
-                  <p className="text-slate-400">No feedback items found for this cluster.</p>
-                </div>
-              )}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-medium tracking-tight text-slate-50 flex items-center gap-2">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Live Feed
+            </h2>
+            <div className="flex gap-2">
+              <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-slate-400">Real-time</span>
+              <span className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400">Connected</span>
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="animate-in delay-300 rounded-3xl border border-white/10 bg-black/40 p-6 backdrop-blur-md">
-              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Cluster Intelligence</h3>
-              <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                  <div className="text-xs text-slate-500 mb-1">Health Score</div>
-                  <div className="text-2xl font-medium text-emerald-400">98/100</div>
-                  <div className="w-full bg-white/10 h-1 mt-2 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full w-[98%]"></div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                  <div className="text-xs text-slate-500 mb-1">Anomaly Detection</div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                    <span className="text-sm text-slate-200">System Normal</span>
-                  </div>
-                </div>
-
-                <button className="w-full py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium hover:bg-emerald-500/20 transition-colors">
-                  Run Diagnostics
-                </button>
+          <div className="space-y-4">
+            {cluster.feedback_items.map((item) => (
+              <FeedbackCard key={item.id} item={item} />
+            ))}
+            {cluster.feedback_items.length === 0 && (
+              <div className="text-center py-12 rounded-3xl border border-white/10 bg-white/5 border-dashed">
+                <p className="text-slate-400">No feedback items found for this cluster.</p>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
