@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { GitHubRepo } from '@/types';
 
-type SourceType = 'reddit' | 'sentry';
+type SourceType = 'reddit' | 'sentry' | 'github';
 
 export default function SourceConfig() {
   const [selectedSource, setSelectedSource] = useState<SourceType | null>(null);
+
+  // Reddit state
   const [subreddits, setSubreddits] = useState<string[]>([]);
   const [newSubreddit, setNewSubreddit] = useState('');
   const [loadingSubs, setLoadingSubs] = useState(false);
@@ -13,22 +16,47 @@ export default function SourceConfig() {
   const [subsMessage, setSubsMessage] = useState<string | null>(null);
   const [subsError, setSubsError] = useState<string | null>(null);
 
+  // GitHub state
+  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [newRepo, setNewRepo] = useState('');
+  const [loadingRepos, setLoadingRepos] = useState(false);
+  const [addingRepo, setAddingRepo] = useState(false);
+  const [syncingRepo, setSyncingRepo] = useState<string | null>(null);
+  const [repoMessage, setRepoMessage] = useState<string | null>(null);
+  const [repoError, setRepoError] = useState<string | null>(null);
+
   useEffect(() => {
-    const load = async () => {
-      setLoadingSubs(true);
-      setSubsError(null);
-      try {
-        const res = await fetch('/api/config/reddit/subreddits', { cache: 'no-store' });
-        const data = await res.json();
-        setSubreddits(data.subreddits ?? []);
-      } catch (err) {
-        setSubsError('Failed to load subreddit config');
-      } finally {
-        setLoadingSubs(false);
-      }
-    };
-    load();
+    loadSubreddits();
+    loadRepos();
   }, []);
+
+  const loadSubreddits = async () => {
+    setLoadingSubs(true);
+    setSubsError(null);
+    try {
+      const res = await fetch('/api/config/reddit/subreddits', { cache: 'no-store' });
+      const data = await res.json();
+      setSubreddits(data.subreddits ?? []);
+    } catch (err) {
+      setSubsError('Failed to load subreddit config');
+    } finally {
+      setLoadingSubs(false);
+    }
+  };
+
+  const loadRepos = async () => {
+    setLoadingRepos(true);
+    setRepoError(null);
+    try {
+      const res = await fetch('/api/config/github/repos', { cache: 'no-store' });
+      const data = await res.json();
+      setRepos(data.repos ?? []);
+    } catch (err) {
+      setRepoError('Failed to load GitHub repos');
+    } finally {
+      setLoadingRepos(false);
+    }
+  };
 
   const sources = [
     {
@@ -36,6 +64,12 @@ export default function SourceConfig() {
       icon: '🗨️',
       title: 'Reddit Integration',
       description: 'Monitor subreddits (JSON polling, no OAuth)',
+    },
+    {
+      type: 'github' as const,
+      icon: '⚙️',
+      title: 'GitHub Issues',
+      description: 'Sync open-source repository issues automatically',
     },
     {
       type: 'sentry' as const,
@@ -80,6 +114,97 @@ export default function SourceConfig() {
       setSubsError(err?.message || 'Failed to save subreddit list');
     } finally {
       setSavingSubs(false);
+    }
+  };
+
+  const addRepo = async () => {
+    const repoString = newRepo.trim();
+    if (!repoString) return;
+
+    setAddingRepo(true);
+    setRepoMessage(null);
+    setRepoError(null);
+    try {
+      const res = await fetch('/api/config/github/repos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: repoString }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || 'Failed to add repo');
+      }
+      setNewRepo('');
+      await loadRepos();
+      setRepoMessage(`Added ${data.repo.full_name}`);
+    } catch (err: any) {
+      setRepoError(err?.message || 'Failed to add repository');
+    } finally {
+      setAddingRepo(false);
+    }
+  };
+
+  const removeRepo = async (fullName: string) => {
+    setRepoMessage(null);
+    setRepoError(null);
+    try {
+      const res = await fetch(`/api/config/github/repos/${encodeURIComponent(fullName)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data?.error || 'Failed to remove repo');
+      }
+      await loadRepos();
+      setRepoMessage(`Removed ${fullName}`);
+    } catch (err: any) {
+      setRepoError(err?.message || 'Failed to remove repository');
+    }
+  };
+
+  const syncRepo = async (fullName: string) => {
+    setSyncingRepo(fullName);
+    setRepoMessage(null);
+    setRepoError(null);
+    try {
+      const res = await fetch(`/api/ingest/github/sync/${encodeURIComponent(fullName)}`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || 'Failed to sync repo');
+      }
+      await loadRepos();
+      setRepoMessage(
+        `Synced ${fullName}: ${data.new_issues} new, ${data.updated_issues} updated, ${data.closed_issues} closed`
+      );
+    } catch (err: any) {
+      setRepoError(err?.message || 'Failed to sync repository');
+    } finally {
+      setSyncingRepo(null);
+    }
+  };
+
+  const syncAllRepos = async () => {
+    setSyncingRepo('all');
+    setRepoMessage(null);
+    setRepoError(null);
+    try {
+      const res = await fetch('/api/ingest/github/sync', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || data?.detail || 'Failed to sync repos');
+      }
+      await loadRepos();
+      setRepoMessage(
+        `Synced all repos: ${data.total_new} new, ${data.total_updated} updated, ${data.total_closed} closed`
+      );
+    } catch (err: any) {
+      setRepoError(err?.message || 'Failed to sync repositories');
+    } finally {
+      setSyncingRepo(null);
     }
   };
 
@@ -199,6 +324,126 @@ export default function SourceConfig() {
             {subsError && <p className="text-sm text-rose-400">{subsError}</p>}
             <p className="text-xs text-slate-500">
               Keep this list small (e.g., 1–3 subs).
+            </p>
+          </div>
+        </div>
+      )}
+
+      {selectedSource === 'github' && (
+        <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="font-semibold text-slate-200">GitHub Repository Issues</h4>
+              <p className="text-sm text-slate-400">
+                Sync open & closed issues from public GitHub repos. Uses GitHub API with optional token for higher rate limits.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-black/20 border border-white/5 p-4 rounded-xl space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="text"
+                placeholder="owner/repo or GitHub URL"
+                value={newRepo}
+                onChange={(e) => setNewRepo(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') addRepo();
+                }}
+                className="flex-1 min-w-[200px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+              />
+              <button
+                type="button"
+                onClick={addRepo}
+                disabled={addingRepo || !newRepo.trim()}
+                className={`px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                  addingRepo || !newRepo.trim()
+                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                    : 'text-black bg-emerald-500 hover:bg-emerald-400'
+                }`}
+              >
+                {addingRepo ? 'Adding…' : 'Add Repo'}
+              </button>
+              <button
+                type="button"
+                onClick={syncAllRepos}
+                disabled={syncingRepo === 'all' || repos.length === 0}
+                className={`px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${
+                  syncingRepo === 'all' || repos.length === 0
+                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                }`}
+              >
+                {syncingRepo === 'all' ? '⏳ Syncing All…' : '🔄 Sync All'}
+              </button>
+            </div>
+
+            {loadingRepos ? (
+              <p className="text-sm text-slate-500">Loading repositories…</p>
+            ) : (
+              <div className="space-y-2">
+                {repos.length === 0 && (
+                  <span className="text-sm text-slate-500">No repositories configured yet.</span>
+                )}
+                {repos.map((repo) => (
+                  <div
+                    key={repo.full_name}
+                    className="flex items-center justify-between gap-3 bg-white/5 border border-white/10 rounded-lg px-3 py-2"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://github.com/${repo.full_name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-medium text-slate-200 hover:text-emerald-300 transition-colors truncate"
+                        >
+                          {repo.full_name}
+                        </a>
+                        {repo.issue_count > 0 && (
+                          <span className="text-xs text-slate-500">
+                            ({repo.issue_count} issues)
+                          </span>
+                        )}
+                      </div>
+                      {repo.last_synced && (
+                        <p className="text-xs text-slate-500">
+                          Last synced: {new Date(repo.last_synced).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => syncRepo(repo.full_name)}
+                        disabled={syncingRepo === repo.full_name}
+                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          syncingRepo === repo.full_name
+                            ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                            : 'text-emerald-300 hover:bg-emerald-500/10'
+                        }`}
+                        title="Sync this repo"
+                      >
+                        {syncingRepo === repo.full_name ? '⏳' : '🔄'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeRepo(repo.full_name)}
+                        className="text-slate-500 hover:text-rose-400 transition-colors text-xs"
+                        title="Remove repo"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {repoMessage && <p className="text-sm text-emerald-400">{repoMessage}</p>}
+            {repoError && <p className="text-sm text-rose-400">{repoError}</p>}
+            <p className="text-xs text-slate-500">
+              Supports public repos. Set GITHUB_TOKEN for higher rate limits (5000/hr vs 60/hr).
             </p>
           </div>
         </div>
