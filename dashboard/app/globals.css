@@ -1,1 +1,59 @@
 @import 'tailwindcss';
+
+@theme {
+    --color-matrix-black: #050505;
+    --color-matrix-card: #0A0A0A;
+    --color-matrix-green: #00FF94;
+    --color-matrix-green-dim: #00331E;
+    --color-matrix-border: #1F1F1F;
+    --shadow-neon-green: 0 0 10px rgba(0, 255, 148, 0.5);
+    --shadow-card-hover: 0 0 20px rgba(0, 255, 148, 0.1);
+    --font-geist-sans: 'Geist', sans-serif;
+    --font-geist-mono: 'Geist Mono', monospace;
+}
+
+:root {
+    --background: #050505;
+    --foreground: #f8fafc;
+    /* slate-50 */
+}
+
+body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-geist-sans);
+}
+
+@layer utilities {
+    .hover-card-effect {
+        transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    .hover-card-effect:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+        border-color: rgba(52, 211, 153, 0.4);
+    }
+
+    .aura-button-green-beam {
+        background: radial-gradient(65.28% 65.28% at 50% 100%, rgba(52, 211, 153, 0.8) 0%, rgba(52, 211, 153, 0) 100%),
+            linear-gradient(0deg, #059669, #10b981);
+        box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+        position: relative;
+    }
+
+    .aura-button-green-beam::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        background: linear-gradient(177.95deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0) 100%);
+        border-radius: 9999px;
+        z-index: 0;
+        transition: all 0.5s ease-in-out;
+    }
+
+    .aura-button-green-beam:hover::before {
+        background: linear-gradient(177.95deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.1) 100%);
+        box-shadow: 0 0 20px rgba(52, 211, 153, 0.6);
+    }
+}

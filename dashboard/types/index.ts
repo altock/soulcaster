@@ -30,6 +30,7 @@ export interface StatsResponse {
     manual: number;
   };
   total_clusters: number;
+  active_clusters: number;
 }
 
 export interface IssueCluster {

@@ -1,6 +1,18 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
+import { Geist, Geist_Mono } from 'next/font/google';
+import UnicornBackground from '@/components/UnicornBackground';
+import DashboardHeader from '@/components/DashboardHeader';
 import './globals.css';
+
+const geistSans = Geist({
+  variable: '--font-geist-sans',
+  subsets: ['latin'],
+});
+
+const geistMono = Geist_Mono({
+  variable: '--font-geist-mono',
+  subsets: ['latin'],
+});
 
 export const metadata: Metadata = {
   title: 'FeedbackAgent Dashboard',
@@ -22,27 +34,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="antialiased bg-gray-50">
-        <div className="min-h-screen">
-          <header className="bg-white shadow-sm border-b">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-              <Link
-                href="/"
-                className="text-2xl font-bold text-gray-900 hover:text-gray-700 transition-colors"
-              >
-                FeedbackAgent
-              </Link>
-              <nav>
-                <Link
-                  href="/clusters"
-                  className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
-                >
-                  Dashboard
-                </Link>
-              </nav>
-            </div>
-          </header>
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{children}</main>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased text-white font-sans`}>
+        <UnicornBackground />
+        <div className="min-h-screen relative z-10">
+          <DashboardHeader />
+          {children}
         </div>
       </body>
     </html>

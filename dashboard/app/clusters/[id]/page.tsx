@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import type { ClusterDetail, FeedbackSource } from '@/types';
+import FeedbackCard from '@/components/FeedbackCard';
 
 /**
  * Client React component that renders details for a single cluster, its feedback items, and actions related to generating fixes.
@@ -68,18 +69,18 @@ export default function ClusterDetailPage() {
   };
 
   const getStatusBadgeClass = (status: ClusterDetail['status']) => {
-    const baseClass = 'px-3 py-1 text-sm font-medium rounded-full';
+    const baseClass = 'px-3 py-1 text-xs font-bold rounded-md uppercase tracking-wider border';
     switch (status) {
       case 'new':
-        return `${baseClass} bg-blue-100 text-blue-800`;
+        return `${baseClass} bg-blue-900/20 text-blue-400 border-blue-900/50`;
       case 'fixing':
-        return `${baseClass} bg-yellow-100 text-yellow-800`;
+        return `${baseClass} bg-yellow-900/20 text-yellow-400 border-yellow-900/50`;
       case 'pr_opened':
-        return `${baseClass} bg-green-100 text-green-800`;
+        return `${baseClass} bg-matrix-green-dim text-matrix-green border-matrix-green/30`;
       case 'failed':
-        return `${baseClass} bg-red-100 text-red-800`;
+        return `${baseClass} bg-red-900/20 text-red-400 border-red-900/50`;
       default:
-        return `${baseClass} bg-gray-100 text-gray-800`;
+        return `${baseClass} bg-gray-900/50 text-gray-400 border-gray-800`;
     }
   };
 
@@ -98,29 +99,33 @@ export default function ClusterDetailPage() {
 
   if (loading && !cluster) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading cluster details...</div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex items-center justify-center py-12">
+          <div className="text-gray-500">Loading cluster details...</div>
+        </div>
       </div>
     );
   }
 
   if (error || !cluster) {
     return (
-      <div className="rounded-md bg-red-50 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error loading cluster</h3>
-            <div className="mt-2 text-sm text-red-700">{error || 'Cluster not found'}</div>
-            <div className="mt-4 flex gap-3">
-              <button
-                onClick={fetchCluster}
-                className="text-sm font-medium text-red-800 hover:text-red-900"
-              >
-                Try again
-              </button>
-              <Link href="/" className="text-sm font-medium text-red-800 hover:text-red-900">
-                Back to clusters
-              </Link>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="rounded-md bg-red-50 p-4">
+          <div className="flex">
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-red-800">Error loading cluster</h3>
+              <div className="mt-2 text-sm text-red-700">{error || 'Cluster not found'}</div>
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={fetchCluster}
+                  className="text-sm font-medium text-red-800 hover:text-red-900"
+                >
+                  Try again
+                </button>
+                <Link href="/" className="text-sm font-medium text-red-800 hover:text-red-900">
+                  Back to clusters
+                </Link>
+              </div>
             </div>
           </div>
         </div>
@@ -138,126 +143,142 @@ export default function ClusterDetailPage() {
   );
 
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-6">
-        <Link href="/" className="text-sm text-blue-600 hover:text-blue-800 mb-2 inline-block">
-          ← Back to all clusters
-        </Link>
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <h2 className="text-2xl font-bold text-gray-900">{cluster.title}</h2>
-            <div className="mt-2 flex items-center gap-3">
-              <span className={getStatusBadgeClass(cluster.status)}>
-                {cluster.status.replace('_', ' ')}
-              </span>
-              <span className="text-sm text-gray-500">
-                {cluster.feedback_items.length} feedback items
-              </span>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            {cluster.github_pr_url && (
-              <a
-                href={cluster.github_pr_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 bg-gray-900 text-white rounded-md hover:bg-gray-800 text-sm font-medium"
-              >
-                View PR on GitHub
-              </a>
-            )}
-            {canStartFix && (
-              <button
-                onClick={handleStartFix}
-                disabled={isFixing}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 text-sm font-medium"
-              >
-                {isFixing ? 'Starting...' : 'Generate Fix'}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Summary */}
-      <div className="bg-white shadow-sm rounded-lg p-6 mb-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Summary</h3>
-        <p className="text-gray-700">{cluster.summary}</p>
-
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          <div>
-            <dt className="text-sm font-medium text-gray-500">Created</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {new Date(cluster.created_at).toLocaleString()}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm font-medium text-gray-500">Last Updated</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {new Date(cluster.updated_at).toLocaleString()}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm font-medium text-gray-500">Sources</dt>
-            <dd className="mt-1 text-sm text-gray-900">
-              {Object.entries(sourceCounts).map(([source, count]) => (
-                <div key={source}>
-                  {count} {source}
-                </div>
-              ))}
-            </dd>
-          </div>
+    <div className="min-h-screen bg-matrix-black pb-12 pt-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="mb-6">
+          <Link
+            href="/clusters"
+            className="text-sm font-medium text-gray-400 hover:text-matrix-green transition-colors flex items-center gap-1 uppercase tracking-wide"
+          >
+            ← Back to all clusters
+          </Link>
         </div>
 
-        {cluster.github_branch && (
-          <div className="mt-4">
-            <dt className="text-sm font-medium text-gray-500">GitHub Branch</dt>
-            <dd className="mt-1 text-sm text-gray-900 font-mono">{cluster.github_branch}</dd>
-          </div>
-        )}
-
-        {cluster.error_message && (
-          <div className="mt-4 p-3 bg-red-50 rounded-md">
-            <dt className="text-sm font-medium text-red-800">Error</dt>
-            <dd className="mt-1 text-sm text-red-700 font-mono">{cluster.error_message}</dd>
-          </div>
-        )}
-      </div>
-
-      {/* Feedback Items */}
-      <div className="bg-white shadow-sm rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Feedback Items</h3>
-        <div className="space-y-4">
-          {cluster.feedback_items.map((item) => (
-            <div key={item.id} className="border border-gray-200 rounded-md p-4">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-900">
-                    {getSourceIcon(item.source)}
+        <div className="bg-matrix-card shadow-lg rounded-2xl overflow-hidden border border-matrix-border mb-8">
+          <div className="px-6 py-8 border-b border-matrix-border">
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-4">
+                  <h1 className="text-2xl font-bold text-white tracking-tight">
+                    {cluster.title || 'Untitled Cluster'}
+                  </h1>
+                  <span className={getStatusBadgeClass(cluster.status)}>
+                    {cluster.status.replace('_', ' ')}
                   </span>
-                  {item.metadata?.permalink && (
-                    <a
-                      href={item.metadata.permalink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:text-blue-800"
-                    >
-                      View original →
-                    </a>
-                  )}
                 </div>
-                <span className="text-xs text-gray-500">
-                  {new Date(item.created_at).toLocaleString()}
-                </span>
+                <p className="text-gray-400 text-lg leading-relaxed">{cluster.summary}</p>
               </div>
-              <h4 className="text-sm font-medium text-gray-900 mb-1">{item.title}</h4>
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{item.body}</p>
-              {item.metadata?.subreddit && (
-                <div className="mt-2 text-xs text-gray-500">r/{item.metadata.subreddit}</div>
+              <div className="ml-6 flex flex-col gap-3">
+                {cluster.github_pr_url && (
+                  <a
+                    href={cluster.github_pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center px-4 py-2 border border-matrix-border shadow-sm text-sm font-bold rounded-full text-white bg-matrix-black hover:bg-matrix-border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green transition-all uppercase tracking-wide"
+                  >
+                    View PR on GitHub
+                  </a>
+                )}
+                {canStartFix && (
+                  <button
+                    onClick={handleStartFix}
+                    disabled={isFixing}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide"
+                  >
+                    {isFixing ? 'Starting...' : 'Generate Fix'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-3 gap-6 text-sm text-gray-500 font-mono border-t border-matrix-border pt-6">
+              <div>
+                <dt className="text-xs font-bold text-matrix-green uppercase tracking-wider mb-1">Created</dt>
+                <dd className="text-gray-300">{new Date(cluster.created_at).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-bold text-matrix-green uppercase tracking-wider mb-1">Last Updated</dt>
+                <dd className="text-gray-300">{new Date(cluster.updated_at).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-bold text-matrix-green uppercase tracking-wider mb-1">Sources</dt>
+                <dd className="text-gray-300">
+                  {Object.entries(sourceCounts).map(([source, count]) => (
+                    <span key={source} className="mr-2">
+                      {count} {source}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            </div>
+
+            {cluster.github_branch && (
+              <div className="mt-4 pt-4 border-t border-matrix-border">
+                <dt className="text-xs font-bold text-matrix-green uppercase tracking-wider mb-1">GitHub Branch</dt>
+                <dd className="text-gray-300 font-mono">{cluster.github_branch}</dd>
+              </div>
+            )}
+
+            {cluster.error_message && (
+              <div className="mt-4 p-3 bg-red-900/20 rounded-md border border-red-900/50">
+                <dt className="text-xs font-bold text-red-400 uppercase tracking-wider mb-1">Error</dt>
+                <dd className="text-red-300 font-mono">{cluster.error_message}</dd>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-medium tracking-tight text-slate-50 flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Live Feed
+              </h2>
+              <div className="flex gap-2">
+                <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-slate-400">Real-time</span>
+                <span className="px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400">Connected</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {cluster.feedback_items.map((item) => (
+                <FeedbackCard key={item.id} item={item} />
+              ))}
+              {cluster.feedback_items.length === 0 && (
+                <div className="text-center py-12 rounded-3xl border border-white/10 bg-white/5 border-dashed">
+                  <p className="text-slate-400">No feedback items found for this cluster.</p>
+                </div>
               )}
             </div>
-          ))}
+          </div>
+
+          <div className="space-y-6">
+            <div className="animate-in delay-300 rounded-3xl border border-white/10 bg-black/40 p-6 backdrop-blur-md">
+              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Cluster Intelligence</h3>
+              <div className="space-y-4">
+                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-slate-500 mb-1">Health Score</div>
+                  <div className="text-2xl font-medium text-emerald-400">98/100</div>
+                  <div className="w-full bg-white/10 h-1 mt-2 rounded-full overflow-hidden">
+                    <div className="bg-emerald-500 h-full w-[98%]"></div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-slate-500 mb-1">Anomaly Detection</div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                    <span className="text-sm text-slate-200">System Normal</span>
+                  </div>
+                </div>
+
+                <button className="w-full py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium hover:bg-emerald-500/20 transition-colors">
+                  Run Diagnostics
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

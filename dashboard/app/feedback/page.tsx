@@ -1,12 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
-import StatsCards from '@/components/StatsCards';
 import FeedbackList from '@/components/FeedbackList';
 import ManualFeedbackForm from '@/components/ManualFeedbackForm';
 import SourceConfig from '@/components/SourceConfig';
-import DashboardHeader from '@/components/DashboardHeader';
 
 export default function FeedbackPage() {
   const [showAddSource, setShowAddSource] = useState(false);
@@ -18,23 +15,19 @@ export default function FeedbackPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <DashboardHeader
-        activePage="feedback"
-        rightContent={
-          <button
-            onClick={() => setShowAddSource(!showAddSource)}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium transition-colors"
-          >
-            {showAddSource ? 'Hide Sources' : '+ Add Source'}
-          </button>
-        }
-      />
-
+    <div className="min-h-screen">
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats */}
-        <StatsCards key={refreshTrigger} />
+        <div className="flex justify-end mb-6">
+          <button
+            onClick={() => setShowAddSource(!showAddSource)}
+            className="group relative inline-flex h-9 items-center justify-center gap-2 overflow-hidden rounded-full border-none bg-emerald-500 px-4 text-sm font-medium tracking-tight text-black outline-none transition-all duration-200 active:scale-95 hover:scale-105 hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)]"
+          >
+            <span className="relative z-10 flex items-center gap-2">
+              {showAddSource ? 'Hide Sources' : '+ Add Source'}
+            </span>
+          </button>
+        </div>
 
         {/* Add Source Panel (collapsible) */}
         {showAddSource && (
@@ -46,22 +39,10 @@ export default function FeedbackPage() {
 
         {/* Feedback List */}
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">All Feedback</h2>
+          <h2 className="text-2xl font-bold text-white mb-4">All Feedback</h2>
           <FeedbackList refreshTrigger={refreshTrigger} />
         </div>
 
-        {/* Clustering Placeholder */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
-          <h3 className="text-lg font-semibold text-blue-900 mb-2">🧠 Clustering Coming Soon</h3>
-          <p className="text-blue-700">
-            Feedback items will automatically be clustered into related issues using AI. View
-            clusters in the{' '}
-            <Link href="/clusters" className="font-semibold underline">
-              Clusters tab
-            </Link>
-            .
-          </p>
-        </div>
       </div>
     </div>
   );

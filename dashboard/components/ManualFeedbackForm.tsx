@@ -47,38 +47,39 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">✍️ Submit Manual Feedback</h3>
+    <div className="bg-emerald-950/20 border border-white/10 backdrop-blur-sm rounded-3xl p-6 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
+      <h3 className="text-lg font-semibold text-white mb-4 relative z-10">✍️ Submit Manual Feedback</h3>
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="relative z-10">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Describe the bug, issue, or feature request..."
           rows={4}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 resize-none transition-all"
           disabled={isSubmitting}
         />
 
         <div className="mt-4 flex items-center justify-between">
           <div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && <p className="text-sm text-rose-400">{error}</p>}
             {success && (
-              <p className="text-sm text-green-600">✓ Feedback submitted successfully!</p>
+              <p className="text-sm text-emerald-400">✓ Feedback submitted successfully!</p>
             )}
           </div>
 
           <button
             type="submit"
             disabled={isSubmitting || !text.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+            className="px-5 py-2 bg-emerald-500 text-black rounded-full hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed transition-all font-medium shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] active:scale-95"
           >
             {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
           </button>
         </div>
       </form>
 
-      <div className="mt-4 text-xs text-gray-500">
+      <div className="mt-4 text-xs text-slate-500 relative z-10">
         <p>
           💡 Tip: Manual feedback is useful for testing or when reporting issues directly from your
           team.
