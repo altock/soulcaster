@@ -6,7 +6,31 @@ interface FeedbackCardProps {
   item: FeedbackItem;
 }
 
+import { useState } from 'react';
+import EditFeedbackModal from './EditFeedbackModal';
+
 export default function FeedbackCard({ item }: FeedbackCardProps) {
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [feedbackItem, setFeedbackItem] = useState(item);
+
+  const handleSave = async (updatedData: Partial<FeedbackItem>) => {
+    const response = await fetch('/api/feedback', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: item.id,
+        ...updatedData,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to update feedback');
+    }
+
+    setFeedbackItem((prev) => ({ ...prev, ...updatedData }));
+  };
   const getSourceIcon = (source: FeedbackItem['source']) => {
     switch (source) {
       case 'reddit':
@@ -50,30 +74,30 @@ export default function FeedbackCard({ item }: FeedbackCardProps) {
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-white/5 to-transparent transition-colors group-hover:border-emerald-500/30">
-              <span className="text-xl">{getSourceIcon(item.source)}</span>
+              <span className="text-xl">{getSourceIcon(feedbackItem.source)}</span>
             </div>
             <div>
               <div className="text-xs font-medium text-slate-200 transition-colors group-hover:text-emerald-300">
-                {item.source}
+                {feedbackItem.source}
               </div>
-              <div className="text-[10px] text-slate-500">{formatDate(item.created_at)}</div>
+              <div className="text-[10px] text-slate-500">{formatDate(feedbackItem.created_at)}</div>
             </div>
           </div>
           <div
-            className={`rounded-md border px-2 py-1 text-[10px] font-medium backdrop-blur-md ${item.source === 'manual'
-                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
-                : 'border-white/10 bg-black/40 text-slate-300'
+            className={`rounded-md border px-2 py-1 text-[10px] font-medium backdrop-blur-md ${feedbackItem.source === 'manual'
+              ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+              : 'border-white/10 bg-black/40 text-slate-300'
               }`}
           >
-            {item.source === 'manual' ? 'Verified' : 'Auto-Captured'}
+            {feedbackItem.source === 'manual' ? 'Verified' : 'Auto-Captured'}
           </div>
         </div>
 
-        <p className="text-sm leading-relaxed text-slate-300">{item.body}</p>
+        <p className="text-sm leading-relaxed text-slate-300 line-clamp-4">{feedbackItem.body}</p>
 
-        {item.github_repo_url && (
+        {feedbackItem.github_repo_url && (
           <a
-            href={item.github_repo_url}
+            href={feedbackItem.github_repo_url}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
@@ -95,14 +119,21 @@ export default function FeedbackCard({ item }: FeedbackCardProps) {
         )}
 
         <div className="flex gap-2 border-t border-white/5 pt-4">
-          <div className="flex-1 cursor-pointer rounded-full border border-white/5 bg-white/5 py-1.5 text-center text-[10px] font-medium text-slate-400 transition-colors hover:bg-white/10">
-            Analyze
-          </div>
-          <div className="flex-1 cursor-pointer rounded-full border border-white/5 bg-white/5 py-1.5 text-center text-[10px] font-medium text-slate-400 transition-colors hover:bg-white/10">
-            Details
-          </div>
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            className="flex-1 cursor-pointer rounded-full border border-white/5 bg-white/5 py-1.5 text-center text-[10px] font-medium text-slate-400 transition-colors hover:bg-white/10 hover:text-emerald-400"
+          >
+            Edit
+          </button>
         </div>
       </div>
+
+      <EditFeedbackModal
+        item={feedbackItem}
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        onSave={handleSave}
+      />
     </div>
   );
 }

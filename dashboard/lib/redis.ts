@@ -301,3 +301,28 @@ export async function getUnclusteredFeedbackIds(): Promise<string[]> {
   const ids = await redis.smembers('feedback:unclustered');
   return ids as string[];
 }
+
+/**
+ * Update a feedback item in Redis
+ */
+export async function updateFeedback(id: string, data: Partial<FeedbackItem>): Promise<void> {
+  const key = `feedback:${id}`;
+  const exists = await redis.exists(key);
+
+  if (!exists) {
+    throw new Error(`Feedback item ${id} not found`);
+  }
+
+  // Prepare update object
+  const update: Record<string, any> = {};
+  if (data.body !== undefined) update.body = data.body;
+  if (data.github_repo_url !== undefined) update.github_repo_url = data.github_repo_url;
+
+  // If we're updating metadata, we need to merge or replace. 
+  // For simplicity, let's assume we might update specific fields if needed, 
+  // but for this task we are primarily updating body and repo url.
+
+  if (Object.keys(update).length > 0) {
+    await redis.hset(key, update);
+  }
+}
