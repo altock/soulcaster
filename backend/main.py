@@ -139,6 +139,7 @@ def ingest_sentry(payload: dict):
 class ManualIngestRequest(BaseModel):
     """Request model for manual feedback submission."""
 
+    title: Optional[str] = None
     text: str
 
 
@@ -161,10 +162,11 @@ def ingest_manual(request: ManualIngestRequest):
     Returns:
         Status response with created feedback item ID
     """
+    title = request.title or request.text[:80]
     item = FeedbackItem(
         id=uuid4(),
         source="manual",
-        title=request.text[:80],  # Truncate title to 80 chars
+        title=title,
         body=request.text,
         metadata={},
         created_at=datetime.now(timezone.utc),

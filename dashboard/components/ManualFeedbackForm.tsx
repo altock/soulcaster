@@ -7,6 +7,7 @@ interface ManualFeedbackFormProps {
 }
 
 export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProps) {
+  const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,10 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text: text.trim() }),
+        body: JSON.stringify({
+          title: title.trim(),
+          text: text.trim(),
+        }),
       });
 
       if (!response.ok) {
@@ -34,6 +38,7 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
       }
 
       setSuccess(true);
+      setTitle('');
       setText('');
       onSuccess?.();
 
@@ -51,6 +56,17 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
       <h3 className="text-lg font-semibold text-gray-900 mb-4">✍️ Submit Manual Feedback</h3>
 
       <form onSubmit={handleSubmit}>
+        <div className="mb-4">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title (optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isSubmitting}
+          />
+        </div>
+
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createFeedback } from '@/lib/redis';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,24 +8,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Text field is required' }, { status: 400 });
     }
 
-    // Extract title (first line or first 80 chars)
-    const lines = body.text.trim().split('\n');
-    const title = lines[0].substring(0, 80) || 'Manual feedback';
-    const bodyText = body.text;
-
-    // Write directly to Redis
-    const feedbackId = await createFeedback({
-      title,
-      body: bodyText,
-      source: 'manual',
-      metadata: {
-        submitted_at: new Date().toISOString(),
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+    
+    const response = await fetch(`${backendUrl}/ingest/manual`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        text: body.text,
+        title: body.title,
+      }),
     });
+
+    if (!response.ok) {
+      throw new Error(`Backend responded with ${response.status}`);
+    }
+
+    const data = await response.json();
 
     return NextResponse.json({
       success: true,
-      feedback_id: feedbackId,
+      feedback_id: data.id,
       message: 'Feedback saved. Click "Run Clustering" to group it with similar issues.',
     });
   } catch (error) {
