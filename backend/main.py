@@ -95,12 +95,20 @@ def ingest_reddit(item: FeedbackItem):
     Ingest a feedback item from Reddit.
 
     This endpoint receives already-normalized Reddit posts from the reddit_poller.
+    It checks for duplicate posts using external_id before storing new items.
+    Automatically clusters new feedback items based on source and metadata.
 
     Args:
-        item: FeedbackItem with Reddit post data
+        item: FeedbackItem with Reddit post data containing source='reddit',
+              normalized title/body, and metadata including subreddit info
 
     Returns:
-        Status response indicating success
+        Status response with either:
+        - {"status": "ok", "id": "uuid"} for new items
+        - {"status": "duplicate", "id": "uuid"} for existing posts
+
+    Raises:
+        HTTPException: 500 if clustering or storage fails
     """
     if item.external_id:
         existing = get_feedback_by_external_id(item.source, item.external_id)
@@ -117,13 +125,24 @@ def ingest_sentry(payload: dict):
     Ingest an error report from Sentry webhook.
 
     Parses Sentry's webhook payload and normalizes it into a FeedbackItem.
-    Extracts exception type, message, and stack trace frames.
+    Extracts exception type, message, and stack trace frames for context.
+    Automatically clusters the error report with other Sentry issues.
 
     Args:
-        payload: Raw Sentry webhook payload
+        payload: Raw Sentry webhook payload containing event data,
+                exception information, and stack traces
 
     Returns:
-        Status response with created feedback item ID
+        Status response with created feedback item ID:
+        {"status": "ok", "id": "uuid"} for successful ingestion
+
+    Expected payload structure:
+        - event_id: Unique identifier for the Sentry event
+        - message: Event message (used as title fallback)
+        - exception.values: List of exception objects with type, value, stacktrace
+
+    Raises:
+        HTTPException: 500 if payload parsing or storage fails
     """
     try:
         event_id = payload.get("event_id")
@@ -177,13 +196,22 @@ def ingest_manual(request: ManualIngestRequest):
     """
     Ingest manually submitted feedback text.
 
-    Creates a FeedbackItem from raw text input. Title is truncated to 80 characters.
+    Creates a FeedbackItem from raw text input. Title is truncated to 80 characters
+    for display purposes while preserving the full text in the body field.
+    Automatically clusters manual feedback items.
 
     Args:
         request: ManualIngestRequest containing the feedback text
 
     Returns:
-        Status response with created feedback item ID
+        Status response with created feedback item ID:
+        {"status": "ok", "id": "uuid"} for successful submission
+
+    Note:
+        - Title is automatically truncated to 80 characters for UI display
+        - Full text is preserved in the body field
+        - Source is set to "manual" for identification
+        - Created timestamp is set to current UTC time
     """
     item = FeedbackItem(
         id=uuid4(),
@@ -202,13 +230,24 @@ def ingest_manual(request: ManualIngestRequest):
 
 
 def _sanitize_subreddits(values: List[str]) -> List[str]:
+    """
+    Clean and standardize subreddit names from user input.
+    
+    This function processes raw subreddit names to ensure consistency:
+    - Removes empty/whitespace-only entries
+    - Converts to lowercase for case-insensitive matching
+    - Removes duplicates while preserving order
+    """
     cleaned = []
     for value in values:
         slug = value.strip()
         if not slug:
-            continue
+            continue  # Skip empty or whitespace-only entries
         cleaned.append(slug.lower())
-    # Preserve order, remove duplicates
+    
+    # Preserve order, remove duplicates using a seen set
+    # This ensures we maintain the user's preferred ordering
+    # while eliminating any accidental duplicates
     seen = set()
     deduped = []
     for sub in cleaned:
@@ -220,7 +259,22 @@ def _sanitize_subreddits(values: List[str]) -> List[str]:
 
 @app.get("/config/reddit/subreddits")
 def get_reddit_config():
-    """Return the active subreddit list (store-backed or env fallback)."""
+    """
+    Return the active subreddit list (store-backed or env fallback).
+
+    Retrieves the current list of subreddits that the poller will monitor.
+    Uses a fallback hierarchy: Redis store -> environment variables -> default.
+
+    Returns:
+        Dictionary with active subreddits:
+        {"subreddits": ["claudeai", "machinelearning", ...]}
+
+    Fallback chain:
+        1. Redis-stored subreddit list (highest priority)
+        2. REDDIT_SUBREDDITS env var (comma-separated)
+        3. REDDIT_SUBREDDIT env var (single value)
+        4. Default: ["claudeai"] (fallback)
+    """
     configured = get_reddit_subreddits()
     if configured:
         return {"subreddits": configured}
@@ -234,7 +288,30 @@ def get_reddit_config():
 
 @app.post("/config/reddit/subreddits")
 def set_reddit_config(payload: SubredditConfig):
-    """Set the subreddit list used by the poller (global)."""
+    """
+    Set the subreddit list used by the poller (global configuration).
+
+    Updates the global subreddit list that will be monitored by the Reddit poller.
+    Automatically sanitizes input by lowercasing and removing duplicates.
+    Replaces any previously configured subreddit list.
+
+    Args:
+        payload: SubredditConfig containing list of subreddit names
+                (without 'r/' prefix, case-insensitive)
+
+    Returns:
+        Dictionary with sanitized subreddit list:
+        {"subreddits": ["claudeai", "programming", ...]}
+
+    Validation:
+        - At least one subreddit is required
+        - Subreddit names are automatically lowercased
+        - Duplicates are removed while preserving order
+        - Empty or whitespace-only entries are filtered out
+
+    Raises:
+        HTTPException: 400 if no valid subreddits provided
+    """
     cleaned = _sanitize_subreddits(payload.subreddits)
     if not cleaned:
         raise HTTPException(status_code=400, detail="At least one subreddit is required.")
@@ -244,7 +321,33 @@ def set_reddit_config(payload: SubredditConfig):
 
 @app.post("/admin/trigger-poll")
 async def trigger_poll():
-    """Manually trigger a Reddit poll cycle (waits for completion)."""
+    """
+    Manually trigger a Reddit poll cycle (waits for completion).
+
+    Initiates an immediate poll of all configured subreddits.
+    This is typically used for testing or to force a sync outside the normal schedule.
+    The operation is blocking - it waits for all polling to complete before returning.
+
+    Returns:
+        Dictionary indicating polling results:
+        - {"status": "skipped", "message": "No subreddits configured"} if no subreddits set
+        - {"status": "ok", "message": "Polled X subreddits"} on successful completion
+
+    Process:
+        1. Retrieves current subreddit configuration
+        2. If no subreddits configured, returns early
+        3. Runs poll_once() in threadpool to avoid blocking event loop
+        4. For each post found, directly ingests without HTTP overhead
+        5. Automatically clusters new feedback items
+
+    Note:
+        - Uses direct ingestion to avoid HTTP request overhead
+        - Runs in FastAPI's threadpool for non-blocking execution
+        - Pydantic handles datetime parsing from ISO strings automatically
+
+    Raises:
+        HTTPException: 500 if polling fails or encounters errors
+    """
     subreddits = get_reddit_config_list()
     if not subreddits:
         return {"status": "skipped", "message": "No subreddits configured"}
@@ -279,12 +382,23 @@ async def trigger_poll():
 
 # Simple clustering: group by source (and subreddit for Reddit)
 def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
+    """
+    Automatically cluster feedback items based on source and metadata.
+    
+    This is the core clustering logic that groups related feedback items together.
+    Currently uses a simple heuristic: group by source and subreddit (for Reddit).
+    """
     now = datetime.now(timezone.utc)
     subreddit = None
+    
+    # Extract subreddit from metadata for Reddit posts
+    # This allows us to group Reddit feedback by specific subreddits
     if isinstance(item.metadata, dict):
         subreddit = item.metadata.get("subreddit")
 
+    # Determine cluster title and summary based on source
     if item.source == "reddit":
+        # For Reddit, include subreddit in title for better organization
         cluster_title = f"Reddit: r/{subreddit}" if subreddit else "Reddit feedback"
         cluster_summary = (
             f"Reports from r/{subreddit}" if subreddit else "Feedback from Reddit submissions"
@@ -297,6 +411,7 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
         cluster_summary = "User-submitted manual feedback"
 
     # Try to find an existing cluster with the same title
+    # This ensures we add to existing clusters rather than creating duplicates
     existing = None
     for cluster in get_all_clusters():
         if cluster.title == cluster_title:
@@ -304,6 +419,7 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
             break
 
     if existing:
+        # Add this feedback item to the existing cluster if not already present
         if str(item.id) not in existing.feedback_ids:
             updated_ids = existing.feedback_ids + [str(item.id)]
             return update_cluster(
@@ -313,7 +429,7 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
             )
         return existing
 
-    # Create new cluster
+    # Create new cluster if no matching cluster exists
     cluster = IssueCluster(
         id=str(uuid4()),
         title=cluster_title,
@@ -343,13 +459,30 @@ def get_feedback(
     """
     Retrieve feedback items with optional filtering and pagination.
 
+    Provides paginated access to all feedback items with optional source filtering.
+    Returns items in reverse chronological order (newest first).
+
     Args:
-        source: Optional source filter (reddit, sentry, manual)
+        source: Optional source filter - one of:
+               - "reddit": Only Reddit posts
+               - "sentry": Only Sentry error reports  
+               - "manual": Only manually submitted feedback
         limit: Maximum number of items to return (default 100, max 1000)
         offset: Number of items to skip for pagination (default 0)
 
     Returns:
-        Dictionary with items list and total count
+        Dictionary containing:
+        {
+            "items": [list of FeedbackItem objects],
+            "total": total_items_count,
+            "limit": requested_limit,
+            "offset": requested_offset
+        }
+
+    Note:
+        - Pagination is applied after source filtering
+        - Total count reflects filtered results, not all items
+        - Items are returned newest first (descending created_at)
     """
     all_items = get_all_feedback_items()
 
@@ -423,7 +556,34 @@ def get_stats():
 
 @app.get("/clusters")
 def list_clusters():
-    """List all issue clusters with aggregated metadata."""
+    """
+    List all issue clusters with aggregated metadata.
+
+    Retrieves all clusters with summary information including counts,
+    sources, and associated GitHub data. Each cluster represents a 
+    grouping of related feedback items.
+
+    Returns:
+        List of cluster summaries, each containing:
+        {
+            "id": cluster_id,
+            "title": cluster_title,
+            "summary": cluster_summary,
+            "count": number_of_feedback_items,
+            "status": cluster_status,
+            "sources": list_of_unique_sources,
+            "github_pr_url": pr_url_if_exists,
+            "issue_title": github_issue_title,
+            "issue_description": github_issue_description,
+            "github_repo_url": repository_url
+        }
+
+    Note:
+        - Clusters are returned in creation order (newest first)
+        - Sources are deduplicated and sorted alphabetically
+        - Invalid feedback IDs are skipped during aggregation
+        - GitHub fields may be null if not yet linked to a PR/issue
+    """
 
     clusters = get_all_clusters()
     results = []
@@ -457,7 +617,39 @@ def list_clusters():
 
 @app.get("/clusters/{cluster_id}")
 def get_cluster_detail(cluster_id: str):
-    """Retrieve a cluster with its feedback items."""
+    """
+    Retrieve a cluster with its complete feedback items.
+
+    Gets detailed information about a specific cluster including all
+    associated feedback items. This provides the full context for
+    understanding an issue and its related reports.
+
+    Args:
+        cluster_id: String identifier of the cluster to retrieve
+
+    Returns:
+        Complete cluster object with feedback items:
+        {
+            "id": cluster_id,
+            "title": cluster_title,
+            "summary": cluster_summary,
+            "feedback_ids": [list_of_feedback_ids],
+            "status": cluster_status,
+            "github_pr_url": pr_url_or_null,
+            "issue_title": issue_title_or_null,
+            "issue_description": issue_description_or_null,
+            "github_repo_url": repo_url_or_null,
+            "feedback_items": [list_of_full_FeedbackItem_objects]
+        }
+
+    Raises:
+        HTTPException: 404 if cluster not found
+
+    Note:
+        - Invalid feedback IDs in cluster.feedback_ids are skipped
+        - feedback_items contains the actual FeedbackItem objects
+        - GitHub fields may be null if not yet linked to repository
+    """
 
     cluster = get_cluster(cluster_id)
     if not cluster:
@@ -492,10 +684,27 @@ def start_cluster_fix(cluster_id: str):
 
 
 def seed_mock_data():
-    """Seed a handful of feedback items and clusters for local testing."""
-
+    """
+    Seed a handful of feedback items and clusters for local testing.
+    
+    This function creates sample data that mimics real feedback from different sources.
+    Useful for development, testing, and demonstration purposes.
+    
+    Creates:
+        - 3 sample feedback items (Reddit, Sentry, Manual)
+        - 1 cluster containing all feedback items
+        - Properly linked relationships between items and cluster
+    
+    Returns:
+        Dictionary with created IDs for verification/testing:
+        {
+            "cluster_id": "uuid",
+            "feedback_ids": ["uuid1", "uuid2", "uuid3"]
+        }
+    """
     now = datetime.now(timezone.utc)
 
+    # Create sample Reddit feedback item
     feedback_one = FeedbackItem(
         id=uuid4(),
         source="reddit",
@@ -505,6 +714,8 @@ def seed_mock_data():
         metadata={"subreddit": "mock_sub"},
         created_at=now,
     )
+    
+    # Create sample Sentry error report
     feedback_two = FeedbackItem(
         id=uuid4(),
         source="sentry",
@@ -514,6 +725,8 @@ def seed_mock_data():
         metadata={},
         created_at=now,
     )
+    
+    # Create sample manual feedback
     feedback_three = FeedbackItem(
         id=uuid4(),
         source="manual",
@@ -523,9 +736,12 @@ def seed_mock_data():
         created_at=now,
     )
 
+    # Add all feedback items to the database
     for item in (feedback_one, feedback_two, feedback_three):
         add_feedback_item(item)
 
+    # Create a cluster that groups all feedback items together
+    # This simulates real-world clustering of related issues
     cluster = IssueCluster(
         id=str(uuid4()),
         title="Export failures",
@@ -554,13 +770,52 @@ class UpdateJobRequest(BaseModel):
 
 @app.get("/jobs")
 def list_jobs():
-    """List all tracking jobs."""
+    """
+    List all tracking jobs for the coding agent.
+
+    Retrieves all AgentJob records that track the progress and status
+    of fix generation tasks. Jobs are typically created when starting
+    fixes for issue clusters.
+
+    Returns:
+        List of AgentJob objects containing:
+        - id: Unique job identifier
+        - cluster_id: Associated cluster ID
+        - status: Job status (pending, running, success, failed)
+        - logs: Execution logs and output
+        - created_at: Job creation timestamp
+        - updated_at: Last status update timestamp
+
+    Note:
+        - Jobs are ordered by creation time (newest first)
+        - Logs may be null for jobs that haven't started yet
+    """
     return get_all_jobs()
 
 
 @app.post("/jobs")
 def create_job(payload: CreateJobRequest):
-    """Create a new tracking job for the coding agent."""
+    """
+    Create a new tracking job for the coding agent.
+
+    Initializes a new AgentJob record to track the progress of fix generation
+    for a specific cluster. Jobs start in "pending" status and are updated
+    as the coding agent makes progress.
+
+    Args:
+        payload: CreateJobRequest containing:
+                - cluster_id: ID of the cluster to generate a fix for
+
+    Returns:
+        Status response with created job ID:
+        {"status": "ok", "job_id": "uuid"}
+
+    Note:
+        - Job is created with "pending" status by default
+        - Logs field is initialized as null
+        - Timestamps are set to current UTC time
+        - Each cluster can have multiple jobs (for retries, etc.)
+    """
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
@@ -576,7 +831,35 @@ def create_job(payload: CreateJobRequest):
 
 @app.patch("/jobs/{job_id}")
 def update_job_status(job_id: UUID, payload: UpdateJobRequest):
-    """Update job status and/or logs."""
+    """
+    Update job status and/or logs for tracking progress.
+
+    Allows updating the status and/or logs of an existing job.
+    Only provided fields are updated; null fields are ignored.
+    Automatically updates the updated_at timestamp.
+
+    Args:
+        job_id: UUID of the job to update
+        payload: UpdateJobRequest containing optional fields:
+                - status: New job status (pending, running, success, failed)
+                - logs: Updated execution logs/output
+
+    Returns:
+        Status response:
+        - {"status": "ok"} on successful update
+        - {"status": "ok", "message": "No updates provided"} if no fields given
+
+    Status progression:
+        pending → running → success/failed
+
+    Raises:
+        HTTPException: 404 if job ID not found
+
+    Note:
+        - Both status and logs can be updated in a single call
+        - updated_at is automatically set to current UTC time
+        - Partial updates are supported (only provided fields change)
+    """
     updates = {}
     if payload.status:
         updates["status"] = payload.status
