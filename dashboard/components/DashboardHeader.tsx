@@ -39,10 +39,10 @@ export default function DashboardHeader({
             <span className="text-sm font-semibold tracking-tight text-slate-100">Soulcaster</span>
           </Link>
 
-          <nav className="hidden sm:flex items-center gap-1">
+          <nav className="flex items-center gap-1">
             <Link
               href="/"
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${pathname === '/' || activePage === 'overview'
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname === '/' || activePage === 'overview'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
@@ -51,7 +51,7 @@ export default function DashboardHeader({
             </Link>
             <Link
               href="/feedback"
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${pathname.startsWith('/feedback') || activePage === 'feedback'
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/feedback') || activePage === 'feedback'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
@@ -60,7 +60,7 @@ export default function DashboardHeader({
             </Link>
             <Link
               href="/clusters"
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${pathname.startsWith('/clusters') || activePage === 'clusters'
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/clusters') || activePage === 'clusters'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
@@ -69,7 +69,7 @@ export default function DashboardHeader({
             </Link>
             <Link
               href="/prs"
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${pathname.startsWith('/prs') || activePage === 'prs'
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/prs') || activePage === 'prs'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}

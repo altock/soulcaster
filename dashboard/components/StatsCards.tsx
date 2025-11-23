@@ -118,10 +118,6 @@ export default function StatsCards() {
                     <p className="mt-0.5 text-xl font-medium tracking-tight text-slate-50">Online</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-[0.7rem] text-slate-400">Uptime: 99.9%</p>
-                  <p className="text-[0.7rem] text-emerald-300">Latency: 24ms</p>
-                </div>
               </div>
             </div>
           </div>

@@ -84,55 +84,55 @@ export default function SourceConfig() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Configure Feedback Sources</h3>
+    <div className="bg-emerald-950/20 border border-white/10 backdrop-blur-sm rounded-3xl p-6 relative overflow-hidden mt-6">
+      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
+      <h3 className="text-lg font-semibold text-white mb-4 relative z-10">Configure Feedback Sources</h3>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 relative z-10">
         {sources.map((source) => (
           <button
             key={source.type}
             onClick={() => setSelectedSource(source.type)}
-            className={`p-4 border-2 rounded-lg text-left transition-all ${
-              selectedSource === source.type
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-200 hover:border-gray-300'
-            }`}
+            className={`p-4 border-2 rounded-2xl text-left transition-all ${selectedSource === source.type
+                ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
+                : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
+              }`}
           >
             <div className="text-2xl mb-2">{source.icon}</div>
-            <h4 className="font-semibold text-gray-900">{source.title}</h4>
-            <p className="text-sm text-gray-600 mt-1">{source.description}</p>
+            <h4 className={`font-semibold ${selectedSource === source.type ? 'text-emerald-300' : 'text-slate-200'}`}>{source.title}</h4>
+            <p className="text-sm text-slate-400 mt-1">{source.description}</p>
           </button>
         ))}
       </div>
 
       {selectedSource === 'reddit' && (
-        <div className="border-t pt-4 space-y-4">
+        <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h4 className="font-semibold text-gray-900">Reddit Poller</h4>
-              <p className="text-sm text-gray-600">
+              <h4 className="font-semibold text-slate-200">Reddit Poller</h4>
+              <p className="text-sm text-slate-400">
                 Uses public JSON feeds (no OAuth). Poller reads this list from Redis and posts to
                 the backend.
               </p>
             </div>
-            <span className="text-xs font-medium text-gray-500">
+            <span className="text-xs font-medium text-slate-500">
               1 req/sec per subreddit, caches with ETags
             </span>
           </div>
 
-          <div className="bg-gray-50 p-4 rounded-md space-y-3">
+          <div className="bg-black/20 border border-white/5 p-4 rounded-xl space-y-3">
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 type="text"
                 placeholder="add subreddit (e.g., claudeai)"
                 value={newSubreddit}
                 onChange={(e) => setNewSubreddit(e.target.value)}
-                className="flex-1 min-w-[200px] rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1 min-w-[200px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
               />
               <button
                 type="button"
                 onClick={addSubreddit}
-                className="px-3 py-2 text-sm font-semibold text-white bg-blue-600 rounded hover:bg-blue-700"
+                className="px-3 py-2 text-sm font-semibold text-black bg-emerald-500 rounded-lg hover:bg-emerald-400 transition-colors"
               >
                 Add
               </button>
@@ -140,33 +140,32 @@ export default function SourceConfig() {
                 type="button"
                 onClick={saveSubreddits}
                 disabled={savingSubs || subreddits.length === 0}
-                className={`px-3 py-2 text-sm font-semibold rounded ${
-                  savingSubs || subreddits.length === 0
-                    ? 'bg-gray-300 text-gray-600'
-                    : 'bg-green-600 text-white hover:bg-green-700'
-                }`}
+                className={`px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${savingSubs || subreddits.length === 0
+                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                  }`}
               >
                 {savingSubs ? 'Saving…' : 'Save list'}
               </button>
             </div>
 
             {loadingSubs ? (
-              <p className="text-sm text-gray-500">Loading subreddits…</p>
+              <p className="text-sm text-slate-500">Loading subreddits…</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {subreddits.length === 0 && (
-                  <span className="text-sm text-gray-500">No subreddits configured yet.</span>
+                  <span className="text-sm text-slate-500">No subreddits configured yet.</span>
                 )}
                 {subreddits.map((sub) => (
                   <span
                     key={sub}
-                    className="inline-flex items-center gap-2 bg-white border border-gray-200 rounded-full px-3 py-1 text-sm"
+                    className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-3 py-1 text-sm text-slate-300"
                   >
                     r/{sub}
                     <button
                       type="button"
                       onClick={() => removeSubreddit(sub)}
-                      className="text-gray-500 hover:text-red-600"
+                      className="text-slate-500 hover:text-rose-400 transition-colors"
                     >
                       ✕
                     </button>
@@ -175,25 +174,25 @@ export default function SourceConfig() {
               </div>
             )}
 
-            {subsMessage && <p className="text-sm text-green-700">{subsMessage}</p>}
-            {subsError && <p className="text-sm text-red-600">{subsError}</p>}
-            <p className="text-xs text-gray-500">
+            {subsMessage && <p className="text-sm text-emerald-400">{subsMessage}</p>}
+            {subsError && <p className="text-sm text-rose-400">{subsError}</p>}
+            <p className="text-xs text-slate-500">
               Keep this list small (e.g., 1–3 subs). Poller runs server-side: `python -m
               backend.reddit_poller`.
             </p>
           </div>
 
-          <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2">
-            <p>
+          <div className="bg-black/20 border border-white/5 p-4 rounded-xl text-sm space-y-2">
+            <p className="text-slate-300">
               <strong>Poller command (runs continuously):</strong>
             </p>
-            <pre className="bg-gray-800 text-gray-100 p-2 rounded overflow-x-auto">
+            <pre className="bg-black/60 border border-white/10 text-emerald-400/90 p-3 rounded-lg overflow-x-auto font-mono text-xs">
               {`BACKEND_URL=http://localhost:8000 \\
 UPSTASH_REDIS_REST_URL=... \\
 UPSTASH_REDIS_REST_TOKEN=... \\
 python -m backend.reddit_poller`}
             </pre>
-            <p className="text-gray-600">
+            <p className="text-slate-500">
               The poller re-reads this list every cycle (5–10 minutes by default) and posts new
               items to `/ingest/reddit`.
             </p>
@@ -202,35 +201,35 @@ python -m backend.reddit_poller`}
       )}
 
       {selectedSource === 'sentry' && (
-        <div className="border-t pt-4 space-y-3">
-          <h4 className="font-semibold text-gray-900">Sentry Setup Instructions</h4>
-          <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2">
-            <p>
+        <div className="border-t border-white/10 pt-4 space-y-3 relative z-10">
+          <h4 className="font-semibold text-slate-200">Sentry Setup Instructions</h4>
+          <div className="bg-black/20 border border-white/5 p-4 rounded-xl text-sm space-y-2">
+            <p className="text-slate-300">
               <strong>1. Configure webhook URL in Sentry:</strong>
             </p>
-            <pre className="bg-gray-800 text-gray-100 p-2 rounded overflow-x-auto">
+            <pre className="bg-black/60 border border-white/10 text-emerald-400/90 p-3 rounded-lg overflow-x-auto font-mono text-xs">
               {typeof window !== 'undefined'
                 ? `${window.location.origin}/api/ingest/sentry`
                 : 'http://your-domain.com/api/ingest/sentry'}
             </pre>
 
-            <p>
+            <p className="text-slate-300">
               <strong>2. In Sentry project settings:</strong>
             </p>
-            <ul className="list-disc list-inside space-y-1 text-gray-700">
+            <ul className="list-disc list-inside space-y-1 text-slate-400">
               <li>Go to Settings → Integrations → WebHooks</li>
               <li>Add the webhook URL above</li>
               <li>Enable "Issue" events</li>
               <li>Save the webhook configuration</li>
             </ul>
 
-            <p className="text-gray-600 mt-3">
+            <p className="text-slate-500 mt-3">
               📖 Learn more at{' '}
               <a
                 href="https://docs.sentry.io/product/integrations/integration-platform/webhooks/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
+                className="text-emerald-400 hover:underline"
               >
                 Sentry Webhook Docs
               </a>
@@ -240,7 +239,7 @@ python -m backend.reddit_poller`}
       )}
 
       {!selectedSource && (
-        <p className="text-sm text-gray-500 text-center py-4">
+        <p className="text-sm text-slate-500 text-center py-4 relative z-10">
           Select a source above to view setup instructions
         </p>
       )}

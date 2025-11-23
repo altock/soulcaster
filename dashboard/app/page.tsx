@@ -9,7 +9,7 @@ export default function Home() {
         {/* Glow Effect */}
         <div className="pointer-events-none absolute -top-24 left-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-[100px] opacity-50"></div>
 
-        <div className="z-10 max-w-2xl relative">
+        <div className="z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
           <div className="inline-flex bg-emerald-500/5 border-emerald-500/20 border rounded-full mb-6 pt-1 pr-3 pb-1 pl-3 backdrop-blur-md gap-x-2 gap-y-2 items-center transition-all hover:bg-emerald-500/10 hover:border-emerald-500/30 cursor-default">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
@@ -60,7 +60,7 @@ export default function Home() {
       <div className="h-px animate-in delay-100 bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent w-full mb-12"></div>
 
       {/* Dashboard Grid */}
-      <div className="grid gap-6 lg:grid-cols-2 gap-x-6 gap-y-6">
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <StatsCards />
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">

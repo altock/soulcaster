@@ -69,14 +69,14 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
   return (
     <div>
       {/* Filter tabs */}
-      <div className="flex gap-2 mb-6 border-b border-matrix-border">
+      <div className="flex gap-2 mb-6 border-b border-white/10 pb-1">
         {(['all', 'reddit', 'sentry', 'manual'] as const).map((filter) => (
           <button
             key={filter}
             onClick={() => setSourceFilter(filter)}
-            className={`px-4 py-2 text-sm font-bold transition-colors uppercase tracking-wider ${sourceFilter === filter
-                ? 'border-b-2 border-matrix-green text-matrix-green drop-shadow-[0_0_5px_rgba(0,255,148,0.5)]'
-                : 'text-gray-400 hover:text-matrix-green'
+            className={`px-4 py-2 text-sm font-medium transition-all uppercase tracking-wider rounded-t-lg relative top-[1px] ${sourceFilter === filter
+                ? 'border-b-2 border-emerald-500 text-emerald-400 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]'
+                : 'text-slate-500 hover:text-emerald-300'
               }`}
           >
             {filter.charAt(0).toUpperCase() + filter.slice(1)}
@@ -85,9 +85,12 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
       </div>
 
       {items.length === 0 ? (
-        <div className="text-center py-12 bg-netflix-dark-gray rounded-lg border border-gray-800">
+        <div className="text-center py-16 bg-emerald-950/20 rounded-3xl border border-white/10 backdrop-blur-sm">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white/5 mb-4">
+            <span className="text-2xl">📭</span>
+          </div>
           <h3 className="text-lg font-medium text-white">No feedback items found</h3>
-          <p className="mt-2 text-sm text-gray-400">
+          <p className="mt-2 text-sm text-slate-400 max-w-sm mx-auto">
             {sourceFilter === 'all'
               ? 'Start by submitting manual feedback or configuring Reddit/Sentry sources.'
               : `No ${sourceFilter} feedback items yet.`}
