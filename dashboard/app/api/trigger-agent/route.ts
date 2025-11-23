@@ -13,8 +13,12 @@ const ecsClient = new ECSClient({
 export async function POST(request: Request) {
     try {
         const body = await request.json();
+        console.log('Trigger Agent Request:', {
+            hasGithubToken: !!process.env.GITHUB_TOKEN,
+            bodyKeys: Object.keys(body)
+        });
         let { issue_url } = body;
-        const { context, issue_title, repo: paramRepo, owner: paramOwner } = body;
+        const { context, issue_title, repo: paramRepo, owner: paramOwner, repo_url } = body;
 
         // Verify issue_url if provided
         if (issue_url && process.env.GITHUB_TOKEN) {
@@ -54,8 +58,17 @@ export async function POST(request: Request) {
             if (context && process.env.GITHUB_TOKEN) {
                 try {
                     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-                    const owner = paramOwner || process.env.GITHUB_OWNER;
-                    const repo = paramRepo || process.env.GITHUB_REPO;
+                    let owner = paramOwner || process.env.GITHUB_OWNER;
+                    let repo = paramRepo || process.env.GITHUB_REPO;
+
+                    // If repo_url is provided, try to extract owner/repo from it
+                    if (repo_url) {
+                        const match = repo_url.match(/github\.com\/([^/]+)\/([^/]+)/);
+                        if (match) {
+                            owner = match[1];
+                            repo = match[2].replace('.git', ''); // Handle .git extension if present
+                        }
+                    }
 
                     if (!owner || !repo) {
                         console.error('Missing owner/repo details');
@@ -85,14 +98,17 @@ export async function POST(request: Request) {
                 }
             } else {
                 return NextResponse.json(
-                    { error: 'Missing issue_url. Provide issue_url OR (context + GITHUB_TOKEN configured)' },
+                    {
+                        error: 'Configuration Error',
+                        details: 'Missing issue_url. To create an issue automatically, provide (context + repo_url/owner+repo) AND ensure GITHUB_TOKEN is set in dashboard/.env'
+                    },
                     { status: 400 }
                 );
             }
         }
 
         if (!issue_url) {
-             return NextResponse.json(
+            return NextResponse.json(
                 { error: 'Failed to resolve issue_url' },
                 { status: 400 }
             );
@@ -106,7 +122,7 @@ export async function POST(request: Request) {
         // Let's check if we can get cluster_id from body or context.
         // Actually start_fix endpoint calls this.
         // We should probably accept cluster_id in the body of this endpoint.
-        
+
         const { cluster_id } = body;
         if (cluster_id) {
             try {
@@ -128,7 +144,7 @@ export async function POST(request: Request) {
         }
 
         const envOverrides = [
-             { name: "BACKEND_URL", value: BACKEND_URL },
+            { name: "BACKEND_URL", value: BACKEND_URL },
         ];
         if (jobId) {
             envOverrides.push({ name: "JOB_ID", value: jobId });

@@ -13,7 +13,7 @@ class AgentJob(BaseModel):
     """
 
     id: UUID
-    cluster_id: UUID
+    cluster_id: str
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
     created_at: datetime
@@ -49,10 +49,10 @@ class FeedbackItem(BaseModel):
 class IssueCluster(BaseModel):
     """Represents a cluster of related feedback items."""
 
-    id: UUID
+    id: str
     title: str
     summary: str
-    feedback_ids: List[UUID]
+    feedback_ids: List[str]
     status: str
     created_at: datetime
     updated_at: datetime

@@ -257,8 +257,8 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
             break
 
     if existing:
-        if item.id not in existing.feedback_ids:
-            updated_ids = existing.feedback_ids + [item.id]
+        if str(item.id) not in existing.feedback_ids:
+            updated_ids = existing.feedback_ids + [str(item.id)]
             return update_cluster(
                 existing.id,
                 feedback_ids=updated_ids,
@@ -268,10 +268,10 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
 
     # Create new cluster
     cluster = IssueCluster(
-        id=uuid4(),
+        id=str(uuid4()),
         title=cluster_title,
         summary=cluster_summary,
-        feedback_ids=[item.id],
+        feedback_ids=[str(item.id)],
         status="new",
         created_at=now,
         updated_at=now,
@@ -381,8 +381,16 @@ def list_clusters():
     clusters = get_all_clusters()
     results = []
     for cluster in clusters:
-        feedback_items = [get_feedback_item(fid) for fid in cluster.feedback_ids]
-        sources = sorted({item.source for item in feedback_items if item})
+        feedback_items = []
+        for fid in cluster.feedback_ids:
+            try:
+                item = get_feedback_item(UUID(fid))
+                if item:
+                    feedback_items.append(item)
+            except (ValueError, AttributeError):
+                continue
+        
+        sources = sorted({item.source for item in feedback_items})
         results.append(
             {
                 "id": cluster.id,
@@ -398,21 +406,31 @@ def list_clusters():
 
 
 @app.get("/clusters/{cluster_id}")
-def get_cluster_detail(cluster_id: UUID):
+def get_cluster_detail(cluster_id: str):
     """Retrieve a cluster with its feedback items."""
 
     cluster = get_cluster(cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
-    feedback_items = [get_feedback_item(fid) for fid in cluster.feedback_ids]
+    feedback_items = []
+    for fid in cluster.feedback_ids:
+        try:
+            # feedback_ids are stored as strings, but get_feedback_item expects UUID
+            item = get_feedback_item(UUID(fid))
+            if item:
+                feedback_items.append(item)
+        except (ValueError, AttributeError):
+            # Skip invalid UUIDs
+            continue
+    
     response = cluster.model_dump()
-    response["feedback_items"] = [item for item in feedback_items if item]
+    response["feedback_items"] = feedback_items
     return response
 
 
 @app.post("/clusters/{cluster_id}/start_fix")
-def start_cluster_fix(cluster_id: UUID):
+def start_cluster_fix(cluster_id: str):
     """Begin fix generation for a cluster (stub implementation)."""
 
     cluster = get_cluster(cluster_id)
@@ -459,10 +477,10 @@ def seed_mock_data():
         add_feedback_item(item)
 
     cluster = IssueCluster(
-        id=uuid4(),
+        id=str(uuid4()),
         title="Export failures",
         summary="Users report export crashes across browsers.",
-        feedback_ids=[feedback_one.id, feedback_two.id, feedback_three.id],
+        feedback_ids=[str(feedback_one.id), str(feedback_two.id), str(feedback_three.id)],
         status="new",
         created_at=now,
         updated_at=now,
@@ -476,7 +494,7 @@ def seed_mock_data():
 
 
 class CreateJobRequest(BaseModel):
-    cluster_id: UUID
+    cluster_id: str
 
 
 class UpdateJobRequest(BaseModel):
@@ -530,6 +548,6 @@ def get_job_details(job_id: UUID):
 
 
 @app.get("/clusters/{cluster_id}/jobs")
-def get_cluster_jobs(cluster_id: UUID):
+def get_cluster_jobs(cluster_id: str):
     """List all jobs associated with a cluster."""
     return get_jobs_by_cluster(cluster_id)
