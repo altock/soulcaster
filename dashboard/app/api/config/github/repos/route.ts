@@ -20,6 +20,28 @@ export async function GET() {
     const repoNames = (await redis.smembers('github:repos')) as string[];
     console.log(`[GitHub] Found ${repoNames.length} configured repos`);
 
+    // Get all GitHub feedback IDs
+    const allGithubFeedbackIds = (await redis.zrange('feedback:source:github', 0, -1)) as string[];
+
+    // Count issues per repo by fetching and checking the repo field
+    const repoIssueCounts: Record<string, number> = {};
+
+    // Fetch all GitHub feedback items to count by repo
+    if (allGithubFeedbackIds.length > 0) {
+      const pipeline = redis.pipeline();
+      allGithubFeedbackIds.forEach(id => {
+        pipeline.hget(`feedback:${id}`, 'repo');
+      });
+      const repoFields = await pipeline.exec() as (string | null)[];
+
+      // Count issues per repo
+      repoFields.forEach((repo) => {
+        if (repo) {
+          repoIssueCounts[repo] = (repoIssueCounts[repo] || 0) + 1;
+        }
+      });
+    }
+
     // Fetch full config for each repo
     const repos: GitHubRepo[] = [];
     for (const repoName of repoNames) {
@@ -30,7 +52,7 @@ export async function GET() {
           repo: repoData.repo as string,
           full_name: repoName,
           last_synced: repoData.last_synced as string | undefined,
-          issue_count: repoData.issue_count ? parseInt(repoData.issue_count as string) : 0,
+          issue_count: repoIssueCounts[repoName] || 0, // Use actual count from Redis
           enabled: repoData.enabled === 'true',
         });
       }

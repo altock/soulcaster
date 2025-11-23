@@ -99,9 +99,9 @@ export async function getClusters(): Promise<ClusterListItem[]> {
 
       const feedbackIds = await getClusterFeedbackIds(id);
 
-      // Get first few feedback items to determine sources
+      // Get ALL feedback items to determine sources and repos accurately
       const feedbackItems = await Promise.all(
-        feedbackIds.slice(0, 10).map((fid) => getFeedbackItem(fid))
+        feedbackIds.map((fid) => getFeedbackItem(fid))
       );
 
       const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
