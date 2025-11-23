@@ -8,6 +8,7 @@ interface ManualFeedbackFormProps {
 
 export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProps) {
   const [text, setText] = useState('');
+  const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -26,7 +27,10 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text: text.trim() }),
+        body: JSON.stringify({
+          text: text.trim(),
+          github_repo_url: githubRepoUrl.trim() || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -35,6 +39,7 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
 
       setSuccess(true);
       setText('');
+      setGithubRepoUrl('');
       onSuccess?.();
 
       // Clear success message after 3 seconds
@@ -60,6 +65,17 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
           className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 resize-none transition-all"
           disabled={isSubmitting}
         />
+
+        <div className="mt-4">
+          <input
+            type="url"
+            value={githubRepoUrl}
+            onChange={(e) => setGithubRepoUrl(e.target.value)}
+            placeholder="GitHub Repository URL"
+            className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-all"
+            disabled={isSubmitting}
+          />
+        </div>
 
         <div className="mt-4 flex items-center justify-between">
           <div>

@@ -10,6 +10,7 @@ export interface FeedbackItem {
   external_id?: string | null;
   title: string;
   body: string;
+  github_repo_url?: string;
   metadata: Record<string, any>;
   created_at: string;
   embedding?: number[];

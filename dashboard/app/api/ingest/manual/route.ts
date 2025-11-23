@@ -13,11 +13,13 @@ export async function POST(request: NextRequest) {
     const lines = body.text.trim().split('\n');
     const title = lines[0].substring(0, 80) || 'Manual feedback';
     const bodyText = body.text;
+    const githubRepoUrl = body.github_repo_url;
 
     // Write directly to Redis
     const feedbackId = await createFeedback({
       title,
       body: bodyText,
+      github_repo_url: githubRepoUrl,
       source: 'manual',
       metadata: {
         submitted_at: new Date().toISOString(),

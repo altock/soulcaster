@@ -74,6 +74,7 @@ export async function getFeedbackItem(id: string): Promise<FeedbackItem | null> 
     external_id: data.external_id as string | null | undefined,
     title: data.title as string,
     body: data.body as string,
+    github_repo_url: data.github_repo_url as string | undefined,
     metadata: metadata as Record<string, any>,
     created_at: data.created_at as string,
   };
@@ -255,6 +256,7 @@ export async function setRedditSubreddits(subreddits: string[]): Promise<void> {
 export async function createFeedback(data: {
   title: string;
   body: string;
+  github_repo_url?: string;
   source?: 'reddit' | 'sentry' | 'manual';
   metadata?: Record<string, any>;
 }): Promise<string> {
@@ -268,6 +270,7 @@ export async function createFeedback(data: {
     source,
     title: data.title,
     body: data.body,
+    ...(data.github_repo_url && { github_repo_url: data.github_repo_url }),
     metadata: JSON.stringify(data.metadata || {}),
     created_at: new Date(timestamp).toISOString(),
     clustered: 'false', // Track if this has been clustered
