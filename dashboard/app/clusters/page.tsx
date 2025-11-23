@@ -17,9 +17,12 @@ export default function ClustersListPage() {
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [unclusteredCount, setUnclusteredCount] = useState(0);
+  const [isClustering, setIsClustering] = useState(false);
 
   useEffect(() => {
     fetchClusters();
+    fetchUnclusteredCount();
   }, []);
 
   const fetchClusters = async () => {
@@ -36,6 +39,49 @@ export default function ClustersListPage() {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchUnclusteredCount = async () => {
+    try {
+      const response = await fetch('/api/clusters/unclustered');
+      if (response.ok) {
+        const data = await response.json();
+        setUnclusteredCount(data.count);
+      }
+    } catch (err) {
+      console.error('Failed to fetch unclustered count:', err);
+    }
+  };
+
+  const handleRunClustering = async () => {
+    try {
+      setIsClustering(true);
+      const response = await fetch('/api/clusters/run', {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to run clustering');
+      }
+
+      const result = await response.json();
+
+      // Refresh clusters and unclustered count
+      await fetchClusters();
+      await fetchUnclusteredCount();
+
+      // Show success message
+      alert(
+        `Clustering complete!\n` +
+        `- Processed: ${result.clustered} items\n` +
+        `- New clusters: ${result.newClusters}\n` +
+        `- Updated clusters: ${result.updatedClusters || 0}`
+      );
+    } catch (err) {
+      alert('Failed to run clustering: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsClustering(false);
     }
   };
 
@@ -131,11 +177,34 @@ export default function ClustersListPage() {
     <>
       <DashboardHeader activePage="clusters" className="mb-8" />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-900">Issue Clusters</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Clustered feedback from Reddit and Sentry
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Issue Clusters</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Clustered feedback from Reddit and Sentry
+          </p>
+        </div>
+        {unclusteredCount > 0 && (
+          <button
+            onClick={handleRunClustering}
+            disabled={isClustering}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 text-sm font-medium flex items-center gap-2"
+          >
+            {isClustering ? (
+              <>
+                <span className="animate-spin">⏳</span>
+                Clustering...
+              </>
+            ) : (
+              <>
+                Run Clustering
+                <span className="px-2 py-0.5 bg-blue-500 rounded-full text-xs">
+                  {unclusteredCount}
+                </span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       <div className="bg-white shadow-sm rounded-lg overflow-hidden">

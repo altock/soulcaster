@@ -9,7 +9,7 @@ const redis = new Redis({
 /**
  * Get all cluster IDs from Redis sorted by creation time (newest first)
  */
-async function getClusterIds(): Promise<string[]> {
+export async function getClusterIds(): Promise<string[]> {
   // Redis stores clusters as individual hashes with keys like cluster:{uuid}
   // We need to scan for all cluster keys
   const keys = await redis.keys('cluster:*');
@@ -58,7 +58,7 @@ async function getClusterFeedbackIds(clusterId: string): Promise<string[]> {
 /**
  * Get a single feedback item by ID
  */
-async function getFeedbackItem(id: string): Promise<FeedbackItem | null> {
+export async function getFeedbackItem(id: string): Promise<FeedbackItem | null> {
   const data = await redis.hgetall(`feedback:${id}`);
 
   if (!data || Object.keys(data).length === 0) {
@@ -303,3 +303,4 @@ export async function getUnclusteredFeedbackIds(): Promise<string[]> {
   const ids = await redis.smembers('feedback:unclustered');
   return ids as string[];
 }
+
