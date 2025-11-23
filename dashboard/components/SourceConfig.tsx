@@ -94,8 +94,8 @@ export default function SourceConfig() {
             key={source.type}
             onClick={() => setSelectedSource(source.type)}
             className={`p-4 border-2 rounded-2xl text-left transition-all ${selectedSource === source.type
-                ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
-                : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
+              ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
+              : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
               }`}
           >
             <div className="text-2xl mb-2">{source.icon}</div>
@@ -141,11 +141,32 @@ export default function SourceConfig() {
                 onClick={saveSubreddits}
                 disabled={savingSubs || subreddits.length === 0}
                 className={`px-3 py-2 text-sm font-semibold rounded-lg transition-colors ${savingSubs || subreddits.length === 0
-                    ? 'bg-white/5 text-slate-500 cursor-not-allowed'
-                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
+                  ? 'bg-white/5 text-slate-500 cursor-not-allowed'
+                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30'
                   }`}
               >
                 {savingSubs ? 'Saving…' : 'Save list'}
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/admin/trigger-poll`, {
+                      method: 'POST',
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      alert(`Poll triggered: ${data.message}`);
+                    } else {
+                      alert(`Failed to trigger poll: ${data.detail || 'Unknown error'}`);
+                    }
+                  } catch (err) {
+                    alert('Failed to connect to backend poller');
+                  }
+                }}
+                className="px-3 py-2 text-sm font-semibold text-emerald-300 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/10 transition-colors"
+              >
+                ⚡ Trigger Poll
               </button>
             </div>
 
@@ -177,24 +198,7 @@ export default function SourceConfig() {
             {subsMessage && <p className="text-sm text-emerald-400">{subsMessage}</p>}
             {subsError && <p className="text-sm text-rose-400">{subsError}</p>}
             <p className="text-xs text-slate-500">
-              Keep this list small (e.g., 1–3 subs). Poller runs server-side: `python -m
-              backend.reddit_poller`.
-            </p>
-          </div>
-
-          <div className="bg-black/20 border border-white/5 p-4 rounded-xl text-sm space-y-2">
-            <p className="text-slate-300">
-              <strong>Poller command (runs continuously):</strong>
-            </p>
-            <pre className="bg-black/60 border border-white/10 text-emerald-400/90 p-3 rounded-lg overflow-x-auto font-mono text-xs">
-              {`BACKEND_URL=http://localhost:8000 \\
-UPSTASH_REDIS_REST_URL=... \\
-UPSTASH_REDIS_REST_TOKEN=... \\
-python -m backend.reddit_poller`}
-            </pre>
-            <p className="text-slate-500">
-              The poller re-reads this list every cycle (5–10 minutes by default) and posts new
-              items to `/ingest/reddit`.
+              Keep this list small (e.g., 1–3 subs).
             </p>
           </div>
         </div>

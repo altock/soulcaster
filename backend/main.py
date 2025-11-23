@@ -37,6 +37,7 @@ try:
         update_job,
         get_jobs_by_cluster,
     )
+    from .reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
 except ImportError:
     from models import FeedbackItem, IssueCluster, AgentJob
     from store import (
@@ -55,6 +56,7 @@ except ImportError:
         update_job,
         get_jobs_by_cluster,
     )
+    from reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -228,6 +230,41 @@ def set_reddit_config(payload: SubredditConfig):
         raise HTTPException(status_code=400, detail="At least one subreddit is required.")
     set_reddit_subreddits(cleaned)
     return {"subreddits": cleaned}
+
+
+@app.post("/admin/trigger-poll")
+async def trigger_poll():
+    """Manually trigger a Reddit poll cycle (waits for completion)."""
+    subreddits = get_reddit_config_list()
+    if not subreddits:
+        return {"status": "skipped", "message": "No subreddits configured"}
+    
+    from fastapi.concurrency import run_in_threadpool
+    
+    # Helper to ingest directly without HTTP request (avoids deadlock)
+    def direct_ingest(payload: dict):
+        # Convert dict payload to FeedbackItem
+        # Note: payload has 'created_at' as ISO string, but FeedbackItem expects datetime
+        # However, pydantic might handle string parsing if type is datetime
+        # Let's check models.py or just try. Pydantic usually handles ISO strings.
+        # But wait, payload['created_at'] is string. FeedbackItem.created_at is datetime.
+        # Pydantic V2 handles this. V1 does too usually.
+        try:
+            item = FeedbackItem(**payload)
+            add_feedback_item(item)
+            _auto_cluster_feedback(item)
+        except Exception as e:
+            print(f"Error in direct ingest: {e}")
+            raise e
+
+    try:
+        # Run in threadpool to avoid blocking the event loop
+        # Pass direct_ingest as ingest_fn
+        await run_in_threadpool(poll_once, subreddits, ingest_fn=direct_ingest)
+        return {"status": "ok", "message": f"Polled {len(subreddits)} subreddits"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # Simple clustering: group by source (and subreddit for Reddit)

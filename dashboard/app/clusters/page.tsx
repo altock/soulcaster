@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
+import SourceConfig from '@/components/SourceConfig';
 
 /**
  * Renders a client-side page that lists issue clusters and handles loading, error, and empty states.
@@ -18,6 +19,7 @@ export default function ClustersListPage() {
   const [error, setError] = useState<string | null>(null);
   const [unclusteredCount, setUnclusteredCount] = useState(0);
   const [isClustering, setIsClustering] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
 
   useEffect(() => {
     loadClustersAndAutoCluster();
@@ -172,15 +174,29 @@ export default function ClustersListPage() {
               Grouped feedback items ready for analysis and action.
             </p>
           </div>
-          <button
-            onClick={triggerClustering}
-            disabled={isClustering}
-            className={`px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${isClustering ? 'animate-pulse' : ''
-              }`}
-          >
-            {isClustering ? 'Running AI Clustering...' : 'Run Clustering'}
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className={`px-4 py-3 border border-white/10 text-sm font-medium rounded-full text-slate-300 hover:bg-white/5 transition-all ${showConfig ? 'bg-white/10 text-white' : ''}`}
+            >
+              {showConfig ? 'Hide Sources' : 'Configure Sources'}
+            </button>
+            <button
+              onClick={triggerClustering}
+              disabled={isClustering}
+              className={`px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${isClustering ? 'animate-pulse' : ''
+                }`}
+            >
+              {isClustering ? 'Running AI Clustering...' : 'Run Clustering'}
+            </button>
+          </div>
         </div>
+
+        {showConfig && (
+          <div className="mb-8 animate-in slide-in-from-top-4 fade-in duration-300">
+            <SourceConfig />
+          </div>
+        )}
 
         {error && (
           <div className="rounded-lg bg-red-900/20 p-4 mb-6 border border-red-900/50">

@@ -217,7 +217,12 @@ class RedditPoller:
                 self.sleep(self.throttle_seconds - elapsed)
         self.last_request_at[subreddit] = time.monotonic()
 
-    def poll_once(self, subreddits: Iterable[str], backend_url: Optional[str] = None) -> None:
+    def poll_once(
+        self,
+        subreddits: Iterable[str],
+        backend_url: Optional[str] = None,
+        ingest_fn=None,
+    ) -> None:
         """Fetch posts once and send them to the ingestion API."""
         posts = self.fetch_reddit_posts(subreddits)
         if not posts:
@@ -242,6 +247,23 @@ class RedditPoller:
                 },
                 "created_at": _now_iso(post["created_utc"]),
             }
+            
+            if ingest_fn:
+                try:
+                    # If running in-process, use the callback directly
+                    # The callback expects a FeedbackItem object or dict depending on implementation
+                    # But ingest_reddit in main.py expects a FeedbackItem
+                    # We'll assume ingest_fn handles the conversion or we pass the dict if it expects dict
+                    # Actually, ingest_reddit expects FeedbackItem.
+                    # We should probably construct the FeedbackItem here if we are calling it directly.
+                    # But let's see how we can pass it.
+                    # To avoid circular imports, we might pass a wrapper.
+                    ingest_fn(payload)
+                    print(f"Ingested (direct) r/{post['subreddit']} post {post['id']}: {post['title'][:80]}")
+                except Exception as exc:
+                    print(f"Failed to ingest (direct) Reddit item {post['id']}: {exc}")
+                continue
+
             try:
                 response = requests.post(ingest_url, json=payload, timeout=10)
                 response.raise_for_status()
@@ -265,6 +287,12 @@ def fetch_reddit_posts(subreddits: List[str]) -> List[dict]:
     """Module-level helper mirroring the requested interface."""
     poller = RedditPoller()
     return poller.fetch_reddit_posts(subreddits)
+
+
+def poll_once(subreddits: Iterable[str], backend_url: Optional[str] = None, ingest_fn=None) -> None:
+    """Module-level helper for single poll."""
+    poller = RedditPoller()
+    poller.poll_once(subreddits, backend_url=backend_url, ingest_fn=ingest_fn)
 
 
 # Alias to match the TS-like name in the task description

@@ -6,9 +6,12 @@ import sys
 import time
 import json
 import requests
+import tempfile
+import shutil
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Global log buffer
+# Global state
 LOG_BUFFER = []
 
 def log(message: str):
@@ -16,9 +19,8 @@ def log(message: str):
     print(message)
     LOG_BUFFER.append(message)
 
-def update_job(status: str, logs: str = None):
+def update_job(job_id: str, status: str, logs: str = None):
     """Update job status in backend."""
-    job_id = os.getenv("JOB_ID")
     backend_url = os.getenv("BACKEND_URL")
     
     if not job_id or not backend_url:
@@ -69,22 +71,7 @@ def parse_issue_url(url):
         raise ValueError("Invalid GitHub issue URL")
     return match.group(1), match.group(2), match.group(3)
 
-from dotenv import load_dotenv
-
-def main():
-    load_dotenv()  # Load API keys from .env
-    
-    update_job("running")
-    
-    try:
-        _run_agent_logic()
-        update_job("success", "\n".join(LOG_BUFFER))
-    except Exception as e:
-        log(f"CRITICAL FAILURE: {e}")
-        update_job("failed", "\n".join(LOG_BUFFER))
-        sys.exit(1)
-
-def _run_agent_logic():
+def _run_agent_logic(issue_url):
     # Configure Kilo for Gemini if GEMINI_API_KEY is present
     if os.getenv("GEMINI_API_KEY"):
         log("Configuring Kilo for Gemini via config file...")
@@ -188,22 +175,19 @@ def _run_agent_logic():
         except Exception as e:
             log(f"Failed to write Kilo config: {e}")
     
-    parser = argparse.ArgumentParser(description="Fix a GitHub issue using Kilo CLI")
-    parser.add_argument("issue_url", help="URL of the GitHub issue to fix")
-    args = parser.parse_args()
-
-    owner, repo, issue_num = parse_issue_url(args.issue_url)
+    owner, repo, issue_num = parse_issue_url(issue_url)
     log(f"Processing Issue #{issue_num} for {owner}/{repo}")
 
     # 1. Clone the repo
-    repo_url = f"https://github.com/{owner}/{repo}.git"
-    repo_dir = repo
+    # Create a temp dir to avoid nesting git repos
+    temp_dir = tempfile.mkdtemp(prefix="kilo_agent_")
+    log(f"Created temp directory: {temp_dir}")
     
-    if os.path.exists(repo_dir):
-        log(f"Directory {repo_dir} already exists. Using existing directory.")
-    else:
-        log(f"Cloning {repo_url}...")
-        run_command(f"gh repo clone {owner}/{repo}")
+    repo_url = f"https://github.com/{owner}/{repo}.git"
+    repo_dir = os.path.join(temp_dir, repo)
+    
+    log(f"Cloning {repo_url} into {repo_dir}...")
+    run_command(f"gh repo clone {owner}/{repo} {repo_dir}")
 
     cwd = os.path.abspath(repo_dir)
 
@@ -259,10 +243,6 @@ def _run_agent_logic():
         shell=True,
         env=os.environ
     )
-    
-    # DEBUG: Uncomment below to verify subprocess.call is returning
-    # print(f"DEBUG: subprocess.call returned with exit code: {exit_code}")
-    # sys.stdout.flush()
     
     if exit_code != 0:
         raise Exception(f"Kilo exited with code {exit_code}")
@@ -327,6 +307,24 @@ def apply_patches_from_markdown(markdown_text, cwd):
     # This is harder to guess. We'll stick to explicit patterns or maybe look for "File: filename" lines before blocks.
     
     return applied_count > 0
+
+def main():
+    load_dotenv()  # Load API keys from .env
+    
+    parser = argparse.ArgumentParser(description="Fix a GitHub issue using Kilo CLI")
+    parser.add_argument("issue_url", help="URL of the GitHub issue to fix")
+    parser.add_argument("--job-id", help="Job ID for backend updates")
+    args = parser.parse_args()
+
+    update_job(args.job_id, "running")
+    
+    try:
+        _run_agent_logic(args.issue_url)
+        update_job(args.job_id, "success", "\n".join(LOG_BUFFER))
+    except Exception as e:
+        log(f"CRITICAL FAILURE: {e}")
+        update_job(args.job_id, "failed", "\n".join(LOG_BUFFER))
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
