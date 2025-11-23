@@ -8,7 +8,14 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Install GitHub CLI
 RUN type -p curl >/dev/null || (apt update && apt install curl -y)
@@ -18,22 +25,15 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt update \
     && apt install gh -y
 
+# Install Kilo CLI
+RUN npm install -g @kilocode/cli
+
 # Copy the current directory contents into the container at /app
 COPY . /app
-
-# Install any needed packages specified in requirements.txt
-# (If you have a requirements.txt, uncomment the next line)
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# Install python-dotenv
-RUN pip install python-dotenv
-
-# Make port 80 available to the world outside this container (optional, not needed for batch task)
-# EXPOSE 80
 
 # Define environment variable
 ENV NAME CodingAgent
 
 # Run fix_issue.py when the container launches
 # The arguments will be passed via the ECS RunTask overrides
-ENTRYPOINT ["python", "fix_issue.py"]
+ENTRYPOINT ["uv", "run", "fix_issue.py"]

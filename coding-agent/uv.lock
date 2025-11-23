@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 
 [[package]]
 name = "coding-agent"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "python-dotenv", specifier = ">=1.2.1" }]
+requires-dist = [{ name = "python-dotenv" }]
 
 [[package]]
 name = "python-dotenv"
