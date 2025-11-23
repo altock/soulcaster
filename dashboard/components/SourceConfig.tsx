@@ -111,7 +111,8 @@ export default function SourceConfig() {
             <div>
               <h4 className="font-semibold text-gray-900">Reddit Poller</h4>
               <p className="text-sm text-gray-600">
-                Uses public JSON feeds (no OAuth). Poller reads this list from Redis and posts to the backend.
+                Uses public JSON feeds (no OAuth). Poller reads this list from Redis and posts to
+                the backend.
               </p>
             </div>
             <span className="text-xs font-medium text-gray-500">
@@ -177,20 +178,24 @@ export default function SourceConfig() {
             {subsMessage && <p className="text-sm text-green-700">{subsMessage}</p>}
             {subsError && <p className="text-sm text-red-600">{subsError}</p>}
             <p className="text-xs text-gray-500">
-              Keep this list small (e.g., 1–3 subs). Poller runs server-side: `python -m backend.reddit_poller`.
+              Keep this list small (e.g., 1–3 subs). Poller runs server-side: `python -m
+              backend.reddit_poller`.
             </p>
           </div>
 
           <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2">
-            <p><strong>Poller command (runs continuously):</strong></p>
+            <p>
+              <strong>Poller command (runs continuously):</strong>
+            </p>
             <pre className="bg-gray-800 text-gray-100 p-2 rounded overflow-x-auto">
-{`BACKEND_URL=http://localhost:8000 \\
+              {`BACKEND_URL=http://localhost:8000 \\
 UPSTASH_REDIS_REST_URL=... \\
 UPSTASH_REDIS_REST_TOKEN=... \\
 python -m backend.reddit_poller`}
             </pre>
             <p className="text-gray-600">
-              The poller re-reads this list every cycle (5–10 minutes by default) and posts new items to `/ingest/reddit`.
+              The poller re-reads this list every cycle (5–10 minutes by default) and posts new
+              items to `/ingest/reddit`.
             </p>
           </div>
         </div>
@@ -200,15 +205,18 @@ python -m backend.reddit_poller`}
         <div className="border-t pt-4 space-y-3">
           <h4 className="font-semibold text-gray-900">Sentry Setup Instructions</h4>
           <div className="bg-gray-50 p-4 rounded-md text-sm space-y-2">
-            <p><strong>1. Configure webhook URL in Sentry:</strong></p>
+            <p>
+              <strong>1. Configure webhook URL in Sentry:</strong>
+            </p>
             <pre className="bg-gray-800 text-gray-100 p-2 rounded overflow-x-auto">
               {typeof window !== 'undefined'
                 ? `${window.location.origin}/api/ingest/sentry`
-                : 'http://your-domain.com/api/ingest/sentry'
-              }
+                : 'http://your-domain.com/api/ingest/sentry'}
             </pre>
 
-            <p><strong>2. In Sentry project settings:</strong></p>
+            <p>
+              <strong>2. In Sentry project settings:</strong>
+            </p>
             <ul className="list-disc list-inside space-y-1 text-gray-700">
               <li>Go to Settings → Integrations → WebHooks</li>
               <li>Add the webhook URL above</li>

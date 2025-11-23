@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.17",
@@ -17,7 +20,6 @@
     "@xenova/transformers": "^2.17.2",
     "autoprefixer": "^10.4.22",
     "dotenv": "^17.2.3",
-    "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.3",
     "next": "^16.0.3",
     "postcss": "^8.5.6",
@@ -25,5 +27,9 @@
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.1",
+    "prettier": "^3.4.2"
   }
 }

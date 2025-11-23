@@ -31,9 +31,7 @@ export async function POST() {
     }
 
     // Fetch unclustered feedback items
-    const feedbackItems = await Promise.all(
-      unclusteredIds.map((id) => getFeedbackItem(id))
-    );
+    const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItem(id)));
     const validFeedback = feedbackItems.filter((item): item is FeedbackItem => item !== null);
 
     // Get existing clusters
@@ -70,13 +68,11 @@ export async function POST() {
     const { results, updatedClusters } = await clusterFeedbackBatch(
       validFeedback,
       existingClusters,
-      0.80 // similarity threshold
+      0.8 // similarity threshold
     );
 
     // Track new clusters created
-    const newClusterIds = new Set(
-      results.filter((r) => r.isNewCluster).map((r) => r.clusterId)
-    );
+    const newClusterIds = new Set(results.filter((r) => r.isNewCluster).map((r) => r.clusterId));
 
     console.log(`[Clustering] Created ${newClusterIds.size} new clusters`);
 
@@ -109,6 +105,8 @@ export async function POST() {
           updated_at: timestamp,
           centroid: JSON.stringify(cluster.centroid),
         });
+        // Add to clusters:all set to avoid using KEYS command
+        await redis.sadd('clusters:all', cluster.id);
       } else {
         // Update existing cluster
         await redis.hset(`cluster:${cluster.id}`, {

@@ -11,11 +11,9 @@ async function getEmbeddingModel() {
   if (embeddingModel) return embeddingModel;
 
   console.log('[Clustering] Loading embedding model...');
-  embeddingModel = await pipeline(
-    'feature-extraction',
-    'Xenova/all-MiniLM-L6-v2',
-    { quantized: true }
-  );
+  embeddingModel = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+    quantized: true,
+  });
   console.log('[Clustering] Model loaded');
 
   return embeddingModel;
@@ -88,7 +86,7 @@ export interface ClusterData {
 export async function clusterFeedback(
   feedback: FeedbackItem,
   existingClusters: ClusterData[],
-  similarityThreshold: number = 0.80
+  similarityThreshold: number = 0.8
 ): Promise<ClusteringResult> {
   const text = prepareTextForEmbedding(feedback);
   const embedding = await generateEmbedding(text);
@@ -142,7 +140,7 @@ export async function clusterFeedback(
 export async function clusterFeedbackBatch(
   feedbackItems: FeedbackItem[],
   existingClusters: ClusterData[],
-  similarityThreshold: number = 0.80
+  similarityThreshold: number = 0.8
 ): Promise<{
   results: ClusteringResult[];
   updatedClusters: ClusterData[];
@@ -243,9 +241,7 @@ export async function generateClusterSummary(
   const title = firstTitle.substring(0, 80);
 
   // Summary: Combine first few feedback snippets
-  const summaryParts = feedbackItems
-    .slice(0, 3)
-    .map((item) => item.body.substring(0, 100));
+  const summaryParts = feedbackItems.slice(0, 3).map((item) => item.body.substring(0, 100));
 
   const summary = `${feedbackItems.length} reports: ${summaryParts.join('; ')}`.substring(0, 300);
 

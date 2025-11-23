@@ -129,10 +129,13 @@ export default function ClusterDetailPage() {
   }
 
   // Count by source
-  const sourceCounts = cluster.feedback_items.reduce((acc, item) => {
-    acc[item.source] = (acc[item.source] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const sourceCounts = cluster.feedback_items.reduce(
+    (acc, item) => {
+      acc[item.source] = (acc[item.source] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
 
   return (
     <div>
@@ -251,9 +254,7 @@ export default function ClusterDetailPage() {
               <h4 className="text-sm font-medium text-gray-900 mb-1">{item.title}</h4>
               <p className="text-sm text-gray-700 whitespace-pre-wrap">{item.body}</p>
               {item.metadata?.subreddit && (
-                <div className="mt-2 text-xs text-gray-500">
-                  r/{item.metadata.subreddit}
-                </div>
+                <div className="mt-2 text-xs text-gray-500">r/{item.metadata.subreddit}</div>
               )}
             </div>
           ))}
