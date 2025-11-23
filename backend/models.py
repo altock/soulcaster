@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FeedbackItem(BaseModel):
@@ -43,7 +43,8 @@ class IssueCluster(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-    embedding_centroid: Optional[List[float]] = None
+    # Map frontend 'centroid' to this field or allow both
+    centroid: Optional[List[float]] = Field(default=None, alias="embedding_centroid")
     github_branch: Optional[str] = None
     github_pr_url: Optional[str] = None
     error_message: Optional[str] = None

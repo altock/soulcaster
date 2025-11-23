@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import { randomUUID } from 'crypto';
 import type { ClusterListItem, ClusterDetail, FeedbackItem, IssueCluster } from '@/types';
 
 const redis = new Redis({
@@ -257,7 +258,7 @@ export async function createFeedback(data: {
   source?: 'reddit' | 'sentry' | 'manual';
   metadata?: Record<string, any>;
 }): Promise<string> {
-  const id = `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const id = randomUUID();
   const timestamp = Date.now();
   const source = data.source || 'manual';
 

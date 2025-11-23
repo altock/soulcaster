@@ -58,6 +58,15 @@ npm run build
 npm start
 ```
 
+## Testing
+
+For testing API endpoints (like triggering the agent manually), see the [tests directory](./tests/README.md).
+
+```bash
+cd tests
+./test_trigger.sh context "Bug description" "Title"
+```
+
 ## API Routes
 
 The dashboard proxies requests to the backend:

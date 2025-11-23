@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ECSClient, RunTaskCommand } from '@aws-sdk/client-ecs';
+import { Octokit } from 'octokit';
 
 const ecsClient = new ECSClient({
     region: process.env.AWS_REGION || 'us-east-1',
@@ -11,11 +12,88 @@ const ecsClient = new ECSClient({
 
 export async function POST(request: Request) {
     try {
-        const { issue_url } = await request.json();
+        const body = await request.json();
+        let { issue_url } = body;
+        const { context, issue_title, repo: paramRepo, owner: paramOwner } = body;
+
+        // Verify issue_url if provided
+        if (issue_url && process.env.GITHUB_TOKEN) {
+            try {
+                // Parse URL: https://github.com/owner/repo/issues/123
+                const match = issue_url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
+                if (match) {
+                    const [_, owner, repo, issue_number] = match;
+                    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+                    await octokit.rest.issues.get({
+                        owner,
+                        repo,
+                        issue_number: parseInt(issue_number),
+                    });
+                    // If successful, issue exists
+                } else {
+                    console.warn('Invalid GitHub issue URL format:', issue_url);
+                    // We allow it to proceed if it doesn't match regex (might be different format?),
+                    // but usually we should probably fail. The user asked to "check if that issue exists".
+                    // Let's enforce the check if it looks like a GitHub URL.
+                    return NextResponse.json(
+                        { error: 'Invalid GitHub issue URL format' },
+                        { status: 400 }
+                    );
+                }
+            } catch (error) {
+                console.error('Failed to verify issue:', error);
+                return NextResponse.json(
+                    { error: 'Issue not found or inaccessible', details: String(error) },
+                    { status: 404 }
+                );
+            }
+        }
+
+        // If no issue_url provided, try to create one from context
+        if (!issue_url) {
+            if (context && process.env.GITHUB_TOKEN) {
+                try {
+                    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+                    const owner = paramOwner || process.env.GITHUB_OWNER;
+                    const repo = paramRepo || process.env.GITHUB_REPO;
+
+                    if (!owner || !repo) {
+                        console.error('Missing owner/repo details');
+                        return NextResponse.json(
+                            { error: 'Missing GitHub repo details. Provide repo/owner params or configure env vars.' },
+                            { status: 400 }
+                        );
+                    }
+
+                    // Create a new issue
+                    const title = issue_title || `Automated Fix Request: ${new Date().toISOString()}`;
+                    const newIssue = await octokit.rest.issues.create({
+                        owner,
+                        repo,
+                        title: title.substring(0, 256), // GitHub title limit
+                        body: context,
+                    });
+
+                    issue_url = newIssue.data.html_url;
+                    console.log(`Created new GitHub issue: ${issue_url}`);
+                } catch (ghError) {
+                    console.error('Failed to create GitHub issue:', ghError);
+                    return NextResponse.json(
+                        { error: 'Failed to create GitHub issue', details: String(ghError) },
+                        { status: 500 }
+                    );
+                }
+            } else {
+                return NextResponse.json(
+                    { error: 'Missing issue_url. Provide issue_url OR (context + GITHUB_TOKEN configured)' },
+                    { status: 400 }
+                );
+            }
+        }
 
         if (!issue_url) {
-            return NextResponse.json(
-                { error: 'Missing issue_url' },
+             return NextResponse.json(
+                { error: 'Failed to resolve issue_url' },
                 { status: 400 }
             );
         }
@@ -58,6 +136,7 @@ export async function POST(request: Request) {
             success: true,
             message: 'Agent triggered successfully',
             taskArn: taskArn,
+            issue_url: issue_url // Return the used (or created) issue URL
         });
     } catch (error) {
         console.error('Error triggering agent:', error);

@@ -1,4 +1,5 @@
 import { pipeline, cos_sim } from '@xenova/transformers';
+import { randomUUID } from 'crypto';
 import type { FeedbackItem } from '@/types';
 
 // Singleton model instance
@@ -93,7 +94,7 @@ export async function clusterFeedback(
 
   if (existingClusters.length === 0) {
     // First cluster
-    const clusterId = `cluster-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const clusterId = randomUUID();
     return {
       clusterId,
       feedbackId: feedback.id,
@@ -126,7 +127,7 @@ export async function clusterFeedback(
   }
 
   // Create new cluster
-  const clusterId = `cluster-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const clusterId = randomUUID();
   return {
     clusterId,
     feedbackId: feedback.id,
@@ -200,7 +201,7 @@ export async function clusterFeedbackBatch(
       console.log(
         `[Clustering] Creating new cluster for feedback ${feedbackId} (max similarity: ${maxSimilarity.toFixed(3)}, threshold: ${similarityThreshold})`
       );
-      const clusterId = `cluster-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const clusterId = randomUUID();
       clusters.push({
         id: clusterId,
         feedbackIds: [feedbackId],
