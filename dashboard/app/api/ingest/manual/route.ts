@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
+import { createFeedback } from '@/lib/redis';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,20 +12,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(`${BACKEND_URL}/ingest/manual`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    // Extract title (first line or first 80 chars)
+    const lines = body.text.trim().split('\n');
+    const title = lines[0].substring(0, 80) || 'Manual feedback';
+    const bodyText = body.text;
+
+    // Write directly to Redis
+    const feedbackId = await createFeedback({
+      title,
+      body: bodyText,
+      source: 'manual',
+      metadata: {
+        submitted_at: new Date().toISOString(),
       },
-      body: JSON.stringify({ text: body.text }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Backend returned ${response.status}`);
-    }
-
-    const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json({
+      success: true,
+      feedback_id: feedbackId,
+      message: 'Feedback saved. Click "Run Clustering" to group it with similar issues.',
+    });
   } catch (error) {
     console.error('Error submitting feedback:', error);
     return NextResponse.json(

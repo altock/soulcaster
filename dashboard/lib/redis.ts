@@ -252,3 +252,53 @@ export async function getRedditSubreddits(): Promise<string[]> {
 export async function setRedditSubreddits(subreddits: string[]): Promise<void> {
   await redis.set('config:reddit:subreddits', JSON.stringify(subreddits));
 }
+
+/**
+ * Create a new feedback item in Redis
+ */
+export async function createFeedback(data: {
+  title: string;
+  body: string;
+  source?: 'reddit' | 'sentry' | 'manual';
+  metadata?: Record<string, any>;
+}): Promise<string> {
+  const id = `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const timestamp = Date.now();
+  const source = data.source || 'manual';
+
+  // Store feedback hash
+  await redis.hset(`feedback:${id}`, {
+    id,
+    source,
+    title: data.title,
+    body: data.body,
+    metadata: JSON.stringify(data.metadata || {}),
+    created_at: new Date(timestamp).toISOString(),
+    clustered: 'false', // Track if this has been clustered
+  });
+
+  // Add to sorted sets
+  await redis.zadd('feedback:created', { score: timestamp / 1000, member: id });
+  await redis.zadd(`feedback:source:${source}`, { score: timestamp / 1000, member: id });
+
+  // Add to unclustered set
+  await redis.sadd('feedback:unclustered', id);
+
+  return id;
+}
+
+/**
+ * Get count of unclustered feedback items
+ */
+export async function getUnclusteredCount(): Promise<number> {
+  const count = await redis.scard('feedback:unclustered');
+  return count || 0;
+}
+
+/**
+ * Get all unclustered feedback IDs
+ */
+export async function getUnclusteredFeedbackIds(): Promise<string[]> {
+  const ids = await redis.smembers('feedback:unclustered');
+  return ids as string[];
+}
