@@ -107,15 +107,16 @@ export async function getClusters(): Promise<ClusterListItem[]> {
       const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
       const sources = Array.from(new Set(validItems.map((item) => item.source)));
 
-      return {
+      const item: ClusterListItem = {
         id: cluster.id,
         title: cluster.title,
         summary: cluster.summary,
         count: feedbackIds.length,
         status: cluster.status,
         sources: sources as ('reddit' | 'sentry' | 'manual')[],
-        github_pr_url: cluster.github_pr_url,
+        ...(cluster.github_pr_url && { github_pr_url: cluster.github_pr_url }),
       };
+      return item;
     })
   );
 
