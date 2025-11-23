@@ -10,7 +10,8 @@ export default function LandingPage() {
           <span className="block text-blue-600 mt-2">The Self-Healing Dev Loop</span>
         </h1>
         <p className="mt-4 text-xl text-gray-600 max-w-2xl mx-auto">
-          Automate your bug triage and fixing workflow. From user report to pull request in minutes, not days.
+          Automate your bug triage and fixing workflow. From user report to pull request in minutes,
+          not days.
         </p>
         <div className="mt-10 flex justify-center gap-4">
           <Link
@@ -40,7 +41,8 @@ export default function LandingPage() {
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">Listen</h3>
             <p className="text-gray-600">
-              Automatically ingests feedback from Reddit communities and Sentry error reports in real-time.
+              Automatically ingests feedback from Reddit communities and Sentry error reports in
+              real-time.
             </p>
           </div>
 
@@ -51,7 +53,8 @@ export default function LandingPage() {
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">Think</h3>
             <p className="text-gray-600">
-              Intelligent agents cluster related issues, summarize the problem, and identify the root cause.
+              Intelligent agents cluster related issues, summarize the problem, and identify the
+              root cause.
             </p>
           </div>
 
@@ -62,7 +65,8 @@ export default function LandingPage() {
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">Act</h3>
             <p className="text-gray-600">
-              Generates code fixes and opens Pull Requests automatically. Review and merge with confidence.
+              Generates code fixes and opens Pull Requests automatically. Review and merge with
+              confidence.
             </p>
           </div>
         </div>

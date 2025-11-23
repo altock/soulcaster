@@ -62,9 +62,7 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
 
         <div className="mt-4 flex items-center justify-between">
           <div>
-            {error && (
-              <p className="text-sm text-red-600">{error}</p>
-            )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
             {success && (
               <p className="text-sm text-green-600">✓ Feedback submitted successfully!</p>
             )}
@@ -81,7 +79,10 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
       </form>
 
       <div className="mt-4 text-xs text-gray-500">
-        <p>💡 Tip: Manual feedback is useful for testing or when reporting issues directly from your team.</p>
+        <p>
+          💡 Tip: Manual feedback is useful for testing or when reporting issues directly from your
+          team.
+        </p>
       </div>
     </div>
   );

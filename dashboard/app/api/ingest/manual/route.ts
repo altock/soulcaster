@@ -6,10 +6,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     if (!body.text || typeof body.text !== 'string') {
-      return NextResponse.json(
-        { error: 'Text field is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Text field is required' }, { status: 400 });
     }
 
     // Extract title (first line or first 80 chars)
@@ -34,9 +31,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Error submitting feedback:', error);
-    return NextResponse.json(
-      { error: 'Failed to submit feedback' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to submit feedback' }, { status: 500 });
   }
 }

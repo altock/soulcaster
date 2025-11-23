@@ -33,9 +33,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(data);
   } catch (error) {
     console.error('Error fetching feedback from Redis:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch feedback' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: 500 });
   }
 }

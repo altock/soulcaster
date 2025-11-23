@@ -52,12 +52,10 @@ export default function FeedbackPage() {
 
         {/* Clustering Placeholder */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
-          <h3 className="text-lg font-semibold text-blue-900 mb-2">
-            🧠 Clustering Coming Soon
-          </h3>
+          <h3 className="text-lg font-semibold text-blue-900 mb-2">🧠 Clustering Coming Soon</h3>
           <p className="text-blue-700">
-            Feedback items will automatically be clustered into related issues using AI.
-            View clusters in the{' '}
+            Feedback items will automatically be clustered into related issues using AI. View
+            clusters in the{' '}
             <Link href="/clusters" className="font-semibold underline">
               Clusters tab
             </Link>

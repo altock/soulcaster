@@ -7,9 +7,6 @@ export async function GET() {
     return NextResponse.json(stats);
   } catch (error) {
     console.error('Error fetching stats from Redis:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch stats' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
   }
 }

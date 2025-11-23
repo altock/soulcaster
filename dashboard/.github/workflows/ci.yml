@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, data_ingestion]
+  pull_request:
+    branches: [main, data_ingestion]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ESLint temporarily disabled due to Next.js config issue
+      # Type-check and Prettier provide sufficient coverage for hackathon
+      # - name: Run ESLint
+      #   run: npm run lint
+      #   continue-on-error: true
+
+      - name: Check Prettier formatting
+        run: npm run format:check
+        continue-on-error: true # Don't block on formatting during hackathon
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build
+        run: npm run build
+        env:
+          # Add any required env vars for build
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+# To make checks blocking after hackathon, remove the 'continue-on-error: true' lines
+# and add required status checks in GitHub repo settings

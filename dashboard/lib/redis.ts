@@ -10,17 +10,9 @@ const redis = new Redis({
  * Get all cluster IDs from Redis sorted by creation time (newest first)
  */
 export async function getClusterIds(): Promise<string[]> {
-  // Redis stores clusters as individual hashes with keys like cluster:{uuid}
-  // We need to scan for all cluster keys
-  const keys = await redis.keys('cluster:*');
-
-  // Filter out cluster:items: keys, we only want cluster:{id} keys
-  const clusterKeys = keys.filter((key) => !key.includes(':items:'));
-
-  // Extract IDs from keys
-  const ids = clusterKeys.map((key) => key.replace('cluster:', ''));
-
-  return ids;
+  // Use clusters:all set to avoid KEYS command which blocks Redis
+  const ids = await redis.smembers('clusters:all');
+  return ids as string[];
 }
 
 /**
@@ -107,13 +99,14 @@ export async function getClusters(): Promise<ClusterListItem[]> {
       const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
       const sources = Array.from(new Set(validItems.map((item) => item.source)));
 
-      const item: ClusterListItem = {
+      const item: ClusterListItem & { created_at: string } = {
         id: cluster.id,
         title: cluster.title,
         summary: cluster.summary,
         count: feedbackIds.length,
         status: cluster.status,
         sources: sources as ('reddit' | 'sentry' | 'manual')[],
+        created_at: cluster.created_at,
         ...(cluster.github_pr_url && { github_pr_url: cluster.github_pr_url }),
       };
       return item;
@@ -121,9 +114,17 @@ export async function getClusters(): Promise<ClusterListItem[]> {
   );
 
   // Filter out nulls and sort by creation time (newest first)
-  const validClusters = clusters.filter((c): c is ClusterListItem => c !== null);
+  const validClusters = clusters.filter(
+    (c): c is ClusterListItem & { created_at: string } => c !== null
+  );
 
-  return validClusters;
+  // Sort by created_at timestamp (newest first)
+  validClusters.sort((a, b) => {
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  // Remove created_at from return type to match ClusterListItem
+  return validClusters.map(({ created_at, ...item }) => item);
 }
 
 /**
@@ -134,9 +135,7 @@ export async function getClusterDetail(id: string): Promise<ClusterDetail | null
   if (!cluster) return null;
 
   const feedbackIds = await getClusterFeedbackIds(id);
-  const feedbackItems = await Promise.all(
-    feedbackIds.map((fid) => getFeedbackItem(fid))
-  );
+  const feedbackItems = await Promise.all(feedbackIds.map((fid) => getFeedbackItem(fid)));
 
   const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
 
@@ -173,9 +172,7 @@ export async function getFeedback(
   const paginatedIds = feedbackIds.slice(offset, offset + limit);
 
   // Fetch the actual feedback items
-  const items = await Promise.all(
-    paginatedIds.map((id) => getFeedbackItem(id))
-  );
+  const items = await Promise.all(paginatedIds.map((id) => getFeedbackItem(id)));
 
   const validItems = items.filter((item): item is FeedbackItem => item !== null);
 
@@ -195,26 +192,23 @@ export async function getStats(): Promise<{
   by_source: { reddit: number; sentry: number; manual: number };
   total_clusters: number;
 }> {
-  // Get total feedback count
-  const allFeedbackIds = await redis.zrange('feedback:created', 0, -1);
-  const total_feedback = allFeedbackIds.length;
+  // Get total feedback count using ZCARD (more efficient than ZRANGE)
+  const total_feedback = (await redis.zcard('feedback:created')) || 0;
 
-  // Get counts by source
-  const redditIds = await redis.zrange('feedback:source:reddit', 0, -1);
-  const sentryIds = await redis.zrange('feedback:source:sentry', 0, -1);
-  const manualIds = await redis.zrange('feedback:source:manual', 0, -1);
+  // Get counts by source using ZCARD (more efficient than ZRANGE)
+  const redditCount = (await redis.zcard('feedback:source:reddit')) || 0;
+  const sentryCount = (await redis.zcard('feedback:source:sentry')) || 0;
+  const manualCount = (await redis.zcard('feedback:source:manual')) || 0;
 
-  // Get total clusters count
-  const clusterKeys = await redis.keys('cluster:*');
-  const clusterOnlyKeys = clusterKeys.filter((key) => !key.includes(':items:'));
-  const total_clusters = clusterOnlyKeys.length;
+  // Get total clusters count using SCARD on clusters:all set (avoids KEYS command)
+  const total_clusters = (await redis.scard('clusters:all')) || 0;
 
   return {
     total_feedback,
     by_source: {
-      reddit: redditIds.length,
-      sentry: sentryIds.length,
-      manual: manualIds.length,
+      reddit: redditCount,
+      sentry: sentryCount,
+      manual: manualCount,
     },
     total_clusters,
   };
@@ -303,4 +297,3 @@ export async function getUnclusteredFeedbackIds(): Promise<string[]> {
   const ids = await redis.smembers('feedback:unclustered');
   return ids as string[];
 }
-
