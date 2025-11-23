@@ -106,19 +106,10 @@ aws ecr get-login-password --region us-east-1 | docker login --username AWS --pa
 docker build -t coding-agent .
 docker tag coding-agent:latest <YOUR_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/coding-agent:latest
 
-# Push
-docker push <YOUR_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/coding-agent:latest
-```
+To deploy the coding agent to AWS Fargate and trigger it from your Next.js dashboard:
 
-### 3. Deploy Infrastructure
+1. **Deploy to AWS Fargate**: Follow the step-by-step guide in [`FARGATE_DEPLOYMENT.md`](./FARGATE_DEPLOYMENT.md)
+2. **Configure Dashboard**: Add AWS credentials and ECS configuration to your Vercel environment variables
+3. **Trigger Tasks**: Use the `/api/trigger-agent` endpoint to run tasks on-demand
 
-We use Terraform to provision the VPC, ALB, and Fargate Service.
-
-1.  Navigate to the `terraform` directory (create it if it doesn't exist and add the `main.tf` from `AWS_FARGATE_DEPLOYMENT.md`).
-2.  Run:
-    ```bash
-    terraform init
-    terraform apply
-    ```
-
-For a detailed step-by-step guide, including setting up secrets and integrating with your backend, see [AWS_FARGATE_DEPLOYMENT.md](AWS_FARGATE_DEPLOYMENT.md).
+See [`FARGATE_DEPLOYMENT.md`](./FARGATE_DEPLOYMENT.md) for complete instructions.

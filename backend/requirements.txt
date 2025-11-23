@@ -4,3 +4,4 @@ pydantic
 pytest
 httpx
 redis
+requests

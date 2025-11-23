@@ -34,8 +34,8 @@ export async function POST(request: Request) {
             overrides: {
                 containerOverrides: [
                     {
-                        name: 'coding-agent', // Must match the container name in Task Definition
-                        command: ['python', 'fix_issue.py', issue_url],
+                        name: 'coding-agent',
+                        command: [issue_url], // ENTRYPOINT already has 'uv run fix_issue.py'
                     },
                 ],
             },
