@@ -35,7 +35,9 @@ try:
         add_job,
         get_job,
         update_job,
+        update_job,
         get_jobs_by_cluster,
+        get_all_jobs,
     )
     from .reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
 except ImportError:
@@ -54,7 +56,9 @@ except ImportError:
         add_job,
         get_job,
         update_job,
+        update_job,
         get_jobs_by_cluster,
+        get_all_jobs,
     )
     from reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
 
@@ -537,6 +541,12 @@ class CreateJobRequest(BaseModel):
 class UpdateJobRequest(BaseModel):
     status: Optional[Literal["pending", "running", "success", "failed"]] = None
     logs: Optional[str] = None
+
+
+@app.get("/jobs")
+def list_jobs():
+    """List all tracking jobs."""
+    return get_all_jobs()
 
 
 @app.post("/jobs")

@@ -47,7 +47,7 @@ def _parse_env_list(env_value: Optional[str], default: List[str]) -> List[str]:
 def get_env_subreddits() -> List[str]:
     """Fetch configured subreddits from env (supports old and new variable names)."""
     env_value = os.getenv("REDDIT_SUBREDDITS") or os.getenv("REDDIT_SUBREDDIT")
-    return _parse_env_list(env_value, ["claudeai"])
+    return _parse_env_list(env_value, ["PlayCanvas"])
 
 
 def get_configured_subreddits() -> List[str]:

@@ -192,6 +192,10 @@ resource "aws_ecs_task_definition" "main" {
       {
         name      = "GIT_USER_NAME"
         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/git-user-name"
+      },
+      {
+        name      = "MINIMAX_API_KEY"
+        valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/minimax-api-key"
       }
     ]
 

@@ -73,35 +73,51 @@ def parse_issue_url(url):
 
 def _run_agent_logic(issue_url):
     # Configure Kilo for Gemini if GEMINI_API_KEY is present
-    if os.getenv("GEMINI_API_KEY"):
-        log("Configuring Kilo for Gemini via config file...")
+    # Configure Kilo
+    minimax_key = os.getenv("MINIMAX_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    
+    if minimax_key or gemini_key:
+        log("Configuring Kilo via config file...")
         
         # Define config path - Kilo uses ~/.kilocode/cli/config.json
         config_dir = Path.home() / ".kilocode" / "cli"
         config_path = config_dir / "config.json"
         
         log(f"DEBUG: Config path will be: {config_path}")
-        log(f"DEBUG: Home directory is: {Path.home()}")
         
         # Ensure directory exists
         config_dir.mkdir(parents=True, exist_ok=True)
         
+        providers = []
+        
+        if minimax_key:
+            log("Configuring Minimax provider...")
+            providers.append({
+                "id": "default",
+                "provider": "minimax",
+                "minimaxBaseUrl": "https://api.minimax.io/anthropic",
+                "minimaxApiKey": minimax_key,
+                "apiModelId": "MiniMax-M2"
+            })
+        elif gemini_key:
+            log("Configuring Gemini provider...")
+            providers.append({
+                "id": "default",
+                "provider": "gemini",
+                "geminiApiKey": gemini_key,
+                "apiModelId": os.getenv("KILO_API_MODEL_ID", "gemini-2.5-flash-preview-04-17"),
+                "enableUrlContext": True,
+                "enableGrounding": True
+            })
+
         # Create full config with autoApproval settings for autonomous operation
         config_data = {
             "version": "1.0.0",
             "mode": "code",
             "telemetry": True,
             "provider": "default",
-            "providers": [
-                {
-                    "id": "default",
-                    "provider": "gemini",
-                    "geminiApiKey": os.getenv("GEMINI_API_KEY"),
-                    "apiModelId": os.getenv("KILO_API_MODEL_ID", "gemini-2.5-flash-preview-04-17"),
-                    "enableUrlContext": True,
-                    "enableGrounding": True
-                }
-            ],
+            "providers": providers,
             "autoApproval": {
                 "enabled": True,
                 "read": {
@@ -316,7 +332,8 @@ def main():
     parser.add_argument("--job-id", help="Job ID for backend updates")
     args = parser.parse_args()
 
-    update_job(args.job_id, "running")
+    job_id = args.job_id or os.getenv("JOB_ID")
+    update_job(job_id, "running")
     
     try:
         _run_agent_logic(args.issue_url)

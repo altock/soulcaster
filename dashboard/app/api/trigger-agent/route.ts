@@ -165,7 +165,7 @@ export async function POST(request: Request) {
                 containerOverrides: [
                     {
                         name: 'coding-agent',
-                        command: [issue_url], // ENTRYPOINT already has 'uv run fix_issue.py'
+                        command: jobId ? [issue_url, '--job-id', jobId] : [issue_url],
                         environment: envOverrides,
                     },
                 ],

@@ -200,6 +200,9 @@ class InMemoryStore:
             job for job in self.agent_jobs.values() if job.cluster_id == cluster_id
         ]
 
+    def get_all_jobs(self) -> List[AgentJob]:
+        return list(self.agent_jobs.values())
+
     def clear_jobs(self):
         self.agent_jobs.clear()
 
@@ -496,6 +499,23 @@ class RedisStore:
                 continue
         return jobs
 
+    def get_all_jobs(self) -> List[AgentJob]:
+        # Scan for all job keys
+        job_keys = list(self._scan_iter("job:*"))
+        jobs: List[AgentJob] = []
+        for key in job_keys:
+            try:
+                # key format is job:uuid
+                jid = key.split(":")[-1]
+                job = self.get_job(UUID(jid))
+                if job:
+                    jobs.append(job)
+            except ValueError:
+                continue
+        # Sort by created_at desc
+        jobs.sort(key=lambda x: x.created_at, reverse=True)
+        return jobs
+
     def clear_jobs(self):
         job_keys = list(self._scan_iter("job:*")) + list(self._scan_iter("cluster:jobs:*"))
         if job_keys:
@@ -640,6 +660,10 @@ def update_job(job_id: UUID, **updates) -> AgentJob:
 
 def get_jobs_by_cluster(cluster_id: str) -> List[AgentJob]:
     return _STORE.get_jobs_by_cluster(cluster_id)
+
+
+def get_all_jobs() -> List[AgentJob]:
+    return _STORE.get_all_jobs()
 
 
 def clear_jobs():
