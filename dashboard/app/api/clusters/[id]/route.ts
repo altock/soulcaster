@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getClusterDetail } from '@/lib/redis';
+
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 
 /**
- * Fetch a cluster by ID directly from Redis and return it as a JSON response.
+ * Fetch a cluster by ID by proxying to the backend.
  *
  * @param params - Promise resolving to route parameters; must include `id` for the cluster
  * @returns The JSON response sent to the client: the cluster data on success, or an error response with appropriate HTTP status.
@@ -16,15 +17,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Invalid cluster ID' }, { status: 400 });
     }
 
-    const cluster = await getClusterDetail(id);
+    const response = await fetch(`${BACKEND_URL}/clusters/${id}`, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+    });
 
-    if (!cluster) {
-      return NextResponse.json({ error: 'Cluster not found' }, { status: 404 });
+    if (!response.ok) {
+      if (response.status === 404) {
+        return NextResponse.json({ error: 'Cluster not found' }, { status: 404 });
+      }
+      throw new Error(`Backend responded with ${response.status}`);
     }
 
+    const cluster = await response.json();
     return NextResponse.json(cluster);
   } catch (error) {
-    console.error('Error fetching cluster from Redis:', error);
+    console.error('Error fetching cluster from backend:', error);
     return NextResponse.json({ error: 'Failed to fetch cluster' }, { status: 500 });
   }
 }
