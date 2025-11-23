@@ -7,7 +7,7 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Any
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 import requests
@@ -135,9 +135,16 @@ class InMemoryStore:
         self.issue_clusters: Dict[UUID, IssueCluster] = {}
         self.agent_jobs: Dict[UUID, AgentJob] = {}
         self.reddit_subreddits: Optional[List[str]] = None
+        self.external_index: Dict[Tuple[str, str], UUID] = {}
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
+        if item.external_id:
+            key = (item.source, item.external_id)
+            existing_id = self.external_index.get(key)
+            if existing_id:
+                return self.feedback_items[existing_id]
+            self.external_index[key] = item.id
         self.feedback_items[item.id] = item
         return item
 
@@ -149,6 +156,7 @@ class InMemoryStore:
 
     def clear_feedback_items(self):
         self.feedback_items.clear()
+        self.external_index.clear()
 
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
@@ -202,6 +210,13 @@ class InMemoryStore:
 
     def clear_jobs(self):
         self.agent_jobs.clear()
+
+    def get_feedback_by_external_id(self, source: str, external_id: str) -> Optional[FeedbackItem]:
+        key = (source, external_id)
+        item_id = self.external_index.get(key)
+        if not item_id:
+            return None
+        return self.feedback_items.get(item_id)
 
 
 class RedisStore:
@@ -338,6 +353,9 @@ class RedisStore:
         source_keys = list(self._scan_iter("feedback:source:*"))
         if source_keys:
             self._delete(*source_keys)
+        external_keys = list(self._scan_iter("feedback:external:*"))
+        if external_keys:
+            self._delete(*external_keys)
 
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
@@ -501,6 +519,18 @@ class RedisStore:
         if job_keys:
             self._delete(*job_keys)
 
+    def get_feedback_by_external_id(self, source: str, external_id: str) -> Optional[FeedbackItem]:
+        if not external_id:
+            return None
+        key = self._feedback_external_key(source, external_id)
+        existing_id = self._get(key)
+        if not existing_id:
+            return None
+        try:
+            return self.get_feedback_item(UUID(existing_id))
+        except ValueError:
+            return None
+
     # --- client wrappers ---
     def _set(self, key: str, value: str):
         if self.mode == "redis":
@@ -586,6 +616,18 @@ def get_feedback_item(item_id: UUID) -> Optional[FeedbackItem]:
 
 def get_all_feedback_items() -> List[FeedbackItem]:
     return _STORE.get_all_feedback_items()
+
+
+def get_feedback_by_external_id(source: str, external_id: str) -> Optional[FeedbackItem]:
+    if not external_id:
+        return None
+    if hasattr(_STORE, "get_feedback_by_external_id"):
+        return _STORE.get_feedback_by_external_id(source, external_id)
+    # Fallback: linear scan (should rarely happen)
+    for item in _STORE.get_all_feedback_items():
+        if item.source == source and item.external_id == external_id:
+            return item
+    return None
 
 
 def clear_feedback_items():

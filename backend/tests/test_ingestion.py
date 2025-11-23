@@ -30,6 +30,36 @@ def test_ingest_reddit():
     assert len(clusters) == 1
     assert clusters[0].title == "Reddit: r/test"
 
+
+def test_ingest_reddit_deduplicates_external_ids():
+    payload = {
+        "id": "323e4567-e89b-12d3-a456-426614174000",
+        "source": "reddit",
+        "external_id": "t3_dupe",
+        "title": "Original bug",
+        "body": "Original body",
+        "metadata": {"subreddit": "test"},
+        "created_at": "2023-10-27T10:00:00Z"
+    }
+    first = client.post("/ingest/reddit", json=payload)
+    assert first.status_code == 200
+
+    dup_payload = payload | {
+        "id": "423e4567-e89b-12d3-a456-426614174000",
+        "title": "Duplicate bug title"
+    }
+    second = client.post("/ingest/reddit", json=dup_payload)
+    assert second.status_code == 200
+    assert second.json()["status"] == "duplicate"
+
+    items = get_all_feedback_items()
+    assert len(items) == 1
+    assert items[0].title == "Original bug"
+
+    clusters = get_all_clusters()
+    assert len(clusters) == 1
+    assert len(clusters[0].feedback_ids) == 1
+
 def test_ingest_sentry():
     # Minimal Sentry webhook payload
     payload = {

@@ -28,6 +28,7 @@ try:
         get_all_feedback_items,
         get_cluster,
         get_feedback_item,
+        get_feedback_by_external_id,
         clear_clusters,
         set_reddit_subreddits,
         get_reddit_subreddits,
@@ -47,6 +48,7 @@ except ImportError:
         get_all_feedback_items,
         get_cluster,
         get_feedback_item,
+        get_feedback_by_external_id,
         clear_clusters,
         set_reddit_subreddits,
         get_reddit_subreddits,
@@ -96,6 +98,10 @@ def ingest_reddit(item: FeedbackItem):
     Returns:
         Status response indicating success
     """
+    if item.external_id:
+        existing = get_feedback_by_external_id(item.source, item.external_id)
+        if existing:
+            return {"status": "duplicate", "id": str(existing.id)}
     add_feedback_item(item)
     _auto_cluster_feedback(item)
     return {"status": "ok", "id": str(item.id)}
