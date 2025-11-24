@@ -147,8 +147,8 @@ export interface ClusterData {
 export interface ClusterSummaryResult {
   title: string;
   summary: string;
-  issueTitle: string;
-  issueDescription: string;
+  issueTitle?: string;
+  issueDescription?: string;
   repoUrl?: string;
 }
 
