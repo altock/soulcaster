@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { getUnclusteredFeedbackIds, getFeedbackItem, getClusterIds } from '@/lib/redis';
-import { clusterFeedbackBatch, generateClusterSummary, type ClusterData } from '@/lib/clustering';
+import { clusterFeedbackBatch, generateClusterSummary, type ClusterData, type ClusterSummaryResult } from '@/lib/clustering';
+import { batchUpdateClusters, batchRemoveFromUnclustered, type ClusterUpdate } from '@/lib/clustering-batch';
 import type { FeedbackItem } from '@/types';
 
 const redis = new Redis({
@@ -34,16 +35,25 @@ export async function POST() {
     const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItem(id)));
     const validFeedback = feedbackItems.filter((item): item is FeedbackItem => item !== null);
 
-    // Get existing clusters
+    // OPTIMIZATION: Batch load existing clusters
     const existingClusterIds = await getClusterIds();
     const existingClusters: ClusterData[] = [];
 
+    // Use pipeline to fetch all cluster data in one round trip
+    const pipeline = redis.pipeline();
     for (const clusterId of existingClusterIds) {
-      const clusterData = await redis.hgetall(`cluster:${clusterId}`);
-      if (!clusterData) continue;
+      pipeline.hgetall(`cluster:${clusterId}`);
+      pipeline.smembers(`cluster:items:${clusterId}`);
+    }
 
-      // Get feedback IDs in this cluster
-      const feedbackIds = (await redis.smembers(`cluster:items:${clusterId}`)) as string[];
+    const pipelineResults = await pipeline.exec();
+
+    // Parse results (alternating between hgetall and smembers)
+    for (let i = 0; i < existingClusterIds.length; i++) {
+      const clusterData = pipelineResults[i * 2] as any;
+      const feedbackIds = pipelineResults[i * 2 + 1] as string[];
+
+      if (!clusterData || Object.keys(clusterData).length === 0) continue;
 
       // Parse centroid if it exists
       let centroid: number[] = [];
@@ -56,13 +66,13 @@ export async function POST() {
       }
 
       existingClusters.push({
-        id: clusterId,
+        id: existingClusterIds[i],
         feedbackIds,
         centroid,
       });
     }
 
-    console.log(`[Clustering] Processing against ${existingClusters.length} existing clusters`);
+    console.log(`[Clustering] Loaded ${existingClusters.length} existing clusters via pipeline`);
 
     // Run clustering with lower threshold for more aggressive grouping
     // 0.65 allows items with 65% similarity to cluster together
@@ -72,13 +82,20 @@ export async function POST() {
       0.65 // similarity threshold (lower = more aggressive clustering)
     );
 
-    // Track new clusters created
+    // Track new clusters created and old counts for smart summary regeneration
     const newClusterIds = new Set(results.filter((r) => r.isNewCluster).map((r) => r.clusterId));
+    const oldClusterCounts = new Map(existingClusters.map((c) => [c.id, c.feedbackIds.length]));
 
     console.log(`[Clustering] Created ${newClusterIds.size} new clusters`);
 
-    // Update Redis with clustering results
+    // OPTIMIZATION: Prepare batch cluster updates with smart summary regeneration
+    const clusterUpdates: ClusterUpdate[] = [];
+
     for (const cluster of updatedClusters) {
+      const isNew = newClusterIds.has(cluster.id);
+      const oldCount = oldClusterCounts.get(cluster.id) || 0;
+      const newCount = cluster.feedbackIds.length;
+
       // Get feedback items for this cluster
       const clusterFeedback = await Promise.all(
         cluster.feedbackIds.map((id) => getFeedbackItem(id))
@@ -87,70 +104,50 @@ export async function POST() {
         (item): item is FeedbackItem => item !== null
       );
 
-      // Generate summary
-      const { title, summary, issueTitle, issueDescription, repoUrl } = await generateClusterSummary(
-        validClusterFeedback
-      );
-
-      const timestamp = new Date().toISOString();
-
-      // Check if cluster is new or existing
-      const isNew = newClusterIds.has(cluster.id);
-
-      if (isNew) {
-        // Create new cluster
-        const payload: Record<string, string> = {
-          id: cluster.id,
-          title,
-          summary,
-          status: 'new',
-          created_at: timestamp,
-          updated_at: timestamp,
-          centroid: JSON.stringify(cluster.centroid),
-        };
-        if (issueTitle) payload.issue_title = issueTitle;
-        if (issueDescription) payload.issue_description = issueDescription;
-        if (repoUrl) payload.github_repo_url = repoUrl;
-
-        await redis.hset(`cluster:${cluster.id}`, payload);
-        // Add to clusters:all set to avoid using KEYS command
-        await redis.sadd('clusters:all', cluster.id);
-      } else {
-        // Update existing cluster
-        const updatePayload: Record<string, string> = {
-          summary,
-          updated_at: timestamp,
-          centroid: JSON.stringify(cluster.centroid),
-        };
-        if (issueTitle) updatePayload.issue_title = issueTitle;
-        if (issueDescription) updatePayload.issue_description = issueDescription;
-        if (repoUrl) updatePayload.github_repo_url = repoUrl;
-
-        await redis.hset(`cluster:${cluster.id}`, updatePayload);
-      }
-
-      // Update cluster items set
-      await redis.del(`cluster:items:${cluster.id}`);
-      if (cluster.feedbackIds.length > 0) {
-        // Add items one by one to avoid TypeScript spread issues
-        for (const feedbackId of cluster.feedbackIds) {
-          await redis.sadd(`cluster:items:${cluster.id}`, feedbackId);
+      // Get existing summary for smart regeneration
+      let existingSummary: ClusterSummaryResult | undefined;
+      if (!isNew) {
+        const existingData = await redis.hgetall(`cluster:${cluster.id}`);
+        if (existingData) {
+          existingSummary = {
+            title: existingData.title as string,
+            summary: existingData.summary as string,
+            issueTitle: existingData.issue_title as string | undefined,
+            issueDescription: existingData.issue_description as string | undefined,
+            repoUrl: existingData.github_repo_url as string | undefined,
+          };
         }
       }
 
-      // Mark feedback as clustered
-      for (const feedbackId of cluster.feedbackIds) {
-        await redis.hset(`feedback:${feedbackId}`, { clustered: 'true' });
-      }
+      // OPTIMIZATION: Smart summary regeneration
+      const { title, summary, issueTitle, issueDescription, repoUrl } = await generateClusterSummary(
+        validClusterFeedback,
+        {
+          existingSummary,
+          oldCount,
+          newCount,
+          forceRegenerate: isNew,
+        }
+      );
+
+      clusterUpdates.push({
+        clusterId: cluster.id,
+        feedbackIds: cluster.feedbackIds,
+        centroid: cluster.centroid,
+        isNew,
+        title,
+        summary,
+        issueTitle,
+        issueDescription,
+        repoUrl,
+      });
     }
 
-    // Remove items from unclustered set
-    if (unclusteredIds.length > 0) {
-      // Remove items one by one to avoid TypeScript spread issues
-      for (const id of unclusteredIds) {
-        await redis.srem('feedback:unclustered', id);
-      }
-    }
+    // OPTIMIZATION: Batch update all clusters in one pipeline
+    await batchUpdateClusters(clusterUpdates);
+
+    // OPTIMIZATION: Batch remove from unclustered set
+    await batchRemoveFromUnclustered(unclusteredIds);
 
     console.log('[Clustering] Clustering complete');
 

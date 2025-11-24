@@ -264,7 +264,13 @@ export async function clusterFeedback(
 }
 
 /**
- * Batch cluster multiple feedback items
+ * Batch cluster multiple feedback items - OPTIMIZED VERSION
+ *
+ * Key optimizations:
+ * 1. Uses embedding cache to avoid regenerating embeddings
+ * 2. Incremental centroid updates (weighted average, no re-filtering)
+ * 3. Batch embedding generation for uncached items only
+ * 4. Stores new embeddings in cache for future use
  */
 export async function clusterFeedbackBatch(
   feedbackItems: FeedbackItem[],
@@ -277,28 +283,75 @@ export async function clusterFeedbackBatch(
   const results: ClusteringResult[] = [];
   const clusters = [...existingClusters];
 
-  // Generate embeddings for all feedback
-  // Note: Gemini has rate limits, so we might need to throttle if batch is large
-  // For now, we'll do it sequentially or in small chunks if needed, but Promise.all is fine for small batches
-  const embeddings = await Promise.all(
-    feedbackItems.map(async (item) => {
-      const text = prepareTextForEmbedding(item);
-      try {
-        return {
-          feedbackId: item.id,
-          embedding: await generateEmbedding(text),
-        };
-      } catch (e) {
-        console.error(`Failed to generate embedding for ${item.id}`, e);
-        return null;
-      }
-    })
+  console.log(`[Clustering] Processing ${feedbackItems.length} items against ${clusters.length} clusters`);
+
+  // OPTIMIZATION 1: Batch fetch cached embeddings
+  const { batchGetEmbeddings, batchSetEmbeddings } = await import('./embedding-cache');
+  const cachedEmbeddings = await batchGetEmbeddings(feedbackItems.map((item) => item.id));
+
+  // OPTIMIZATION 2: Generate embeddings only for uncached items
+  const embeddingsToGenerate: Array<{ index: number; item: FeedbackItem }> = [];
+  const finalEmbeddings: Array<{ feedbackId: string; embedding: number[] }> = [];
+
+  for (let i = 0; i < feedbackItems.length; i++) {
+    const item = feedbackItems[i];
+    const cachedEmbedding = cachedEmbeddings[i];
+
+    if (cachedEmbedding) {
+      // Use cached embedding
+      finalEmbeddings.push({
+        feedbackId: item.id,
+        embedding: cachedEmbedding,
+      });
+    } else {
+      // Need to generate
+      embeddingsToGenerate.push({ index: i, item });
+    }
+  }
+
+  console.log(
+    `[Clustering] Cache hit: ${finalEmbeddings.length}/${feedbackItems.length}, generating ${embeddingsToGenerate.length} new embeddings`
   );
 
-  const validEmbeddings = embeddings.filter((e): e is { feedbackId: string; embedding: number[] } => e !== null);
+  // Generate embeddings for uncached items
+  if (embeddingsToGenerate.length > 0) {
+    const newEmbeddings = await Promise.all(
+      embeddingsToGenerate.map(async ({ item }) => {
+        const text = prepareTextForEmbedding(item);
+        try {
+          const embedding = await generateEmbedding(text);
+          return {
+            feedbackId: item.id,
+            embedding,
+          };
+        } catch (e) {
+          console.error(`[Clustering] Failed to generate embedding for ${item.id}`, e);
+          return null;
+        }
+      })
+    );
 
-  // Cluster each feedback item
-  for (const { feedbackId, embedding } of validEmbeddings) {
+    // Filter out failures and add to final embeddings
+    const validNewEmbeddings = newEmbeddings.filter(
+      (e): e is { feedbackId: string; embedding: number[] } => e !== null
+    );
+
+    finalEmbeddings.push(...validNewEmbeddings);
+
+    // OPTIMIZATION 3: Cache newly generated embeddings
+    if (validNewEmbeddings.length > 0) {
+      await batchSetEmbeddings(validNewEmbeddings);
+      console.log(`[Clustering] Cached ${validNewEmbeddings.length} new embeddings`);
+    }
+  }
+
+  // Import clustering utilities
+  const { cosineSimilarity: utilCosineSimilarity, calculateWeightedCentroid } = await import(
+    './clustering-utils'
+  );
+
+  // OPTIMIZATION 4: Use incremental centroid updates
+  for (const { feedbackId, embedding } of finalEmbeddings) {
     let maxSimilarity = 0;
     let bestClusterIndex: number | null = null;
 
@@ -306,7 +359,7 @@ export async function clusterFeedbackBatch(
     for (let i = 0; i < clusters.length; i++) {
       if (clusters[i].centroid.length === 0) continue;
 
-      const similarity = cosineSimilarity(embedding, clusters[i].centroid);
+      const similarity = utilCosineSimilarity(embedding, clusters[i].centroid);
       if (similarity > maxSimilarity) {
         maxSimilarity = similarity;
         bestClusterIndex = i;
@@ -317,30 +370,14 @@ export async function clusterFeedbackBatch(
     if (maxSimilarity >= similarityThreshold && bestClusterIndex !== null) {
       const cluster = clusters[bestClusterIndex];
       console.log(
-        `[Clustering] Adding feedback ${feedbackId} to existing cluster ${cluster.id} (similarity: ${maxSimilarity.toFixed(3)})`
+        `[Clustering] Adding feedback ${feedbackId} to cluster ${cluster.id} (similarity: ${maxSimilarity.toFixed(3)})`
       );
+
+      const oldCount = cluster.feedbackIds.length;
       cluster.feedbackIds.push(feedbackId);
 
-      // Update centroid
-      const clusterEmbeddings = validEmbeddings
-        .filter((e) => cluster.feedbackIds.includes(e.feedbackId))
-        .map((e) => e.embedding);
-
-      // Also include embeddings from existing cluster if we had them stored... 
-      // But here we only have centroids. 
-      // Weighted average update for centroid:
-      // newCentroid = (oldCentroid * oldCount + newEmbedding) / (oldCount + 1)
-      // But we don't track old count easily here without looking up.
-      // For simplicity in this in-memory version, we'll just re-average the current batch's contribution 
-      // or better, just average the new embedding with the old centroid (approximate)
-      // A better approach for the future: store count in ClusterData
-
-      // Simple moving average for now to keep it simple
-      const n = cluster.feedbackIds.length;
-      const newCentroid = cluster.centroid.map((val, i) =>
-        (val * (n - 1) + embedding[i]) / n
-      );
-      cluster.centroid = newCentroid;
+      // OPTIMIZATION 5: Incremental centroid update (no re-filtering!)
+      cluster.centroid = calculateWeightedCentroid(cluster.centroid, oldCount, embedding);
 
       results.push({
         clusterId: cluster.id,
@@ -351,7 +388,7 @@ export async function clusterFeedbackBatch(
     } else {
       // Create new cluster
       console.log(
-        `[Clustering] Creating new cluster for feedback ${feedbackId} (max similarity: ${maxSimilarity.toFixed(3)}, threshold: ${similarityThreshold})`
+        `[Clustering] Creating new cluster for ${feedbackId} (max similarity: ${maxSimilarity.toFixed(3)})`
       );
       const clusterId = randomUUID();
       clusters.push({
@@ -368,6 +405,8 @@ export async function clusterFeedbackBatch(
     }
   }
 
+  console.log(`[Clustering] Created ${results.filter((r) => r.isNewCluster).length} new clusters`);
+
   return {
     results,
     updatedClusters: clusters,
@@ -375,10 +414,46 @@ export async function clusterFeedbackBatch(
 }
 
 /**
- * Generate a summary for a cluster using the feedback items
+ * Determine if a cluster summary should be regenerated
+ * This saves expensive LLM calls by only regenerating when necessary
+ *
+ * @param oldCount Previous number of items in cluster
+ * @param newCount Current number of items in cluster
+ * @returns True if summary should be regenerated
+ */
+function shouldRegenerateSummary(oldCount: number, newCount: number): boolean {
+  // Always generate for new clusters
+  if (oldCount === 0) {
+    return true;
+  }
+
+  // Regenerate if cluster grew by more than 50%
+  const growthRate = (newCount - oldCount) / oldCount;
+  if (growthRate > 0.5) {
+    return true;
+  }
+
+  // Regenerate every 10 items (for very large clusters)
+  if (newCount % 10 === 0 && newCount !== oldCount) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Generate a summary for a cluster using the feedback items - OPTIMIZED VERSION
+ *
+ * Key optimization: Skip regeneration if cluster hasn't changed significantly
  */
 export async function generateClusterSummary(
-  feedbackItems: FeedbackItem[]
+  feedbackItems: FeedbackItem[],
+  options?: {
+    existingSummary?: ClusterSummaryResult;
+    oldCount?: number;
+    newCount?: number;
+    forceRegenerate?: boolean;
+  }
 ): Promise<ClusterSummaryResult> {
   if (feedbackItems.length === 0) {
     return {
@@ -388,6 +463,20 @@ export async function generateClusterSummary(
       issueDescription: 'No feedback items were provided to summarize.',
     };
   }
+
+  // OPTIMIZATION: Check if we should skip regeneration
+  const oldCount = options?.oldCount ?? 0;
+  const newCount = options?.newCount ?? feedbackItems.length;
+  const forceRegenerate = options?.forceRegenerate ?? false;
+
+  if (!forceRegenerate && options?.existingSummary && !shouldRegenerateSummary(oldCount, newCount)) {
+    console.log(
+      `[Clustering] Skipping summary regeneration (${oldCount} -> ${newCount} items, growth rate: ${((newCount - oldCount) / oldCount * 100).toFixed(1)}%)`
+    );
+    return options.existingSummary;
+  }
+
+  console.log(`[Clustering] Regenerating summary for ${newCount} items`);
 
   const repoHints = extractRepoHints(feedbackItems);
 
