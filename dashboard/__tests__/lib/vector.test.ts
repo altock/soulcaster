@@ -25,11 +25,13 @@ jest.mock('@upstash/vector', () => ({
 }));
 
 // Mock Gemini for embedding generation
+// Must return 768 dimensions to match Upstash Vector index
 jest.mock('@google/genai', () => ({
   GoogleGenAI: jest.fn().mockImplementation(() => ({
     models: {
       embedContent: jest.fn().mockResolvedValue({
-        embeddings: [{ values: [0.1, 0.2, 0.3, 0.4, 0.5] }],
+        // Generate 768-dim embedding inline (jest hoists mocks before variable declarations)
+        embeddings: [{ values: Array.from({ length: 768 }, (_, i) => i / 768) }],
       }),
       generateContent: jest.fn().mockResolvedValue({
         text: JSON.stringify({

@@ -558,40 +558,41 @@ export async function processNewFeedbackBatchWithVector(
 // ============================================================================
 
 /**
- * Find clusters that should potentially be merged based on their member similarity
+ * Find clusters that should potentially be merged based on centroid similarity
  *
  * This is useful for cleanup/maintenance - finding clusters that have drifted
  * close to each other over time.
+ *
+ * Uses direct centroid-to-centroid comparison instead of vector DB queries,
+ * since the vector DB stores feedback embeddings, not cluster centroids.
  */
-export async function findSimilarClusters(
+export function findSimilarClusters(
   clusterCentroids: Map<string, number[]>,
   threshold: number = 0.75
-): Promise<Array<{ cluster1: string; cluster2: string; similarity: number }>> {
-  const vectorStore = new VectorStore();
-  const mergeCandiates: Array<{ cluster1: string; cluster2: string; similarity: number }> = [];
+): Array<{ cluster1: string; cluster2: string; similarity: number }> {
+  const mergeCandidates: Array<{ cluster1: string; cluster2: string; similarity: number }> = [];
 
   const clusterIds = Array.from(clusterCentroids.keys());
 
+  // Compare all pairs of cluster centroids directly
   for (let i = 0; i < clusterIds.length; i++) {
     const id1 = clusterIds[i];
     const centroid1 = clusterCentroids.get(id1)!;
+    if (centroid1.length === 0) continue;
 
-    // Query for similar centroids
-    const similar = await vectorStore.findSimilar(centroid1, 5, threshold, [id1]);
+    for (let j = i + 1; j < clusterIds.length; j++) {
+      const id2 = clusterIds[j];
+      const centroid2 = clusterCentroids.get(id2)!;
+      if (centroid2.length === 0) continue;
 
-    for (const match of similar) {
-      // Check if this is another cluster's centroid
-      if (clusterIds.includes(match.id)) {
-        mergeCandiates.push({
-          cluster1: id1,
-          cluster2: match.id,
-          similarity: match.score,
-        });
+      const similarity = cosineSimilarity(centroid1, centroid2);
+      if (similarity >= threshold) {
+        mergeCandidates.push({ cluster1: id1, cluster2: id2, similarity });
       }
     }
   }
 
-  return mergeCandiates;
+  return mergeCandidates;
 }
 
 // Export singleton instance for convenience

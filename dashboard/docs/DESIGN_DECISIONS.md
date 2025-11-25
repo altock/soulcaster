@@ -28,20 +28,23 @@ This document captures key architectural and algorithmic decisions for the Soulc
 
 ## Embedding Model
 
-### Gemini embedding-001 (768 dimensions)
+### text-embedding-004 (768 dimensions)
 
-**Decision**: Use Gemini's embedding model for all text embeddings.
+**Decision**: Use Google's `text-embedding-004` model with explicit 768-dimensional output.
 
 **Rationale**:
 - Already using Gemini for LLM summaries (single API dependency)
-- 768 dimensions is sufficient for short text (feedback titles/bodies)
+- 768 dimensions matches our Upstash Vector index configuration
+- `outputDimensionality: 768` ensures consistent dimensions (model default can vary)
 - Quality comparable to OpenAI embeddings for this use case
-- Cost-effective within Gemini API usage
+- Cost-effective within Google AI usage
+
+**Note**: We previously tried `gemini-embedding-001` but it was returning 3072 dimensions
+which didn't match our index. Switched to `text-embedding-004` with explicit dimension config.
 
 **Trade-offs**:
 - OpenAI's `text-embedding-3-small` may have slightly better quality
 - Cohere or Voyage might perform better for technical/code content
-- Gemini embeddings are newer, less battle-tested
 
 **When to reconsider**:
 - If clustering quality is poor on technical bug reports
@@ -52,9 +55,10 @@ This document captures key architectural and algorithmic decisions for the Soulc
 
 ## Similarity Threshold
 
-### 0.72 (not 0.80-0.85 as PRD suggested)
+### 0.72 for vector clustering (0.65 for centroid cleanup)
 
-**Decision**: Use 0.72 cosine similarity threshold for cluster assignment.
+**Decision**: Use 0.72 cosine similarity threshold for vector-based cluster assignment.
+Use 0.65 for legacy centroid-based cleanup/merging.
 
 **Rationale**:
 
@@ -168,6 +172,7 @@ Would require:
 
 | Date | Decision | Author |
 |------|----------|--------|
-| 2024-11-24 | Initial vector DB implementation | Claude |
-| 2024-11-24 | Changed threshold from 0.82 to 0.72 | Claude |
-| 2024-11-24 | Added cohesion scoring | Claude |
+| 2025-11-24 | Initial vector DB implementation | Claude |
+| 2025-11-24 | Changed threshold from 0.82 to 0.72 | Claude |
+| 2025-11-24 | Added cohesion scoring | Claude |
+| 2025-11-25 | Switched from gemini-embedding-001 to text-embedding-004 | Claude |
