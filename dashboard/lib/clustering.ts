@@ -3,8 +3,6 @@ import { randomUUID } from 'crypto';
 import type { FeedbackItem } from '@/types';
 
 // Initialize Gemini
-// The client gets the API key from the environment variable `GEMINI_API_KEY` automatically if not provided,
-// but we can also pass it explicitly if we want to support both or verify it.
 const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || '';
 
 if (!apiKey) {
@@ -15,65 +13,16 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey });
 
-/**
- * Generate embedding for a piece of text
- */
-async function generateEmbedding(text: string): Promise<number[]> {
-  try {
-    const response = await ai.models.embedContent({
-      model: 'gemini-embedding-001',
-      // Correct usage for @google/genai (v0.1.0+):
-      // It expects `contents` (plural) as an array of `Part` objects.
-      contents: [{ parts: [{ text }] }],
-    });
-
-    // Check for embedding in response.embedding or response.embeddings
-    // The error suggested 'embeddings', but let's be safe and check what's actually there if possible,
-    // or just follow the error suggestion.
-    // Actually, checking the error: "Property 'embedding' does not exist... Did you mean 'embeddings'?"
-    // So it is likely 'embeddings'.
-    // However, for a single content, it might still be 'embedding' in some versions, but let's try 'embeddings'.
-    // Wait, if I pass a single content, I expect a single embedding.
-    // Let's try to inspect the type or just go with 'embeddings' and take the first one.
-
-    // NOTE: The SDK might return `embeddings` as an array if multiple contents are passed.
-    // Since I passed `content` (singular) in my previous attempt and it failed with "Did you mean 'contents'?",
-    // I should probably use `contents` and expect `embeddings`.
-
-    /* 
-      Correct usage for @google/genai (v0.1.0+):
-      const result = await client.models.embedContent({
-        model: '...',
-        contents: [...]
-      });
-      result.embeddings[0].values
-    */
-
-    // Let's correct the call structure as well.
-
-    // The new SDK response structure might be slightly different
-    // Based on docs/examples, it usually returns embedding directly or in a structure
-    // Let's assume standard response structure for now, but might need adjustment if SDK differs significantly
-    // from previous one.
-    // Actually, for @google/genai, it's likely: response.embeddings[0].values
-
-    if (!response || !response.embeddings || response.embeddings.length === 0 || !response.embeddings[0].values) {
-      throw new Error('Invalid embedding response');
-    }
-
-    return response.embeddings[0].values;
-  } catch (error) {
-    console.error('[Clustering] Error generating embedding:', error);
-    throw error;
-  }
-}
+// ============================================================================
+// PURE FUNCTIONS - Exported for testing and reuse
+// ============================================================================
 
 /**
  * Calculate cosine similarity between two embeddings
+ * Returns a value between -1 and 1, where 1 means identical direction
  */
-function cosineSimilarity(embedding1: number[], embedding2: number[]): number {
-  if (embedding1.length !== embedding2.length) {
-    // Handle mismatch if necessary, or just return 0
+export function cosineSimilarity(embedding1: number[], embedding2: number[]): number {
+  if (embedding1.length !== embedding2.length || embedding1.length === 0) {
     return 0;
   }
 
@@ -97,39 +46,82 @@ function cosineSimilarity(embedding1: number[], embedding2: number[]): number {
 
 /**
  * Calculate centroid (mean) of multiple embeddings
+ * Skips embeddings with mismatched dimensions
  */
-function calculateCentroid(embeddings: number[][]): number[] {
+export function calculateCentroid(embeddings: number[][]): number[] {
   if (embeddings.length === 0) return [];
   if (embeddings.length === 1) return embeddings[0];
 
   const dimensions = embeddings[0].length;
   const centroid = new Array(dimensions).fill(0);
+  let validCount = 0;
 
   for (const embedding of embeddings) {
-    // Handle potential dimension mismatch if models changed
+    // Skip embeddings with mismatched dimensions
     if (embedding.length !== dimensions) continue;
 
+    validCount++;
     for (let i = 0; i < dimensions; i++) {
       centroid[i] += embedding[i];
     }
   }
 
-  // Average
+  // Average - use validCount to handle skipped embeddings
+  if (validCount === 0) return [];
   for (let i = 0; i < dimensions; i++) {
-    centroid[i] /= embeddings.length;
+    centroid[i] /= validCount;
   }
 
   return centroid;
 }
 
 /**
- * Prepare text for embedding (combine title and body)
+ * Find the best matching cluster for an embedding
+ * Returns null if no cluster meets the similarity threshold
  */
-function prepareTextForEmbedding(feedback: FeedbackItem): string {
-  const title = feedback.title || '';
-  const body = feedback.body || '';
-  return `Title: ${title}\nBody: ${body}`.trim();
+export interface ClusterMatch {
+  clusterId: string;
+  clusterIndex: number;
+  similarity: number;
 }
+
+export function findBestCluster(
+  embedding: number[],
+  clusters: ClusterData[],
+  similarityThreshold: number
+): ClusterMatch | null {
+  if (clusters.length === 0) return null;
+
+  let maxSimilarity = 0;
+  let bestClusterId: string | null = null;
+  let bestClusterIndex = -1;
+
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    if (cluster.centroid.length === 0) continue;
+
+    const similarity = cosineSimilarity(embedding, cluster.centroid);
+    if (similarity > maxSimilarity) {
+      maxSimilarity = similarity;
+      bestClusterId = cluster.id;
+      bestClusterIndex = i;
+    }
+  }
+
+  if (maxSimilarity >= similarityThreshold && bestClusterId) {
+    return {
+      clusterId: bestClusterId,
+      clusterIndex: bestClusterIndex,
+      similarity: maxSimilarity,
+    };
+  }
+
+  return null;
+}
+
+// ============================================================================
+// TYPES
+// ============================================================================
 
 export interface ClusteringResult {
   clusterId: string;
@@ -150,6 +142,295 @@ export interface ClusterSummaryResult {
   issueTitle: string;
   issueDescription: string;
   repoUrl?: string;
+}
+
+export interface RedisOperation {
+  type: 'sadd' | 'srem' | 'hset' | 'del';
+  key: string;
+  values?: string[];
+  fields?: Record<string, string>;
+}
+
+// ============================================================================
+// CLUSTERING BATCH - Optimized batch processing class
+// ============================================================================
+
+/**
+ * ClusteringBatch manages efficient batch processing of clustering operations.
+ *
+ * Key optimizations:
+ * 1. Tracks changed clusters to avoid regenerating summaries for unchanged ones
+ * 2. Caches feedback items to avoid re-fetching
+ * 3. Batches Redis operations for efficient pipeline execution
+ * 4. Provides incremental centroid updates
+ */
+export class ClusteringBatch {
+  private changedClusterIds: Set<string> = new Set();
+  private newClusterIds: Set<string> = new Set();
+  private feedbackCache: Map<string, FeedbackItem> = new Map();
+  private redisOperations: Map<string, RedisOperation> = new Map();
+  private clusters: ClusterData[] = [];
+  private clusterMap: Map<string, number> = new Map(); // clusterId -> index
+
+  /**
+   * Initialize with existing clusters
+   */
+  initializeClusters(clusters: ClusterData[]): void {
+    this.clusters = clusters.map((c) => ({
+      ...c,
+      feedbackIds: [...c.feedbackIds],
+      centroid: [...c.centroid],
+    }));
+    this.clusterMap.clear();
+    for (let i = 0; i < this.clusters.length; i++) {
+      this.clusterMap.set(this.clusters[i].id, i);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Cluster Change Tracking
+  // --------------------------------------------------------------------------
+
+  markClusterChanged(clusterId: string): void {
+    this.changedClusterIds.add(clusterId);
+  }
+
+  markClusterNew(clusterId: string): void {
+    this.newClusterIds.add(clusterId);
+    this.changedClusterIds.add(clusterId);
+  }
+
+  isNewCluster(clusterId: string): boolean {
+    return this.newClusterIds.has(clusterId);
+  }
+
+  getChangedClusterIds(): string[] {
+    return Array.from(this.changedClusterIds);
+  }
+
+  getNewClusterIds(): string[] {
+    return Array.from(this.newClusterIds);
+  }
+
+  /**
+   * Get only the cluster IDs that need summary regeneration
+   * This is the key optimization - skip unchanged clusters!
+   */
+  getClustersNeedingSummaryRegeneration(allClusterIds: string[]): string[] {
+    return allClusterIds.filter((id) => this.changedClusterIds.has(id));
+  }
+
+  // --------------------------------------------------------------------------
+  // Incremental Centroid Updates
+  // --------------------------------------------------------------------------
+
+  /**
+   * Update centroid incrementally without re-computing from all embeddings
+   * Formula: newCentroid = (oldCentroid * oldCount + newEmbedding) / (oldCount + 1)
+   */
+  updateCentroidIncremental(
+    oldCentroid: number[],
+    newEmbedding: number[],
+    oldCount: number
+  ): number[] {
+    // First item in cluster - just use the embedding
+    if (oldCount === 0 || oldCentroid.length === 0) {
+      return [...newEmbedding];
+    }
+
+    const newCount = oldCount + 1;
+    return oldCentroid.map((val, i) => (val * oldCount + newEmbedding[i]) / newCount);
+  }
+
+  // --------------------------------------------------------------------------
+  // Feedback Caching
+  // --------------------------------------------------------------------------
+
+  cacheFeedbackItem(item: FeedbackItem): void {
+    this.feedbackCache.set(item.id, item);
+  }
+
+  cacheFeedbackItems(items: FeedbackItem[]): void {
+    for (const item of items) {
+      this.feedbackCache.set(item.id, item);
+    }
+  }
+
+  getCachedFeedbackItem(id: string): FeedbackItem | undefined {
+    return this.feedbackCache.get(id);
+  }
+
+  getCachedFeedbackItems(ids: string[]): { found: FeedbackItem[]; missing: string[] } {
+    const found: FeedbackItem[] = [];
+    const missing: string[] = [];
+
+    for (const id of ids) {
+      const item = this.feedbackCache.get(id);
+      if (item) {
+        found.push(item);
+      } else {
+        missing.push(id);
+      }
+    }
+
+    return { found, missing };
+  }
+
+  // --------------------------------------------------------------------------
+  // Redis Operation Batching
+  // --------------------------------------------------------------------------
+
+  /**
+   * Queue a Redis operation for batch execution
+   * Automatically merges compatible operations on the same key
+   */
+  queueRedisOperation(operation: RedisOperation): void {
+    const key = `${operation.type}:${operation.key}`;
+
+    if (operation.type === 'sadd' || operation.type === 'srem') {
+      const existing = this.redisOperations.get(key);
+      if (existing && existing.values && operation.values) {
+        // Merge values
+        existing.values = [...new Set([...existing.values, ...operation.values])];
+      } else {
+        this.redisOperations.set(key, { ...operation, values: [...(operation.values || [])] });
+      }
+    } else if (operation.type === 'hset') {
+      const existing = this.redisOperations.get(key);
+      if (existing && existing.fields && operation.fields) {
+        // Merge fields
+        existing.fields = { ...existing.fields, ...operation.fields };
+      } else {
+        this.redisOperations.set(key, { ...operation, fields: { ...operation.fields } });
+      }
+    } else {
+      // For other types (del), just overwrite
+      this.redisOperations.set(key, operation);
+    }
+  }
+
+  /**
+   * Get all queued operations and clear the queue
+   */
+  getQueuedOperations(): RedisOperation[] {
+    const operations = Array.from(this.redisOperations.values());
+    this.redisOperations.clear();
+    return operations;
+  }
+
+  // --------------------------------------------------------------------------
+  // Batch Cluster Assignment
+  // --------------------------------------------------------------------------
+
+  /**
+   * Assign multiple embeddings to clusters efficiently
+   * Updates internal cluster state as assignments are made
+   */
+  assignToClusters(
+    embeddings: { id: string; embedding: number[] }[],
+    initialClusters: ClusterData[],
+    similarityThreshold: number
+  ): ClusteringResult[] {
+    // Initialize if not already done
+    if (this.clusters.length === 0 && initialClusters.length > 0) {
+      this.initializeClusters(initialClusters);
+    }
+
+    const results: ClusteringResult[] = [];
+
+    for (const { id: feedbackId, embedding } of embeddings) {
+      const match = findBestCluster(embedding, this.clusters, similarityThreshold);
+
+      if (match) {
+        // Add to existing cluster
+        const cluster = this.clusters[match.clusterIndex];
+        const oldCount = cluster.feedbackIds.length;
+        cluster.feedbackIds.push(feedbackId);
+
+        // Update centroid incrementally
+        cluster.centroid = this.updateCentroidIncremental(cluster.centroid, embedding, oldCount);
+
+        this.markClusterChanged(cluster.id);
+
+        results.push({
+          clusterId: cluster.id,
+          feedbackId,
+          isNewCluster: false,
+          similarity: match.similarity,
+        });
+      } else {
+        // Create new cluster
+        const clusterId = randomUUID();
+        const newCluster: ClusterData = {
+          id: clusterId,
+          feedbackIds: [feedbackId],
+          centroid: embedding,
+        };
+
+        this.clusters.push(newCluster);
+        this.clusterMap.set(clusterId, this.clusters.length - 1);
+        this.markClusterNew(clusterId);
+
+        results.push({
+          clusterId,
+          feedbackId,
+          isNewCluster: true,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Get the current state of all clusters
+   */
+  getUpdatedClusters(): ClusterData[] {
+    return this.clusters;
+  }
+
+  /**
+   * Get a specific cluster by ID
+   */
+  getCluster(clusterId: string): ClusterData | undefined {
+    const index = this.clusterMap.get(clusterId);
+    if (index === undefined) return undefined;
+    return this.clusters[index];
+  }
+}
+
+// ============================================================================
+// LEGACY API - Maintained for backward compatibility
+// ============================================================================
+
+/**
+ * Generate embedding for a piece of text
+ */
+async function generateEmbedding(text: string): Promise<number[]> {
+  try {
+    const response = await ai.models.embedContent({
+      model: 'gemini-embedding-001',
+      contents: [{ parts: [{ text }] }],
+    });
+
+    if (!response || !response.embeddings || response.embeddings.length === 0 || !response.embeddings[0].values) {
+      throw new Error('Invalid embedding response');
+    }
+
+    return response.embeddings[0].values;
+  } catch (error) {
+    console.error('[Clustering] Error generating embedding:', error);
+    throw error;
+  }
+}
+
+/**
+ * Prepare text for embedding (combine title and body)
+ */
+function prepareTextForEmbedding(feedback: FeedbackItem): string {
+  const title = feedback.title || '';
+  const body = feedback.body || '';
+  return `Title: ${title}\nBody: ${body}`.trim();
 }
 
 function normalizeRepoUrl(value?: string | null): string | null {
@@ -210,18 +491,17 @@ function buildFallbackSummary(feedbackItems: FeedbackItem[], repoHints: string[]
 
 /**
  * Cluster a single feedback item against existing clusters
- * Returns which cluster it should belong to (or if it should create a new one)
+ * @deprecated Use ClusteringBatch.assignToClusters for better performance
  */
 export async function clusterFeedback(
   feedback: FeedbackItem,
   existingClusters: ClusterData[],
-  similarityThreshold: number = 0.75 // Slightly lower threshold for Gemini embeddings usually works better
+  similarityThreshold: number = 0.75
 ): Promise<ClusteringResult> {
   const text = prepareTextForEmbedding(feedback);
   const embedding = await generateEmbedding(text);
 
   if (existingClusters.length === 0) {
-    // First cluster
     const clusterId = randomUUID();
     return {
       clusterId,
@@ -230,31 +510,17 @@ export async function clusterFeedback(
     };
   }
 
-  // Find most similar cluster
-  let maxSimilarity = 0;
-  let bestClusterId: string | null = null;
+  const match = findBestCluster(embedding, existingClusters, similarityThreshold);
 
-  for (const cluster of existingClusters) {
-    if (cluster.centroid.length === 0) continue;
-
-    const similarity = cosineSimilarity(embedding, cluster.centroid);
-    if (similarity > maxSimilarity) {
-      maxSimilarity = similarity;
-      bestClusterId = cluster.id;
-    }
-  }
-
-  // Check if similarity meets threshold
-  if (maxSimilarity >= similarityThreshold && bestClusterId) {
+  if (match) {
     return {
-      clusterId: bestClusterId,
+      clusterId: match.clusterId,
       feedbackId: feedback.id,
       isNewCluster: false,
-      similarity: maxSimilarity,
+      similarity: match.similarity,
     };
   }
 
-  // Create new cluster
   const clusterId = randomUUID();
   return {
     clusterId,
@@ -265,6 +531,7 @@ export async function clusterFeedback(
 
 /**
  * Batch cluster multiple feedback items
+ * @deprecated Use ClusteringBatch for better performance with change tracking
  */
 export async function clusterFeedbackBatch(
   feedbackItems: FeedbackItem[],
@@ -274,18 +541,17 @@ export async function clusterFeedbackBatch(
   results: ClusteringResult[];
   updatedClusters: ClusterData[];
 }> {
-  const results: ClusteringResult[] = [];
-  const clusters = [...existingClusters];
+  const batch = new ClusteringBatch();
+  batch.initializeClusters(existingClusters);
+  batch.cacheFeedbackItems(feedbackItems);
 
-  // Generate embeddings for all feedback
-  // Note: Gemini has rate limits, so we might need to throttle if batch is large
-  // For now, we'll do it sequentially or in small chunks if needed, but Promise.all is fine for small batches
-  const embeddings = await Promise.all(
+  // Generate embeddings for all feedback (parallelized)
+  const embeddingResults = await Promise.all(
     feedbackItems.map(async (item) => {
       const text = prepareTextForEmbedding(item);
       try {
         return {
-          feedbackId: item.id,
+          id: item.id,
           embedding: await generateEmbedding(text),
         };
       } catch (e) {
@@ -295,82 +561,61 @@ export async function clusterFeedbackBatch(
     })
   );
 
-  const validEmbeddings = embeddings.filter((e): e is { feedbackId: string; embedding: number[] } => e !== null);
+  const validEmbeddings = embeddingResults.filter(
+    (e): e is { id: string; embedding: number[] } => e !== null
+  );
 
-  // Cluster each feedback item
-  for (const { feedbackId, embedding } of validEmbeddings) {
-    let maxSimilarity = 0;
-    let bestClusterIndex: number | null = null;
-
-    // Find best matching cluster
-    for (let i = 0; i < clusters.length; i++) {
-      if (clusters[i].centroid.length === 0) continue;
-
-      const similarity = cosineSimilarity(embedding, clusters[i].centroid);
-      if (similarity > maxSimilarity) {
-        maxSimilarity = similarity;
-        bestClusterIndex = i;
-      }
-    }
-
-    // Assign to cluster or create new one
-    if (maxSimilarity >= similarityThreshold && bestClusterIndex !== null) {
-      const cluster = clusters[bestClusterIndex];
-      console.log(
-        `[Clustering] Adding feedback ${feedbackId} to existing cluster ${cluster.id} (similarity: ${maxSimilarity.toFixed(3)})`
-      );
-      cluster.feedbackIds.push(feedbackId);
-
-      // Update centroid
-      const clusterEmbeddings = validEmbeddings
-        .filter((e) => cluster.feedbackIds.includes(e.feedbackId))
-        .map((e) => e.embedding);
-
-      // Also include embeddings from existing cluster if we had them stored... 
-      // But here we only have centroids. 
-      // Weighted average update for centroid:
-      // newCentroid = (oldCentroid * oldCount + newEmbedding) / (oldCount + 1)
-      // But we don't track old count easily here without looking up.
-      // For simplicity in this in-memory version, we'll just re-average the current batch's contribution 
-      // or better, just average the new embedding with the old centroid (approximate)
-      // A better approach for the future: store count in ClusterData
-
-      // Simple moving average for now to keep it simple
-      const n = cluster.feedbackIds.length;
-      const newCentroid = cluster.centroid.map((val, i) =>
-        (val * (n - 1) + embedding[i]) / n
-      );
-      cluster.centroid = newCentroid;
-
-      results.push({
-        clusterId: cluster.id,
-        feedbackId,
-        isNewCluster: false,
-        similarity: maxSimilarity,
-      });
-    } else {
-      // Create new cluster
-      console.log(
-        `[Clustering] Creating new cluster for feedback ${feedbackId} (max similarity: ${maxSimilarity.toFixed(3)}, threshold: ${similarityThreshold})`
-      );
-      const clusterId = randomUUID();
-      clusters.push({
-        id: clusterId,
-        feedbackIds: [feedbackId],
-        centroid: embedding,
-      });
-
-      results.push({
-        clusterId,
-        feedbackId,
-        isNewCluster: true,
-      });
-    }
-  }
+  // Use the optimized batch assignment
+  const results = batch.assignToClusters(validEmbeddings, existingClusters, similarityThreshold);
 
   return {
     results,
-    updatedClusters: clusters,
+    updatedClusters: batch.getUpdatedClusters(),
+  };
+}
+
+/**
+ * Optimized batch clustering that returns the batch for further operations
+ * This allows the caller to check which clusters changed and need summary regeneration
+ */
+export async function clusterFeedbackBatchOptimized(
+  feedbackItems: FeedbackItem[],
+  existingClusters: ClusterData[],
+  similarityThreshold: number = 0.75
+): Promise<{
+  results: ClusteringResult[];
+  batch: ClusteringBatch;
+}> {
+  const batch = new ClusteringBatch();
+  batch.initializeClusters(existingClusters);
+  batch.cacheFeedbackItems(feedbackItems);
+
+  // Generate embeddings for all feedback (parallelized)
+  const embeddingResults = await Promise.all(
+    feedbackItems.map(async (item) => {
+      const text = prepareTextForEmbedding(item);
+      try {
+        return {
+          id: item.id,
+          embedding: await generateEmbedding(text),
+        };
+      } catch (e) {
+        console.error(`Failed to generate embedding for ${item.id}`, e);
+        return null;
+      }
+    })
+  );
+
+  const validEmbeddings = embeddingResults.filter(
+    (e): e is { id: string; embedding: number[] } => e !== null
+  );
+
+  // Use the optimized batch assignment
+  const results = batch.assignToClusters(validEmbeddings, existingClusters, similarityThreshold);
+
+  return {
+    results,
+    batch,
   };
 }
 
