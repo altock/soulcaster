@@ -355,8 +355,7 @@ describe('Integration: Vector Store with Clustering Flow', () => {
     // 1. Generate embedding for new feedback
     // 2. Query vector DB for similar items
     // 3. Either assign to existing cluster or create new one
-    // 4. Store the feedback with its embedding and cluster assignment
-    // 5. Update cluster centroid in Redis
+    // 4. Store the feedback with its embedding and cluster assignment in Vector DB
 
     const { processNewFeedbackWithVector } = require('@/lib/vector');
 

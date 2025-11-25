@@ -248,7 +248,8 @@ export class VectorStore {
     }
 
     const item = existing[0];
-    const oldMetadata = item.metadata as unknown as FeedbackVectorMetadata;
+    const oldMetadata =
+      (item.metadata as unknown as FeedbackVectorMetadata) || ({} as FeedbackVectorMetadata);
     const newMetadata: FeedbackVectorMetadata = {
       ...oldMetadata,
       clusterId,
@@ -273,7 +274,8 @@ export class VectorStore {
       .filter((item): item is NonNullable<typeof item> => item !== null)
       .map((item) => {
         const assignment = assignments.find((a) => a.feedbackId === item.id);
-        const oldMetadata = item.metadata as unknown as FeedbackVectorMetadata;
+        const oldMetadata =
+          (item.metadata as unknown as FeedbackVectorMetadata) || ({} as FeedbackVectorMetadata);
         const newMetadata: FeedbackVectorMetadata = {
           ...oldMetadata,
           clusterId: assignment?.clusterId || null,
@@ -352,7 +354,7 @@ export async function generateFeedbackEmbedding(feedback: FeedbackItem): Promise
 
   const response = await ai.models.embedContent({
     model: 'text-embedding-004',
-    contents: [{ parts: [{ text }] }],
+    contents: [text],
     config: {
       outputDimensionality: 768,
     },
