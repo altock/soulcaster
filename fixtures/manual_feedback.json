@@ -1,0 +1,5 @@
+{
+  "source": "manual",
+  "title": "Data export fails with date parsing error",
+  "body": "Customer support ticket #4521: Multiple customers reporting that the data export feature fails when their account contains records from before 2020. The error appears to be related to date format parsing. This is affecting premium tier customers primarily.\n\nImpact: High - blocking customer migrations\nReported by: Support Team\nFirst reported: 2024-11-20"
+}

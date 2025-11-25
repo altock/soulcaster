@@ -1,0 +1,14 @@
+{
+  "source": "reddit",
+  "external_id": "abc123xyz",
+  "title": "Export feature crashes when date is in wrong format",
+  "body": "I've been trying to export my data but it keeps crashing. The error message says something about 'Invalid date format'. This happens every time I try to export users who signed up before 2020. Anyone else experiencing this?\n\nSteps to reproduce:\n1. Go to Admin > Export\n2. Select date range including pre-2020 data\n3. Click Export\n4. App crashes with ValueError\n\nUsing Chrome on macOS.",
+  "metadata": {
+    "subreddit": "soulcaster_users",
+    "permalink": "/r/soulcaster_users/comments/abc123/export_feature_crashes/",
+    "author": "frustrated_user_42",
+    "score": 15,
+    "num_comments": 8,
+    "created_utc": 1732530600
+  }
+}

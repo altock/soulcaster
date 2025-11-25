@@ -1,0 +1,48 @@
+{
+  "action": "created",
+  "data": {
+    "event": {
+      "event_id": "a]1b2c3d4e5f6g7h8i9j0",
+      "project": 12345,
+      "timestamp": "2024-11-25T10:30:00.000000Z",
+      "platform": "python",
+      "environment": "production",
+      "release": "v1.2.3",
+      "exception": {
+        "values": [
+          {
+            "type": "ValueError",
+            "value": "Export failed: Invalid date format in user data",
+            "stacktrace": {
+              "frames": [
+                {
+                  "filename": "app/services/export.py",
+                  "lineno": 142,
+                  "function": "export_user_data"
+                },
+                {
+                  "filename": "app/utils/date_parser.py",
+                  "lineno": 35,
+                  "function": "parse_date"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "tags": [
+        ["browser", "Chrome 120"],
+        ["os", "macOS 14.1"],
+        ["user_type", "premium"]
+      ],
+      "user": {
+        "id": "user_12345",
+        "email": "user@example.com"
+      }
+    },
+    "triggered_rule": "High Priority Errors"
+  },
+  "installation": {
+    "uuid": "install-uuid-123"
+  }
+}
