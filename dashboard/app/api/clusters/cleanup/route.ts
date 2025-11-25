@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { cosineSimilarity, calculateCentroid } from '@/lib/clustering';
+import { CLEANUP_MERGE_THRESHOLD } from '@/lib/vector';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
@@ -63,7 +64,7 @@ function findDuplicateGroups(clusters: ClusterInfo[], threshold: number): Cluste
  * Cleanup duplicate clusters by merging clusters with similar centroids
  * POST /api/clusters/cleanup
  *
- * Uses the same similarity threshold (0.65) as clustering to identify duplicates
+ * Threshold defined in lib/vector.ts (CLEANUP_MERGE_THRESHOLD)
  */
 export async function POST() {
   try {
@@ -101,8 +102,9 @@ export async function POST() {
 
     console.log(`[Cleanup] Loaded ${clusters.length} clusters with data`);
 
-    // Find duplicate groups using centroid similarity (same threshold as clustering)
-    const duplicateGroups = findDuplicateGroups(clusters, 0.65);
+    // Find duplicate groups using centroid similarity
+    // Threshold from lib/vector.ts (single source of truth)
+    const duplicateGroups = findDuplicateGroups(clusters, CLEANUP_MERGE_THRESHOLD);
 
     console.log(`[Cleanup] Found ${duplicateGroups.length} groups of similar clusters`);
 

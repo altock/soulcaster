@@ -403,12 +403,30 @@ export async function generateFeedbackEmbeddingBatch(
 }
 
 // ============================================================================
+// Clustering Thresholds (Single Source of Truth)
+// See /docs/DESIGN_DECISIONS.md for rationale
+// ============================================================================
+
+/**
+ * Threshold for vector-based clustering (assigning feedback to clusters).
+ * Higher = stricter matching, fewer items per cluster.
+ * 0.72 balances grouping related issues while avoiding over-clustering.
+ */
+export const VECTOR_CLUSTERING_THRESHOLD = 0.72;
+
+/**
+ * Threshold for centroid-based cleanup (merging similar clusters).
+ * Lower than clustering threshold because we're comparing cluster centroids,
+ * which are averages and naturally have lower similarity than individual items.
+ */
+export const CLEANUP_MERGE_THRESHOLD = 0.65;
+
+// ============================================================================
 // Vector-Based Clustering
 // ============================================================================
 
-// Default similarity threshold
-// See /docs/DESIGN_DECISIONS.md for rationale
-const DEFAULT_SIMILARITY_THRESHOLD = 0.72;
+// Legacy alias for backwards compatibility
+const DEFAULT_SIMILARITY_THRESHOLD = VECTOR_CLUSTERING_THRESHOLD;
 
 /**
  * Cluster a single feedback item using vector similarity search

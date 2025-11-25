@@ -57,8 +57,10 @@ which didn't match our index. Switched to `text-embedding-004` with explicit dim
 
 ### 0.72 for vector clustering (0.65 for centroid cleanup)
 
+**Config location**: `lib/vector.ts` exports `VECTOR_CLUSTERING_THRESHOLD` (0.72) and `CLEANUP_MERGE_THRESHOLD` (0.65) as the single source of truth.
+
 **Decision**: Use 0.72 cosine similarity threshold for vector-based cluster assignment.
-Use 0.65 for legacy centroid-based cleanup/merging.
+Use 0.65 for centroid-based cleanup/merging (lower because centroids are averages with naturally lower similarity).
 
 **Rationale**:
 
