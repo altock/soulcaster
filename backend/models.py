@@ -16,6 +16,7 @@ class AgentJob(BaseModel):
     cluster_id: str
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
+    pr_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
