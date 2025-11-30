@@ -13,6 +13,13 @@ interface AgentJob {
     updated_at: string;
 }
 
+/**
+ * Renders the "Agent Jobs & PRs" page and its UI for viewing agent job entries and associated pull requests.
+ *
+ * The component fetches job data from the backend on mount and refreshes the list every 5 seconds, displaying loading, empty, and populated states. Each job card shows status, id, creation time, cluster link, an optional "View Pull Request" button when `pr_url` is present, and optional logs.
+ *
+ * @returns The React element for the Agent Jobs & PRs page.
+ */
 export default function PrsPage() {
     const [jobs, setJobs] = useState<AgentJob[]>([]);
     const [loading, setLoading] = useState(true);
