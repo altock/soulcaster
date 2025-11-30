@@ -8,6 +8,7 @@ interface AgentJob {
     cluster_id: string;
     status: 'pending' | 'running' | 'success' | 'failed';
     logs: string | null;
+    pr_url: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -81,7 +82,7 @@ export default function PrsPage() {
                         {jobs.map((job) => (
                             <div key={job.id} className="bg-white/5 rounded-xl border border-white/10 p-6 hover:border-white/20 transition-colors">
                                 <div className="flex items-start justify-between">
-                                    <div>
+                                    <div className="flex-1">
                                         <div className="flex items-center gap-3 mb-2">
                                             <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(job.status)} uppercase tracking-wide`}>
                                                 {job.status}
@@ -96,6 +97,22 @@ export default function PrsPage() {
                                         <div className="text-slate-300 text-sm mb-4">
                                             Cluster: <Link href={`/clusters/${job.cluster_id}`} className="text-emerald-400 hover:underline">{job.cluster_id.substring(0, 8)}...</Link>
                                         </div>
+                                        
+                                        {job.pr_url && (
+                                            <div className="mb-4">
+                                                <a 
+                                                    href={job.pr_url} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/30 transition-colors text-sm font-medium"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                    </svg>
+                                                    View Pull Request
+                                                </a>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

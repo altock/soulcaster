@@ -167,8 +167,8 @@ resource "aws_ecs_task_definition" "main" {
   family                   = "${var.app_name}-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "2048"  # 2 vCPU
-  memory                   = "4096"  # 4 GB
+  cpu                      = "4096"  # 4 vCPU for higher throughput
+  memory                   = "8192"  # 8 GB to satisfy Fargate CPU/memory pairing
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
 
   container_definitions = jsonencode([{
