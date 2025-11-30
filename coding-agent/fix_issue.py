@@ -24,7 +24,20 @@ def log(message: str):
 
 
 def update_job(job_id: str, status: str, logs: str = None, pr_url: str = None):
-    """Update job status in backend."""
+    """
+    Update the job record on the configured backend with a new status and optional metadata.
+    
+    Sends an HTTP PATCH to "{BACKEND_URL}/jobs/{job_id}" with a JSON payload containing
+    "status" and, when provided, "logs" and "pr_url". If either `job_id` or the
+    BACKEND_URL environment variable is missing the update is skipped. Exceptions
+    raised while making the request are caught and printed.
+    
+    Parameters:
+        job_id (str): Identifier of the job to update.
+        status (str): New status value to set for the job.
+        logs (str, optional): Optional log text to attach to the job.
+        pr_url (str, optional): Optional pull request URL to attach to the job.
+    """
     backend_url = os.getenv("BACKEND_URL")
     
     if not job_id or not backend_url:
@@ -45,7 +58,21 @@ def update_job(job_id: str, status: str, logs: str = None, pr_url: str = None):
 
 
 def run_command(command, cwd=None, capture_output=True, env=None):
-    """Runs a shell command and returns the result."""
+    """
+    Execute a shell command and return its standard output.
+    
+    Parameters:
+        command (str): The shell command to run.
+        cwd (str | None): Directory to run the command in; uses the current working directory if None.
+        capture_output (bool): If True, capture and return stdout/stderr output; if False, output is not captured and an empty string is returned.
+        env (Mapping[str, str] | None): Environment variables for the command; defaults to the current process environment.
+    
+    Returns:
+        str: The command's stdout with surrounding whitespace removed; returns an empty string if there is no output or if output capture is disabled.
+    
+    Raises:
+        subprocess.CalledProcessError: If the command exits with a non-zero status.
+    """
     try:
         log(f"Running: {command}")
         result = subprocess.run(
@@ -72,7 +99,15 @@ def run_command(command, cwd=None, capture_output=True, env=None):
 
 
 def parse_issue_url(url):
-    """Parses github issue URL to get owner, repo, and issue number."""
+    """
+    Extract owner, repository name, and issue number from a GitHub issue URL.
+    
+    Returns:
+        tuple: (owner, repo, issue_number) where each element is a string.
+    
+    Raises:
+        ValueError: If the provided URL does not match the expected GitHub issue pattern.
+    """
     # Format: https://github.com/owner/repo/issues/number
     match = re.search(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
     if not match:
@@ -81,6 +116,14 @@ def parse_issue_url(url):
 
 
 def get_github_username() -> str:
+    """
+    Retrieve the authenticated GitHub username.
+    
+    Queries the local GitHub CLI configuration to obtain the current user's login. Raises an exception if no username can be determined (for example, when GH_TOKEN or CLI authentication is not configured).
+    
+    Returns:
+        str: The GitHub username.
+    """
     user = run_command("gh api user --jq .login")
     cleaned = user.strip()
     if not cleaned:
@@ -89,6 +132,12 @@ def get_github_username() -> str:
 
 
 def ensure_fork(owner_name: str, repo_name: str) -> str:
+    """
+    Ensure a fork of the specified repository exists for the authenticated GitHub user, creating a uniquely named fork if one is not already present.
+    
+    Returns:
+        (username, fork_name): the authenticated user's GitHub username and the existing or newly created fork repository name.
+    """
     username = get_github_username()
     # Add random suffix to ensure uniqueness
     random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
@@ -145,6 +194,16 @@ def ensure_fork(owner_name: str, repo_name: str) -> str:
 
 
 def add_upstream_remote(owner_name: str, repo_name: str, cwd: str):
+    """
+    Ensure the local Git repository at `cwd` has an `upstream` remote pointing to the original repository.
+    
+    If an `upstream` remote is already configured, the function does nothing; otherwise it adds `upstream` with the URL https://github.com/{owner_name}/{repo_name}.git.
+    
+    Parameters:
+        owner_name (str): GitHub owner or organization name of the original repository.
+        repo_name (str): Repository name of the original repository.
+        cwd (str): Filesystem path to the local Git repository where the remote should be configured.
+    """
     try:
         run_command("git remote get-url upstream", cwd=cwd)
     except subprocess.CalledProcessError:
@@ -155,6 +214,12 @@ def add_upstream_remote(owner_name: str, repo_name: str, cwd: str):
 
 
 def get_default_branch(owner_name: str, repo_name: str) -> str:
+    """
+    Retrieve the repository's default branch name.
+    
+    Returns:
+        branch_name (str): The repository's default branch (for example "main" or "master"); returns "main" if the default branch cannot be determined.
+    """
     branch = run_command(
         f"gh repo view {owner_name}/{repo_name} --json defaultBranchRef --jq .defaultBranchRef.name"
     ).strip()
@@ -163,6 +228,18 @@ def get_default_branch(owner_name: str, repo_name: str) -> str:
 
 def _run_agent_logic(issue_url):
     # Configure Kilo for Gemini if GEMINI_API_KEY is present
+    """
+    Automates fixing a GitHub issue by running Kilo in a forked repository, committing changes, and creating a pull request.
+    
+    Parameters:
+        issue_url (str): URL of the GitHub issue to fix (e.g., "https://github.com/owner/repo/issues/123").
+    
+    Returns:
+        str: The URL of the created pull request.
+    
+    Raises:
+        Exception: If required environment configuration is missing (e.g., GIT_USER_EMAIL/GIT_USER_NAME), the issue cannot be found, Kilo exits with a non-zero code, or other operations (fork/clone/commit/push/pr creation) fail.
+    """
     minimax_key = os.getenv("MINIMAX_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY")
     
@@ -414,7 +491,18 @@ Please verify:
 
 
 def apply_patches_from_markdown(markdown_text, cwd):
-    """Parses markdown code blocks and writes them to files."""
+    """
+    Extracts code blocks from markdown and writes them to files under the given directory.
+    
+    Supports code fences of the form ```lang:filename\n...``` where the filename after the colon is used as the target path relative to `cwd`. The function creates parent directories as needed and overwrites existing files with the extracted content.
+    
+    Parameters:
+        markdown_text (str): Markdown text to scan for file-containing code blocks.
+        cwd (str): Destination directory in which to create files referenced by code block filenames.
+    
+    Returns:
+        True if one or more files were written, False otherwise.
+    """
     # Regex to find code blocks with filenames
     # Format:
     # ```python:filename.py
@@ -451,6 +539,11 @@ def apply_patches_from_markdown(markdown_text, cwd):
     return applied_count > 0
 
 def main():
+    """
+    Entry point that orchestrates execution: loads environment, parses CLI arguments, runs the agent logic, and reports status to the backend.
+    
+    Parses an issue URL and optional job ID from the command line, sets the backend job to "running", invokes the core agent workflow to create a fix (returning a PR URL on success), and updates the backend job to "success" with collected logs and the PR URL. On any exception, logs a critical failure, updates the backend job to "failed" with logs, and exits the process with code 1.
+    """
     load_dotenv()  # Load API keys from .env
     
     parser = argparse.ArgumentParser(description="Fix a GitHub issue using Kilo CLI")
