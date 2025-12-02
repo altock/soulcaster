@@ -24,6 +24,7 @@ This dashboard provides a web interface for:
 
 - Node.js 18+ or 20+
 - A running FeedbackAgent backend (Python/FastAPI)
+- PostgreSQL database
 
 ### Installation
 
@@ -40,6 +41,15 @@ BACKEND_URL=http://localhost:8000
 ```
 
 For production (Vercel), set this in your Vercel project settings.
+
+### Database Setup
+
+1. Ensure your PostgreSQL database is running.
+2. Run migrations to set up the schema:
+
+```bash
+npx prisma migrate dev
+```
 
 ### Development
 

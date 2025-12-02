@@ -39,6 +39,7 @@ The system consists of three main components:
 - Python 3.12+
 - Node.js 18+
 - Redis instance (Upstash recommended for serverless)
+- PostgreSQL database
 - GitHub account with repository access
 - LLM API key (Gemini recommended)
 
@@ -71,6 +72,9 @@ cp .env.example .env
 ```bash
 cd dashboard
 npm install
+
+# Setup Database
+npx prisma migrate dev
 
 # Copy environment variables
 cp .env.example .env.local
@@ -115,6 +119,7 @@ See `.env.example` for all available environment variables. Key configuration in
 - `GITHUB_SECRET` - GitHub OAuth app client secret
 - `NEXTAUTH_URL` - Your app URL (e.g., `http://localhost:3000`)
 - `NEXTAUTH_SECRET` - Random secret for NextAuth (generate with `openssl rand -base64 32`)
+- `DATABASE_URL` - PostgreSQL connection string
 
 ### Optional Variables
 
