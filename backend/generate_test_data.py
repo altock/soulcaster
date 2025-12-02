@@ -4,10 +4,11 @@ import requests
 import time
 import subprocess
 import shutil
+from typing import List, Dict, Any  
 from dotenv import load_dotenv
 
 load_dotenv()
-load_dotenv(dotenv_path="backend/.env") # Try specific path if root .env fails or isn't picked up
+load_dotenv(dotenv_path="backend/.env", override = False)
 
 # Configuration
 # GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
