@@ -1,12 +1,13 @@
 import { Octokit } from 'octokit';
 import type { FeedbackItem, GitHubRepo } from '@/types';
+import { getGitHubToken } from '@/lib/auth';
 
 /**
  * Initialize Octokit with optional authentication
  * Using GITHUB_TOKEN provides higher rate limits (5000 req/hr vs 60 req/hr)
  */
-function getOctokit() {
-  const token = process.env.GITHUB_TOKEN;
+async function getOctokit() {
+  const token = await getGitHubToken();
 
   return new Octokit({
     auth: token,
@@ -19,7 +20,7 @@ function getOctokit() {
  * @throws Error if repo doesn't exist or is not accessible
  */
 export async function validateRepo(owner: string, repo: string): Promise<boolean> {
-  const octokit = getOctokit();
+  const octokit = await getOctokit();
 
   try {
     await octokit.rest.repos.get({ owner, repo });
@@ -66,7 +67,7 @@ export async function fetchRepoIssues(
   repo: string,
   since?: string
 ): Promise<any[]> {
-  const octokit = getOctokit();
+  const octokit = await getOctokit();
 
   console.log(`[GitHub] Fetching issues for ${owner}/${repo}${since ? ` since ${since}` : ''}`);
 
@@ -111,7 +112,7 @@ export async function getRateLimitStatus(): Promise<{
   reset: Date;
   used: number;
 }> {
-  const octokit = getOctokit();
+  const octokit = await getOctokit();
 
   try {
     const { data } = await octokit.rest.rateLimit.get();

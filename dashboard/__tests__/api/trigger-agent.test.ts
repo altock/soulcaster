@@ -18,8 +18,7 @@ const mockGetGitHubToken = getGitHubToken as jest.MockedFunction<typeof getGitHu
  * The actual API route implementation is tested through the auth helper tests,
  * which verify the token priority logic:
  * 1. Session token (from logged-in user) - highest priority
- * 2. Environment token (GITHUB_TOKEN) - fallback
- * 3. undefined - when neither is available
+ * 2. undefined - when not available
  */
 describe('API Routes - GitHub Token Integration', () => {
   beforeEach(() => {
@@ -34,16 +33,6 @@ describe('API Routes - GitHub Token Integration', () => {
       const token = await getGitHubToken();
 
       expect(token).toBe(sessionToken);
-      expect(mockGetGitHubToken).toHaveBeenCalled();
-    });
-
-    it('should resolve to environment token when session is not available', async () => {
-      const envToken = 'ghp_env_token_123';
-      mockGetGitHubToken.mockResolvedValue(envToken);
-
-      const token = await getGitHubToken();
-
-      expect(token).toBe(envToken);
       expect(mockGetGitHubToken).toHaveBeenCalled();
     });
 

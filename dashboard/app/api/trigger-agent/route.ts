@@ -104,7 +104,7 @@ export async function POST(request: Request) {
                 return NextResponse.json(
                     {
                         error: 'Configuration Error',
-                        details: 'Missing issue_url. To create an issue automatically, provide issue_description (or context) plus repo_url/owner+repo and ensure GITHUB_TOKEN is set in dashboard/.env'
+                        details: 'Missing issue_url. To create an issue automatically, provide issue_description (or context) plus repo_url/owner+repo and ensure you are authenticated with GitHub.'
                     },
                     { status: 400 }
                 );
@@ -152,6 +152,11 @@ export async function POST(request: Request) {
         ];
         if (jobId) {
             envOverrides.push({ name: "JOB_ID", value: jobId });
+        }
+
+        // Pass the user's session token to the agent
+        if (githubToken) {
+            envOverrides.push({ name: "GH_TOKEN", value: githubToken });
         }
 
         const command = new RunTaskCommand({
