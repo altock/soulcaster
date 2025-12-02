@@ -94,12 +94,6 @@ aws secretsmanager create-secret \
   --secret-string "YOUR_GEMINI_API_KEY" \
   --region us-east-1
 
-# Store GitHub Token
-aws secretsmanager create-secret \
-  --name coding-agent/github-token \
-  --secret-string "YOUR_GITHUB_TOKEN" \
-  --region us-east-1
-
 # Store Git User Email
 aws secretsmanager create-secret \
   --name coding-agent/git-user-email \
@@ -115,7 +109,6 @@ aws secretsmanager create-secret \
 
 **Important**: These secrets are automatically injected as environment variables into your Fargate tasks:
 - `coding-agent/gemini-api-key` → `GEMINI_API_KEY`
-- `coding-agent/github-token` → `GH_TOKEN`
 - `coding-agent/git-user-email` → `GIT_USER_EMAIL`
 - `coding-agent/git-user-name` → `GIT_USER_NAME`
 
@@ -260,7 +253,6 @@ aws logs get-log-events \
   --log-stream-name <stream-name>
 
 # Common issues:
-# - GH_TOKEN invalid → update secret
 # - Git config missing → verify GIT_USER_EMAIL/NAME secrets
 # - Kilo configuration → check GEMINI_API_KEY secret
 ```
@@ -312,7 +304,6 @@ terraform destroy
 
 # Delete secrets
 aws secretsmanager delete-secret --secret-id coding-agent/gemini-api-key --region us-east-1 --force-delete-without-recovery
-aws secretsmanager delete-secret --secret-id coding-agent/github-token --region us-east-1 --force-delete-without-recovery
 aws secretsmanager delete-secret --secret-id coding-agent/git-user-email --region us-east-1 --force-delete-without-recovery
 aws secretsmanager delete-secret --secret-id coding-agent/git-user-name --region us-east-1 --force-delete-without-recovery
 

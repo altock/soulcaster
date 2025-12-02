@@ -329,7 +329,7 @@ export default function SourceConfig() {
             <div>
               <h4 className="font-semibold text-slate-200">GitHub Repository Issues</h4>
               <p className="text-sm text-slate-400">
-                Sync open & closed issues from public GitHub repos. Uses GitHub API with optional token for higher rate limits.
+                Sync open & closed issues from public GitHub repos. Uses GitHub API with your session token for higher rate limits.
               </p>
             </div>
           </div>
@@ -437,7 +437,7 @@ export default function SourceConfig() {
             {repoMessage && <p className="text-sm text-emerald-400">{repoMessage}</p>}
             {repoError && <p className="text-sm text-rose-400">{repoError}</p>}
             <p className="text-xs text-slate-500">
-              Supports public repos. Set GITHUB_TOKEN for higher rate limits (5000/hr vs 60/hr).
+              Supports public repos. Uses your session token for higher rate limits (5000/hr vs 60/hr).
             </p>
           </div>
         </div>

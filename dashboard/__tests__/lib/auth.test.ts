@@ -38,40 +38,28 @@ describe('Auth Helper', () => {
       expect(token).toBe(mockAccessToken);
     });
 
-    it('should return environment token when session is null', async () => {
+    it('should return undefined when session is null', async () => {
       mockGetServerSession.mockResolvedValue(null);
 
       const token = await getGitHubToken();
-      expect(token).toBe('test-env-token');
+      expect(token).toBeUndefined();
     });
 
-    it('should return environment token when session has no accessToken', async () => {
+    it('should return undefined when session has no accessToken', async () => {
       mockGetServerSession.mockResolvedValue({
         expires: '2024-12-31',
         user: { name: 'Test User', email: 'test@example.com' },
       });
 
       const token = await getGitHubToken();
-      expect(token).toBe('test-env-token');
+      expect(token).toBeUndefined();
     });
 
-    it('should return environment token when getServerSession throws error', async () => {
+    it('should return undefined when getServerSession throws error', async () => {
       mockGetServerSession.mockRejectedValue(new Error('Session error'));
 
       const token = await getGitHubToken();
-      expect(token).toBe('test-env-token');
-    });
-
-    it('should return undefined when no session and no env token', async () => {
-      mockGetServerSession.mockResolvedValue(null);
-      const originalToken = process.env.GITHUB_TOKEN;
-      delete process.env.GITHUB_TOKEN;
-
-      const token = await getGitHubToken();
       expect(token).toBeUndefined();
-
-      // Restore
-      process.env.GITHUB_TOKEN = originalToken;
     });
   });
 

@@ -1,8 +1,15 @@
 import { getServerSession } from 'next-auth';
 import GitHub from 'next-auth/providers/github';
+import { PrismaAdapter } from '@auth/prisma-adapter';
+import { prisma } from '@/lib/prisma';
 import type { NextAuthOptions } from 'next-auth';
+import type { Adapter } from 'next-auth/adapters';
 
 export const authOptions: NextAuthOptions = {
+  adapter: PrismaAdapter(prisma) as Adapter,
+  session: {
+    strategy: 'jwt', // Use JWT strategy even with database adapter to keep session stateless if preferred, or remove for database sessions
+  },
   providers: [
     GitHub({
       clientId: process.env.GITHUB_ID!,
@@ -25,6 +32,9 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       // Send properties to the client
       session.accessToken = token.accessToken as string;
+      if (session.user && token.sub) {
+        session.user.id = token.sub;
+      }
       return session;
     },
   },
@@ -50,7 +60,8 @@ export async function getGitHubToken(): Promise<string | undefined> {
   }
 
   // Fallback to environment variable
-  return process.env.GITHUB_TOKEN;
+  // return process.env.GITHUB_TOKEN;
+  return undefined;
 }
 
 /**
