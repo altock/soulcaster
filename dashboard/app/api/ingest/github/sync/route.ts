@@ -9,8 +9,15 @@ const redis = new Redis({
 });
 
 /**
- * POST /api/ingest/github/sync
- * Sync all enabled GitHub repositories
+ * Synchronizes all enabled GitHub repositories stored in Redis and ingests their issues as feedback items.
+ *
+ * Processes each enabled repo found in the `github:repos` set: fetches new or updated issues (ignoring PRs),
+ * stores or updates feedback records in Redis, updates clustering and auxiliary sorted/sets, and updates
+ * per-repo metadata (last_synced and issue_count). Logs rate limit before and after processing and returns
+ * a per-repo summary including counts of new, updated, and closed issues.
+ *
+ * @returns A JSON object describing the outcome. On success: `{ success: true, message: 'Sync completed', total_new, total_updated, total_closed, repos }`
+ * where `repos` is an array of per-repo result objects (`{ repo, new, updated, closed, total, ignored_prs }`) or error entries for repos that failed. On failure: `{ success: false, error, detail }`.
  */
 export async function POST() {
   try {
@@ -60,7 +67,7 @@ export async function POST() {
         console.log(`[GitHub Sync] Syncing ${repo.full_name}...`);
 
         // Fetch issues (incremental if last_synced exists)
-        const issues = await fetchRepoIssues(repo.owner, repo.repo, repo.last_synced);
+        const { issues, prCount } = await fetchRepoIssues(repo.owner, repo.repo, repo.last_synced);
 
         let newCount = 0;
         let updatedCount = 0;
@@ -125,6 +132,7 @@ export async function POST() {
           updated: updatedCount,
           closed: closedCount,
           total: issues.length,
+          ignored_prs: prCount,
         });
 
         totalNew += newCount;

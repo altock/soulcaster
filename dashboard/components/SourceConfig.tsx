@@ -5,6 +5,13 @@ import type { GitHubRepo } from '@/types';
 
 type SourceType = 'reddit' | 'github';
 
+/**
+ * Renders the SourceConfig UI for managing Reddit subreddits and GitHub repositories, including adding, removing, saving, and syncing configured sources.
+ *
+ * Loads subreddit and repository data on mount and interacts with backend APIs to persist subreddit lists, manage GitHub repo configuration, trigger repo syncs (single or all), and trigger the Reddit poller.
+ *
+ * @returns The JSX element for the SourceConfig administration panel.
+ */
 export default function SourceConfig() {
   const [selectedSource, setSelectedSource] = useState<SourceType | null>(null);
 
@@ -170,7 +177,8 @@ export default function SourceConfig() {
       }
       await loadRepos();
       setRepoMessage(
-        `Synced ${fullName}: ${data.new_issues} new, ${data.updated_issues} updated, ${data.closed_issues} closed`
+        `Synced ${fullName}: ${data.new_issues} new, ${data.updated_issues} updated, ${data.closed_issues} closed` +
+        (data.ignored_prs ? ` (${data.ignored_prs} PRs ignored)` : '')
       );
     } catch (err: any) {
       setRepoError(err?.message || 'Failed to sync repository');
@@ -193,7 +201,8 @@ export default function SourceConfig() {
       }
       await loadRepos();
       setRepoMessage(
-        `Synced all repos: ${data.total_new} new, ${data.total_updated} updated, ${data.total_closed} closed`
+        `Synced all repos: ${data.total_new} new, ${data.total_updated} updated, ${data.total_closed} closed` +
+        (data.ignored_prs ? ` (${data.ignored_prs} PRs ignored)` : '')
       );
     } catch (err: any) {
       setRepoError(err?.message || 'Failed to sync repositories');
@@ -329,7 +338,7 @@ export default function SourceConfig() {
             <div>
               <h4 className="font-semibold text-slate-200">GitHub Repository Issues</h4>
               <p className="text-sm text-slate-400">
-                Sync open & closed issues from public GitHub repos. Uses GitHub API with optional token for higher rate limits.
+                Sync open & closed issues from public GitHub repos. Uses GitHub API with your session token for higher rate limits.
               </p>
             </div>
           </div>
@@ -437,7 +446,7 @@ export default function SourceConfig() {
             {repoMessage && <p className="text-sm text-emerald-400">{repoMessage}</p>}
             {repoError && <p className="text-sm text-rose-400">{repoError}</p>}
             <p className="text-xs text-slate-500">
-              Supports public repos. Set GITHUB_TOKEN for higher rate limits (5000/hr vs 60/hr).
+              Supports public repos. Uses your session token for higher rate limits (5000/hr vs 60/hr).
             </p>
           </div>
         </div>
