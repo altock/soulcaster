@@ -4,7 +4,8 @@ import requests
 import time
 import subprocess
 import shutil
-from typing import List, Dict, Any  
+from typing import List, Dict, Any, Tuple
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -153,9 +154,21 @@ def push_to_github(repo_url, target_dir="."):
         repo_url (str): Remote Git repository URL to push to (e.g., https://github.com/owner/repo.git or git@github.com:owner/repo.git).
         target_dir (str): Path to the directory to initialize and push (defaults to current directory).
     
+    Raises:
+        ValueError: If repo_url does not match allowed GitHub URL patterns.
+    
     Notes:
-        On git command failure the function prints an error message and does not raise.
+        - On git command failure the function prints an error message and does not raise.
+        - Force-push is only used if the remote main branch is empty (for fresh repos).
+        - If the remote main branch already has commits, a standard push is attempted instead.
+        - To use this script, ensure the target GitHub repository is newly created and empty.
     """
+    # Validate repo_url against allowed GitHub patterns to prevent command injection
+    if not (repo_url.startswith("https://github.com/") or repo_url.startswith("git@github.com:")):
+        raise ValueError(
+            f"Invalid repo_url: '{repo_url}'. Must start with 'https://github.com/' or 'git@github.com:'"
+        )
+    
     print(f"Pushing to {repo_url}...")
     try:
         subprocess.run(["git", "init"], cwd=target_dir, check=True)
@@ -163,7 +176,27 @@ def push_to_github(repo_url, target_dir="."):
         subprocess.run(["git", "commit", "-m", "Initial commit with buggy code"], cwd=target_dir, check=True)
         subprocess.run(["git", "branch", "-M", "main"], cwd=target_dir, check=True)
         subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=target_dir, check=True)
-        subprocess.run(["git", "push", "-u", "-f", "origin", "main"], cwd=target_dir, check=True)
+        
+        # Check if the remote main branch is empty before deciding to force-push
+        try:
+            result = subprocess.run(
+                ["git", "ls-remote", "--heads", "origin", "main"],
+                cwd=target_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            remote_main_exists = result.stdout.strip() != ""
+        except subprocess.CalledProcessError:
+            remote_main_exists = False
+        
+        # Only force-push if remote main doesn't exist (fresh repo)
+        if remote_main_exists:
+            print("Remote main branch already exists. Using standard push (no force).")
+            subprocess.run(["git", "push", "-u", "origin", "main"], cwd=target_dir, check=True)
+        else:
+            print("Remote main branch is empty. Using force-push for fresh initialization.")
+            subprocess.run(["git", "push", "-u", "-f", "origin", "main"], cwd=target_dir, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Git operation failed: {e}")
 
@@ -291,6 +324,72 @@ def create_issues(repo_owner, repo_name, token):
         # Sleep a bit to avoid hitting secondary rate limits
         time.sleep(2)
 
+def parse_github_url(repo_url: str) -> Tuple[str, str]:
+    """
+    Robustly parse a GitHub repository URL to extract owner and repo name.
+    
+    Supports both HTTPS and SSH URL formats:
+    - HTTPS: https://github.com/owner/repo.git or https://github.com/owner/repo
+    - SSH: git@github.com:owner/repo.git or git@github.com:owner/repo
+    
+    Parameters:
+        repo_url (str): The GitHub repository URL to parse.
+    
+    Returns:
+        Tuple[str, str]: A tuple of (repo_owner, repo_name).
+    
+    Raises:
+        ValueError: If the URL format is unexpected or cannot be parsed into owner/repo.
+    """
+    try:
+        # Handle SSH-style URLs (git@github.com:owner/repo.git)
+        if repo_url.startswith("git@"):
+            # Split on ':' to separate host from path
+            if ":" not in repo_url:
+                raise ValueError(f"Invalid SSH URL format: {repo_url}")
+            
+            _, path_part = repo_url.split(":", 1)
+            # Remove trailing .git if present
+            path_part = path_part.rstrip(".git")
+            # Split path on '/'
+            segments = path_part.split("/")
+        else:
+            # Handle HTTP(S) URLs
+            parsed = urlparse(repo_url)
+            path = parsed.path
+            # Remove leading '/' and trailing '.git'
+            path = path.lstrip("/").rstrip(".git")
+            # Split path on '/'
+            segments = path.split("/")
+        
+        # Validate that we have at least owner and repo name
+        if len(segments) < 2:
+            raise ValueError(
+                f"Could not extract owner and repo name from URL: {repo_url}. "
+                f"Expected at least 2 path segments, got {len(segments)}."
+            )
+        
+        repo_owner = segments[-2]
+        repo_name = segments[-1]
+        
+        # Final validation: ensure both are non-empty
+        if not repo_owner or not repo_name:
+            raise ValueError(
+                f"Extracted empty owner or repo name from URL: {repo_url}. "
+                f"Got owner='{repo_owner}', repo='{repo_name}'."
+            )
+        
+        return repo_owner, repo_name
+    
+    except ValueError:
+        # Re-raise ValueError as-is
+        raise
+    except Exception as e:
+        # Catch any other unexpected errors and wrap them
+        raise ValueError(
+            f"Unexpected error parsing GitHub URL '{repo_url}': {type(e).__name__}: {e}"
+        )
+
 if __name__ == "__main__":
     import sys
     
@@ -301,11 +400,12 @@ if __name__ == "__main__":
     repo_url = sys.argv[1]
     token = sys.argv[2]
     
-    # Extract owner and repo name from URL
-    # Expected format: https://github.com/owner/repo.git or https://github.com/owner/repo
-    parts = repo_url.rstrip(".git").split("/")
-    repo_owner = parts[-2]
-    repo_name = parts[-1]
+    # Extract owner and repo name from URL with robust parsing for HTTPS and SSH formats
+    try:
+        repo_owner, repo_name = parse_github_url(repo_url)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
     # Create a temporary directory for the repo
     temp_dir = "temp_test_repo"
