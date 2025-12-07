@@ -176,9 +176,10 @@ export default function SourceConfig() {
         throw new Error(data?.error || data?.detail || 'Failed to sync repo');
       }
       await loadRepos();
+      const ignoredCount = data.ignored_prs ?? 0;
       setRepoMessage(
         `Synced ${fullName}: ${data.new_issues} new, ${data.updated_issues} updated, ${data.closed_issues} closed` +
-        (data.ignored_prs ? ` (${data.ignored_prs} PRs ignored)` : '')
+        (ignoredCount > 0 ? ` (${ignoredCount} PRs ignored)` : '')
       );
     } catch (err: any) {
       setRepoError(err?.message || 'Failed to sync repository');
@@ -200,9 +201,10 @@ export default function SourceConfig() {
         throw new Error(data?.error || data?.detail || 'Failed to sync repos');
       }
       await loadRepos();
+      const totalIgnored = (data.repos ?? []).reduce((sum: number, repo: any) => sum + (repo.ignored_prs ?? 0), 0);
       setRepoMessage(
         `Synced all repos: ${data.total_new} new, ${data.total_updated} updated, ${data.total_closed} closed` +
-        (data.ignored_prs ? ` (${data.ignored_prs} PRs ignored)` : '')
+        (totalIgnored > 0 ? ` (${totalIgnored} PRs ignored)` : '')
       );
     } catch (err: any) {
       setRepoError(err?.message || 'Failed to sync repositories');
