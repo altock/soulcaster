@@ -57,7 +57,7 @@ def update_job(job_id: str, status: str, logs: str = None, pr_url: str = None):
         print(f"Failed to update job status: {e}")
 
 
-def run_command(command, cwd=None, capture_output=True, env=None):
+def run_command(command, cwd=None, capture_output=True, env=None, log_output=True):
     """
     Run a shell command and return its standard output.
     
@@ -66,6 +66,7 @@ def run_command(command, cwd=None, capture_output=True, env=None):
         cwd (str | None): Working directory for the command; uses the current process cwd if None.
         capture_output (bool): If True, capture and return stdout (and stderr for logging); if False, output is not captured and an empty string is returned.
         env (Mapping[str, str] | None): Environment variables for the subprocess; uses the current process environment if None.
+        log_output (bool): If True, log the command and any errors; if False, suppress logging (useful for sensitive operations like credential setup).
     
     Returns:
         str: The command's stdout with surrounding whitespace removed; returns an empty string if there is no output or if output capture is disabled.
@@ -74,7 +75,8 @@ def run_command(command, cwd=None, capture_output=True, env=None):
         subprocess.CalledProcessError: If the command exits with a non-zero status.
     """
     try:
-        log(f"Running: {command}")
+        if log_output:
+            log(f"Running: {command}")
         result = subprocess.run(
             command,
             cwd=cwd,
@@ -86,15 +88,16 @@ def run_command(command, cwd=None, capture_output=True, env=None):
             env=env if env else os.environ
         )
         output = result.stdout.strip() if result.stdout else ""
-        if output:
+        if output and log_output:
             # Log truncated output if too long
             display_out = output[:500] + "..." if len(output) > 500 else output
             # log(f"Output: {display_out}") # Too verbose?
         return output
     except subprocess.CalledProcessError as e:
-        log(f"Error running command: {command}")
-        log(f"STDOUT: {e.stdout}")
-        log(f"STDERR: {e.stderr}")
+        if log_output:
+            log(f"Error running command: {command}")
+            log(f"STDOUT: {e.stdout}")
+            log(f"STDERR: {e.stderr}")
         raise
 
 
@@ -396,7 +399,12 @@ def _run_agent_logic(issue_url):
     if os.getenv("GH_TOKEN"):
         log("Configuring git credentials with GH_TOKEN...")
         gh_token = os.getenv("GH_TOKEN")
-        run_command(f'git config credential.helper "!f() {{ echo username=x-access-token; echo password={gh_token}; }}; f"', cwd=cwd)
+        # Use environment variable to avoid embedding token in command string that gets logged
+        credential_cmd = 'git config credential.helper "!f() { echo username=x-access-token; echo password=$GH_TOKEN_CRED; }; f"'
+        # Pass token via env variable and suppress logging to prevent token exposure
+        cred_env = os.environ.copy()
+        cred_env["GH_TOKEN_CRED"] = gh_token
+        run_command(credential_cmd, cwd=cwd, env=cred_env, log_output=False)
 
     log("Fetching issue details from upstream repo...")
     # First verify the issue exists and get full details
