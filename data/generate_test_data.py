@@ -349,16 +349,20 @@ def parse_github_url(repo_url: str) -> Tuple[str, str]:
                 raise ValueError(f"Invalid SSH URL format: {repo_url}")
             
             _, path_part = repo_url.split(":", 1)
-            # Remove trailing .git if present
-            path_part = path_part.rstrip(".git")
+            # Remove trailing .git if present (exact match)
+            if path_part.endswith(".git"):
+                path_part = path_part[:-4]
             # Split path on '/'
             segments = path_part.split("/")
         else:
             # Handle HTTP(S) URLs
             parsed = urlparse(repo_url)
             path = parsed.path
-            # Remove leading '/' and trailing '.git'
-            path = path.lstrip("/").rstrip(".git")
+            # Remove leading '/'
+            path = path.lstrip("/")
+            # Remove trailing '.git' (exact match)
+            if path.endswith(".git"):
+                path = path[:-4]
             # Split path on '/'
             segments = path.split("/")
         
