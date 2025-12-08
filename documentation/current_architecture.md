@@ -2,6 +2,22 @@
 
 Snapshot of what the hackathon build actually does today and the big decision points we need to tackle before hardening it. Focus is on the three pillars: ingestion/backend, dashboard, and the coding agent + AWS runner.
 
+## User flow (dashboard to PR)
+
+```mermaid
+flowchart TD
+    U[Developer] --> Login["Sign in with GitHub\nNext.js dashboard"]
+    Login --> ViewClusters["View clusters & feedback\nfrom Redis/backend"]
+    ViewClusters --> ClusterDetail["Open cluster detail\nreview Reddit/Sentry/GitHub items"]
+    ClusterDetail --> Adjust["Optionally rerun clustering\nor tweak source config"]
+    ClusterDetail --> StartFix["Click Generate Fix\non a cluster"]
+    StartFix --> CreateJob["Dashboard API creates AgentJob\nand marks cluster fixing"]
+    CreateJob --> TriggerAgent["/api/trigger-agent\nlaunches ECS task"]
+    TriggerAgent --> AgentPR["Coding agent analyzes cluster\nand opens GitHub PR"]
+    AgentPR --> Monitor["Dashboard polls jobs/clusters\nand shows status + PR link"]
+    Monitor --> Review["Developer reviews & merges PR\nin GitHub"]
+```
+
 ## High-level architecture (diagram)
 
 ```mermaid
