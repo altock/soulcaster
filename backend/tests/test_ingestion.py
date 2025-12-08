@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
 from backend.main import app
-from backend.store import clear_feedback_items, get_all_feedback_items, clear_clusters, get_all_clusters
+from backend.store import (
+    clear_feedback_items, 
+    get_all_feedback_items, 
+    clear_clusters, 
+    get_all_clusters,
+    get_unclustered_feedback,
+    remove_from_unclustered
+)
 
 client = TestClient(app)
 
@@ -147,3 +154,144 @@ def test_ingest_reddit_with_empty_body():
     items = get_all_feedback_items()
     assert len(items) == 1
     assert items[0].body == ""
+
+
+# ========== Phase 1: Ingestion Moat - Unclustered Feedback Tests ==========
+
+def test_add_feedback_writes_to_unclustered():
+    """Phase 1: Verify feedback lands in unclustered set when ingested."""
+    payload = {
+        "id": "999e4567-e89b-12d3-a456-426614174000",
+        "source": "reddit",
+        "external_id": "t3_unclustered_test",
+        "title": "Test unclustered",
+        "body": "This should go to unclustered set",
+        "metadata": {"subreddit": "test"},
+        "created_at": "2023-10-27T10:00:00Z"
+    }
+    response = client.post("/ingest/reddit", json=payload)
+    assert response.status_code == 200
+    
+    # Check feedback was created
+    items = get_all_feedback_items()
+    assert len(items) >= 1
+    
+    # KEY TEST: Check it's in the unclustered set
+    unclustered = get_unclustered_feedback()
+    assert len(unclustered) >= 1
+    
+    # Verify the specific item is in unclustered (use the ID from payload)
+    unclustered_ids = [str(item.id) for item in unclustered]
+    expected_id = payload["id"]
+    assert expected_id in unclustered_ids, f"Item {expected_id} not found in unclustered set. Found: {unclustered_ids}"
+
+
+def test_all_sources_add_to_unclustered():
+    """Phase 1: Verify all ingest sources add to unclustered set."""
+    # Test Reddit
+    reddit_payload = {
+        "id": "a00e4567-e89b-12d3-a456-426614174000",
+        "source": "reddit",
+        "external_id": "t3_multi_test_1",
+        "title": "Reddit bug",
+        "body": "Reddit body",
+        "metadata": {},
+        "created_at": "2023-10-27T10:00:00Z"
+    }
+    client.post("/ingest/reddit", json=reddit_payload)
+    
+    # Test Sentry
+    sentry_payload = {
+        "event_id": "sentry_multi_test",
+        "message": "Sentry error",
+        "exception": {
+            "values": [{
+                "type": "Error",
+                "value": "Test error"
+            }]
+        }
+    }
+    client.post("/ingest/sentry", json=sentry_payload)
+    
+    # Test Manual
+    manual_payload = {"text": "Manual feedback test"}
+    client.post("/ingest/manual", json=manual_payload)
+    
+    # Check all are in unclustered
+    unclustered = get_unclustered_feedback()
+    assert len(unclustered) >= 3, f"Expected at least 3 unclustered items, got {len(unclustered)}"
+    
+    sources = {item.source for item in unclustered}
+    assert "reddit" in sources
+    assert "sentry" in sources
+    assert "manual" in sources
+
+
+def test_remove_from_unclustered():
+    """Phase 1: Verify items can be removed from unclustered set."""
+    payload = {
+        "id": "b00e4567-e89b-12d3-a456-426614174000",
+        "source": "reddit",
+        "external_id": "t3_remove_test",
+        "title": "Remove test",
+        "body": "Test removal",
+        "metadata": {},
+        "created_at": "2023-10-27T10:00:00Z"
+    }
+    response = client.post("/ingest/reddit", json=payload)
+    assert response.status_code == 200
+    
+    items = get_all_feedback_items()
+    test_item = next((item for item in items if item.external_id == "t3_remove_test"), None)
+    assert test_item is not None
+    
+    # Verify it's in unclustered
+    unclustered_before = get_unclustered_feedback()
+    assert any(item.id == test_item.id for item in unclustered_before)
+    
+    # Remove from unclustered
+    remove_from_unclustered(test_item.id)
+    
+    # Verify it's no longer in unclustered
+    unclustered_after = get_unclustered_feedback()
+    assert not any(item.id == test_item.id for item in unclustered_after), \
+        f"Item {test_item.id} still in unclustered after removal"
+
+
+def test_get_unclustered_feedback_empty():
+    """Phase 1: Verify get_unclustered_feedback returns empty list when no items."""
+    clear_feedback_items()
+    unclustered = get_unclustered_feedback()
+    assert unclustered == [], "Expected empty list for unclustered feedback"
+
+
+def test_duplicate_ingestion_does_not_duplicate_unclustered():
+    """Phase 1: Verify duplicate external_id doesn't add multiple unclustered entries."""
+    payload = {
+        "id": "c00e4567-e89b-12d3-a456-426614174000",
+        "source": "reddit",
+        "external_id": "t3_duplicate_unclustered",
+        "title": "Original",
+        "body": "Original body",
+        "metadata": {},
+        "created_at": "2023-10-27T10:00:00Z"
+    }
+    
+    # First ingestion
+    first = client.post("/ingest/reddit", json=payload)
+    assert first.status_code == 200
+    
+    unclustered_after_first = get_unclustered_feedback()
+    count_after_first = len(unclustered_after_first)
+    
+    # Second ingestion (duplicate)
+    duplicate_payload = payload | {"id": "d00e4567-e89b-12d3-a456-426614174000"}
+    second = client.post("/ingest/reddit", json=duplicate_payload)
+    assert second.status_code == 200
+    assert second.json()["status"] == "duplicate"
+    
+    unclustered_after_second = get_unclustered_feedback()
+    count_after_second = len(unclustered_after_second)
+    
+    assert count_after_second == count_after_first, \
+        "Duplicate ingestion should not add to unclustered set"
