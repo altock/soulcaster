@@ -11,6 +11,13 @@ This document outlines a comprehensive testing strategy for the Soulcaster platf
 
 ---
 
+### Current focus (Phase 1 ingestion)
+- [x] backend/tests/test_ingestion.py: add unclustered write test (feedback lands in all 4 keys incl. feedback:unclustered)
+- [x] backend/tests/test_store.py: add helpers coverage for get_unclustered_feedback/remove_from_unclustered
+- [ ] backend/tests/test_ingestion.py: ensure all ingest endpoints emit normalized FeedbackItem shape
+
+---
+
 ## Phase 1: Unit Test Coverage (Days 1-2)
 
 ### 1.1 Backend Tests

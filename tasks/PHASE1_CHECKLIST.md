@@ -8,6 +8,13 @@
 
 ---
 
+### Now / Next / Blocked
+- **Now:** [x] backend: ensure add_feedback_item writes to feedback:unclustered + add get/remove helpers (done when unclustered test passes)
+- **Next:** [ ] backend: normalize all ingest endpoints to FeedbackItem shape + consistent logging (done when endpoint tests green)
+- **Blocked:** none noted (add owner/dependency if discovered)
+
+---
+
 ## Day 1: Store Layer + Tests
 
 ### Morning (2-3 hours)
