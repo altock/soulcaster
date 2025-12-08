@@ -13,9 +13,9 @@ from uuid import UUID
 import requests
 
 try:
-    from .models import FeedbackItem, IssueCluster, AgentJob
+    from .models import FeedbackItem, IssueCluster, AgentJob, Project, User
 except ImportError:
-    from models import FeedbackItem, IssueCluster, AgentJob
+    from models import FeedbackItem, IssueCluster, AgentJob, Project, User
 
 try:
     import redis  # type: ignore
@@ -138,14 +138,18 @@ class InMemoryStore:
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[UUID, IssueCluster] = {}
         self.agent_jobs: Dict[UUID, AgentJob] = {}
-        self.reddit_subreddits: Optional[List[str]] = None
-        self.external_index: Dict[Tuple[str, str], UUID] = {}
+        self.projects: Dict[UUID, Project] = {}
+        self.users: Dict[UUID, User] = {}
+        self.reddit_subreddits: Dict[UUID, List[str]] = {}
+        self.external_index: Dict[Tuple[UUID, str, str], UUID] = {}
         self.unclustered_feedback_ids: set[UUID] = set()  # Phase 1: track unclustered items
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
+        if item.project_id not in self.projects:
+            raise KeyError("project not found")
         if item.external_id:
-            key = (item.source, item.external_id)
+            key = (item.project_id, item.source, item.external_id)
             existing_id = self.external_index.get(key)
             if existing_id:
                 return self.feedback_items[existing_id]
@@ -195,18 +199,22 @@ class InMemoryStore:
         self.issue_clusters.clear()
 
     # Config (Reddit)
-    def set_reddit_subreddits(self, subreddits: List[str]) -> List[str]:
-        self.reddit_subreddits = subreddits
+    def set_reddit_subreddits(self, subreddits: List[str], project_id: UUID) -> List[str]:
+        if project_id not in self.projects:
+            raise KeyError("project not found")
+        self.reddit_subreddits[project_id] = subreddits
         return subreddits
 
-    def get_reddit_subreddits(self) -> Optional[List[str]]:
-        return self.reddit_subreddits
+    def get_reddit_subreddits(self, project_id: UUID) -> Optional[List[str]]:
+        return self.reddit_subreddits.get(project_id)
 
     def clear_config(self):
-        self.reddit_subreddits = None
+        self.reddit_subreddits = {}
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
+        if job.project_id not in self.projects:
+            raise KeyError("project not found")
         self.agent_jobs[job.id] = job
         return job
 
@@ -230,12 +238,28 @@ class InMemoryStore:
     def clear_jobs(self):
         self.agent_jobs.clear()
 
-    def get_feedback_by_external_id(self, source: str, external_id: str) -> Optional[FeedbackItem]:
-        key = (source, external_id)
+    def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
+        key = (project_id, source, external_id)
         item_id = self.external_index.get(key)
         if not item_id:
             return None
         return self.feedback_items.get(item_id)
+
+    # Users / Projects
+    def create_user_with_default_project(self, user: User, default_project: Project) -> Project:
+        self.users[user.id] = user
+        self.projects[default_project.id] = default_project
+        return default_project
+
+    def create_project(self, project: Project) -> Project:
+        self.projects[project.id] = project
+        return project
+
+    def get_projects_for_user(self, user_id: UUID) -> List[Project]:
+        return [p for p in self.projects.values() if p.user_id == user_id]
+
+    def get_project(self, project_id: UUID) -> Optional[Project]:
+        return self.projects.get(project_id)
 
 
 class RedisStore:
@@ -685,14 +709,14 @@ def get_all_feedback_items() -> List[FeedbackItem]:
     return _STORE.get_all_feedback_items()
 
 
-def get_feedback_by_external_id(source: str, external_id: str) -> Optional[FeedbackItem]:
+def get_feedback_by_external_id(project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
     if not external_id:
         return None
     if hasattr(_STORE, "get_feedback_by_external_id"):
-        return _STORE.get_feedback_by_external_id(source, external_id)
+        return _STORE.get_feedback_by_external_id(project_id, source, external_id)
     # Fallback: linear scan (should rarely happen)
     for item in _STORE.get_all_feedback_items():
-        if item.source == source and item.external_id == external_id:
+        if item.project_id == project_id and item.source == source and item.external_id == external_id:
             return item
     return None
 
@@ -722,11 +746,11 @@ def clear_clusters():
 
 
 def set_reddit_subreddits(subreddits: List[str]) -> List[str]:
-    return _STORE.set_reddit_subreddits(subreddits)
+    raise TypeError("set_reddit_subreddits requires project_id")
 
 
 def get_reddit_subreddits() -> Optional[List[str]]:
-    return _STORE.get_reddit_subreddits()
+    raise TypeError("get_reddit_subreddits requires project_id")
 
 
 def clear_config():
@@ -778,3 +802,29 @@ def remove_from_unclustered(feedback_id: UUID):
         feedback_id: UUID of the feedback item to remove from unclustered set.
     """
     return _STORE.remove_from_unclustered(feedback_id)
+
+
+# User / Project API
+def create_user_with_default_project(user: User, project: Project) -> Project:
+    return _STORE.create_user_with_default_project(user, project)
+
+
+def create_project(project: Project) -> Project:
+    return _STORE.create_project(project)
+
+
+def get_projects_for_user(user_id: UUID) -> List[Project]:
+    return _STORE.get_projects_for_user(user_id)
+
+
+def get_project(project_id: UUID) -> Optional[Project]:
+    return _STORE.get_project(project_id)
+
+
+# Project-scoped config API
+def set_reddit_subreddits_for_project(subreddits: List[str], project_id: UUID) -> List[str]:
+    return _STORE.set_reddit_subreddits(subreddits, project_id)
+
+
+def get_reddit_subreddits_for_project(project_id: UUID) -> Optional[List[str]]:
+    return _STORE.get_reddit_subreddits(project_id)

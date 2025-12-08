@@ -4,14 +4,13 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from backend.main import app
-from backend.models import AgentJob
+from backend.models import AgentJob, IssueCluster
 from backend.store import (
     add_cluster,
     add_job,
     clear_clusters,
     clear_jobs,
     get_job,
-    IssueCluster,
 )
 
 
@@ -23,10 +22,11 @@ def setup_function():
     clear_jobs()
 
 
-def _seed_cluster():
+def _seed_cluster(project_id):
     now = datetime.now(timezone.utc)
     cluster = IssueCluster(
         id=str(uuid4()),
+        project_id=project_id,
         title="Test Cluster",
         summary="Test Summary",
         feedback_ids=[],
@@ -38,9 +38,10 @@ def _seed_cluster():
     return cluster
 
 
-def test_create_job():
-    cluster = _seed_cluster()
-    response = client.post("/jobs", json={"cluster_id": str(cluster.id)})
+def test_create_job(project_context):
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
+    response = client.post(f"/jobs?project_id={pid}", json={"cluster_id": str(cluster.id)})
 
     assert response.status_code == 200
     data = response.json()
@@ -61,11 +62,13 @@ def test_create_job():
     assert job.status == "pending"
 
 
-def test_update_job_status():
-    cluster = _seed_cluster()
+def test_update_job_status(project_context):
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
+        project_id=pid,
         cluster_id=cluster.id,
         status="pending",
         created_at=now,
@@ -73,9 +76,7 @@ def test_update_job_status():
     )
     add_job(job)
 
-    response = client.patch(
-        f"/jobs/{job.id}", json={"status": "running"}
-    )
+    response = client.patch(f"/jobs/{job.id}?project_id={pid}", json={"status": "running"})
 
     assert response.status_code == 200
     
@@ -83,11 +84,13 @@ def test_update_job_status():
     assert updated.status == "running"
 
 
-def test_update_job_logs():
-    cluster = _seed_cluster()
+def test_update_job_logs(project_context):
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
+        project_id=pid,
         cluster_id=cluster.id,
         status="pending",
         created_at=now,
@@ -96,9 +99,7 @@ def test_update_job_logs():
     add_job(job)
 
     log_content = "Starting fix process..."
-    response = client.patch(
-        f"/jobs/{job.id}", json={"logs": log_content}
-    )
+    response = client.patch(f"/jobs/{job.id}?project_id={pid}", json={"logs": log_content})
 
     assert response.status_code == 200
     
@@ -106,11 +107,13 @@ def test_update_job_logs():
     assert updated.logs == log_content
 
 
-def test_get_job_details():
-    cluster = _seed_cluster()
+def test_get_job_details(project_context):
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
+        project_id=pid,
         cluster_id=cluster.id,
         status="pending",
         logs="Initial logs",
@@ -119,7 +122,7 @@ def test_get_job_details():
     )
     add_job(job)
 
-    response = client.get(f"/jobs/{job.id}")
+    response = client.get(f"/jobs/{job.id}?project_id={pid}")
 
     assert response.status_code == 200
     data = response.json()
@@ -128,13 +131,15 @@ def test_get_job_details():
     assert data["logs"] == "Initial logs"
 
 
-def test_get_cluster_jobs():
-    cluster = _seed_cluster()
+def test_get_cluster_jobs(project_context):
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
     now = datetime.now(timezone.utc)
     
     # Create 2 jobs
     job1 = AgentJob(
         id=uuid4(),
+        project_id=pid,
         cluster_id=cluster.id,
         status="pending",
         created_at=now,
@@ -144,6 +149,7 @@ def test_get_cluster_jobs():
     
     job2 = AgentJob(
         id=uuid4(),
+        project_id=pid,
         cluster_id=cluster.id,
         status="success",
         created_at=now,
@@ -151,7 +157,7 @@ def test_get_cluster_jobs():
     )
     add_job(job2)
 
-    response = client.get(f"/clusters/{cluster.id}/jobs")
+    response = client.get(f"/clusters/{cluster.id}/jobs?project_id={pid}")
 
     assert response.status_code == 200
     data = response.json()

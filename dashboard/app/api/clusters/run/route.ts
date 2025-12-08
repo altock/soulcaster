@@ -8,11 +8,19 @@ import {
   type ClusterData,
 } from '@/lib/clustering';
 import type { FeedbackItem } from '@/types';
+import { requireProjectId } from '@/lib/project';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
+
+const clusterKey = (projectId: string, clusterId: string) => `cluster:${projectId}:${clusterId}`;
+const clusterItemsKey = (projectId: string, clusterId: string) =>
+  `cluster:${projectId}:${clusterId}:items`;
+const clusterAllKey = (projectId: string) => `clusters:${projectId}:all`;
+const feedbackKey = (projectId: string, feedbackId: string) => `feedback:${projectId}:${feedbackId}`;
+const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 
 /**
  * Execute batched Redis operations using pipeline
@@ -23,6 +31,7 @@ const redis = new Redis({
  *   are NOT included here so they remain in feedback:unclustered for retry.
  */
 async function executeBatchedRedisOperations(
+  projectId: string,
   batch: ClusteringBatch,
   changedClusterIds: Set<string>,
   newClusterIds: Set<string>,
@@ -59,8 +68,8 @@ async function executeBatchedRedisOperations(
       if (summary.issueDescription) payload.issue_description = summary.issueDescription;
       if (summary.repoUrl) payload.github_repo_url = summary.repoUrl;
 
-      pipeline.hset(`cluster:${cluster.id}`, payload);
-      pipeline.sadd('clusters:all', cluster.id);
+      pipeline.hset(clusterKey(projectId, cluster.id), payload);
+      pipeline.sadd(clusterAllKey(projectId), cluster.id);
     } else if (summary) {
       // Update existing cluster
       const updatePayload: Record<string, string> = {
@@ -72,21 +81,21 @@ async function executeBatchedRedisOperations(
       if (summary.issueDescription) updatePayload.issue_description = summary.issueDescription;
       if (summary.repoUrl) updatePayload.github_repo_url = summary.repoUrl;
 
-      pipeline.hset(`cluster:${cluster.id}`, updatePayload);
+      pipeline.hset(clusterKey(projectId, cluster.id), updatePayload);
     }
 
     // Update cluster items - delete old set and add all items
-    pipeline.del(`cluster:items:${cluster.id}`);
+    pipeline.del(clusterItemsKey(projectId, cluster.id));
     if (cluster.feedbackIds.length > 0) {
       // Use individual sadd calls for type safety with Upstash pipeline
       for (const feedbackId of cluster.feedbackIds) {
-        pipeline.sadd(`cluster:items:${cluster.id}`, feedbackId);
+        pipeline.sadd(clusterItemsKey(projectId, cluster.id), feedbackId);
       }
     }
 
     // Mark feedback as clustered
     for (const feedbackId of cluster.feedbackIds) {
-      pipeline.hset(`feedback:${feedbackId}`, { clustered: 'true' });
+      pipeline.hset(feedbackKey(projectId, feedbackId), { clustered: 'true' });
     }
   }
 
@@ -94,7 +103,7 @@ async function executeBatchedRedisOperations(
   // IDs that failed embedding generation remain for retry
   if (idsToRemoveFromUnclustered.size > 0) {
     for (const id of idsToRemoveFromUnclustered) {
-      pipeline.srem('feedback:unclustered', id);
+      pipeline.srem(feedbackUnclusteredKey(projectId), id);
     }
   }
 
@@ -112,13 +121,14 @@ async function executeBatchedRedisOperations(
  * 3. Cache feedback items to avoid re-fetching
  * 4. Incremental centroid updates
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const projectId = requireProjectId(request);
     console.log('[Clustering] Starting optimized clustering job...');
     const startTime = Date.now();
 
     // Get unclustered feedback IDs
-    const unclusteredIds = await getUnclusteredFeedbackIds();
+    const unclusteredIds = await getUnclusteredFeedbackIds(projectId);
     console.log(`[Clustering] Found ${unclusteredIds.length} unclustered items`);
 
     if (unclusteredIds.length === 0) {
@@ -131,7 +141,7 @@ export async function POST() {
     }
 
     // Fetch unclustered feedback items and track which IDs are missing
-    const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItem(id)));
+    const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItem(projectId, id)));
     const validFeedback: FeedbackItem[] = [];
     const missingFeedbackIds: Set<string> = new Set();
 
@@ -150,14 +160,14 @@ export async function POST() {
     }
 
     // Get existing clusters
-    const existingClusterIds = await getClusterIds();
+    const existingClusterIds = await getClusterIds(projectId);
     const existingClusters: ClusterData[] = [];
 
     // Fetch existing cluster data in parallel
     const clusterDataPromises = existingClusterIds.map(async (clusterId) => {
       const [clusterData, feedbackIds] = await Promise.all([
-        redis.hgetall(`cluster:${clusterId}`),
-        redis.smembers(`cluster:items:${clusterId}`) as Promise<string[]>,
+        redis.hgetall(clusterKey(projectId, clusterId)),
+        redis.smembers(clusterItemsKey(projectId, clusterId)) as Promise<string[]>,
       ]);
 
       if (!clusterData) return null;
@@ -227,7 +237,9 @@ export async function POST() {
         // Fetch any missing feedback items
         let allFeedback = [...found];
         if (missing.length > 0) {
-          const fetchedItems = await Promise.all(missing.map((id) => getFeedbackItem(id)));
+          const fetchedItems = await Promise.all(
+            missing.map((id) => getFeedbackItem(projectId, id))
+          );
           const validFetched = fetchedItems.filter((item): item is FeedbackItem => item !== null);
           allFeedback = [...allFeedback, ...validFetched];
           // Cache for future use
@@ -263,6 +275,7 @@ export async function POST() {
 
     // OPTIMIZATION: Execute all Redis operations in a single pipeline
     await executeBatchedRedisOperations(
+      projectId,
       batch,
       changedClusterIds,
       newClusterIds,
@@ -284,7 +297,10 @@ export async function POST() {
       missingFeedback: missingFeedbackIds.size,
       durationMs: duration,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('[Clustering] Error running clustering:', error);
     return NextResponse.json(
       {

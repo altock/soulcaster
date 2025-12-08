@@ -9,11 +9,19 @@ import {
 } from '@/lib/vector';
 import { generateClusterSummary } from '@/lib/clustering';
 import type { FeedbackItem } from '@/types';
+import { requireProjectId } from '@/lib/project';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
+
+const clusterKey = (projectId: string, clusterId: string) => `cluster:${projectId}:${clusterId}`;
+const clusterItemsKey = (projectId: string, clusterId: string) =>
+  `cluster:${projectId}:${clusterId}:items`;
+const clusterAllKey = (projectId: string) => `clusters:${projectId}:all`;
+const feedbackKey = (projectId: string, feedbackId: string) => `feedback:${projectId}:${feedbackId}`;
+const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 
 // Similarity threshold - see /docs/DESIGN_DECISIONS.md for rationale
 const SIMILARITY_THRESHOLD = 0.72;
@@ -64,15 +72,16 @@ interface ClusterSummaryData {
  * 4. Store embeddings in vector DB for future queries
  * 5. Update Redis with cluster data and summaries
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const projectId = requireProjectId(request);
     console.log('[Vector Clustering] Starting vector-based clustering...');
     const startTime = Date.now();
 
     const vectorStore = new VectorStore();
 
     // Get unclustered feedback IDs
-    const unclusteredIds = await getUnclusteredFeedbackIds();
+    const unclusteredIds = await getUnclusteredFeedbackIds(projectId);
     console.log(`[Vector Clustering] Found ${unclusteredIds.length} unclustered items`);
 
     if (unclusteredIds.length === 0) {
@@ -86,7 +95,7 @@ export async function POST() {
 
     // Fetch feedback items in batches to avoid connection overload
     console.log(`[Vector Clustering] Fetching ${unclusteredIds.length} feedback items in batches of ${BATCH_SIZE}...`);
-    const feedbackItems = await batchProcess(unclusteredIds, (id) => getFeedbackItem(id));
+    const feedbackItems = await batchProcess(unclusteredIds, (id) => getFeedbackItem(projectId, id));
     const validFeedback: FeedbackItem[] = [];
     const missingFeedbackIds: Set<string> = new Set();
 
@@ -177,7 +186,7 @@ export async function POST() {
       if (feedbackIds.length === 0) continue;
 
       // Fetch feedback items for summary
-      const items = await Promise.all(feedbackIds.map((id) => getFeedbackItem(id)));
+      const items = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
       const validItems = items.filter((item): item is FeedbackItem => item !== null);
 
       if (validItems.length > 0) {
@@ -199,6 +208,7 @@ export async function POST() {
         // Create new cluster
         const payload: Record<string, string> = {
           id: clusterId,
+          project_id: projectId,
           title: summary.title,
           summary: summary.summary,
           status: 'new',
@@ -209,8 +219,8 @@ export async function POST() {
         if (summary.issueDescription) payload.issue_description = summary.issueDescription;
         if (summary.repoUrl) payload.github_repo_url = summary.repoUrl;
 
-        pipeline.hset(`cluster:${clusterId}`, payload);
-        pipeline.sadd('clusters:all', clusterId);
+        pipeline.hset(clusterKey(projectId, clusterId), payload);
+        pipeline.sadd(clusterAllKey(projectId), clusterId);
       } else if (summary) {
         // Update existing cluster
         const updatePayload: Record<string, string> = {
@@ -221,14 +231,14 @@ export async function POST() {
         if (summary.issueDescription) updatePayload.issue_description = summary.issueDescription;
         if (summary.repoUrl) updatePayload.github_repo_url = summary.repoUrl;
 
-        pipeline.hset(`cluster:${clusterId}`, updatePayload);
+        pipeline.hset(clusterKey(projectId, clusterId), updatePayload);
       }
 
       // Update cluster items
-      pipeline.del(`cluster:items:${clusterId}`);
+      pipeline.del(clusterItemsKey(projectId, clusterId));
       for (const feedbackId of feedbackIds) {
-        pipeline.sadd(`cluster:items:${clusterId}`, feedbackId);
-        pipeline.hset(`feedback:${feedbackId}`, { clustered: 'true' });
+        pipeline.sadd(clusterItemsKey(projectId, clusterId), feedbackId);
+        pipeline.hset(feedbackKey(projectId, feedbackId), { clustered: 'true' });
       }
     }
 
@@ -238,7 +248,7 @@ export async function POST() {
       idsToRemove.add(result.feedbackId);
     }
     for (const id of idsToRemove) {
-      pipeline.srem('feedback:unclustered', id);
+      pipeline.srem(feedbackUnclusteredKey(projectId), id);
     }
 
     await pipeline.exec();
@@ -257,7 +267,10 @@ export async function POST() {
       durationMs: duration,
       threshold: SIMILARITY_THRESHOLD,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('[Vector Clustering] Error:', error);
     return NextResponse.json(
       {

@@ -7,20 +7,28 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
+const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${id}`;
+const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
+const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
+const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
+const clusterKey = (projectId: string, id: string) => `cluster:${projectId}:${id}`;
+const clusterItemsKey = (projectId: string, clusterId: string) => `cluster:${projectId}:${clusterId}:items`;
+const clusterAllKey = (projectId: string) => `clusters:${projectId}:all`;
+const redditSubredditsKey = (projectId: string) => `config:reddit:subreddits:${projectId}`;
+
 /**
- * Get all cluster IDs from Redis sorted by creation time (newest first)
+ * Get all cluster IDs for a project from Redis (newest first).
  */
-export async function getClusterIds(): Promise<string[]> {
-  // Use clusters:all set to avoid KEYS command which blocks Redis
-  const ids = await redis.smembers('clusters:all');
+export async function getClusterIds(projectId: string): Promise<string[]> {
+  const ids = await redis.smembers(clusterAllKey(projectId));
   return ids as string[];
 }
 
 /**
  * Get cluster basic info from Redis hash
  */
-async function getClusterHash(id: string): Promise<IssueCluster | null> {
-  const data = await redis.hgetall(`cluster:${id}`);
+async function getClusterHash(projectId: string, id: string): Promise<IssueCluster | null> {
+  const data = await redis.hgetall(clusterKey(projectId, id));
 
   if (!data || Object.keys(data).length === 0) {
     return null;
@@ -46,16 +54,16 @@ async function getClusterHash(id: string): Promise<IssueCluster | null> {
 /**
  * Get feedback IDs that belong to a cluster
  */
-async function getClusterFeedbackIds(clusterId: string): Promise<string[]> {
-  const ids = await redis.smembers(`cluster:items:${clusterId}`);
+async function getClusterFeedbackIds(projectId: string, clusterId: string): Promise<string[]> {
+  const ids = await redis.smembers(clusterItemsKey(projectId, clusterId));
   return ids as string[];
 }
 
 /**
  * Get a single feedback item by ID
  */
-export async function getFeedbackItem(id: string): Promise<FeedbackItem | null> {
-  const data = await redis.hgetall(`feedback:${id}`);
+export async function getFeedbackItem(projectId: string, id: string): Promise<FeedbackItem | null> {
+  const data = await redis.hgetall(feedbackKey(projectId, id));
 
   if (!data || Object.keys(data).length === 0) {
     return null;
@@ -92,19 +100,19 @@ export async function getFeedbackItem(id: string): Promise<FeedbackItem | null> 
 /**
  * Get all clusters with basic info for listing
  */
-export async function getClusters(): Promise<ClusterListItem[]> {
-  const clusterIds = await getClusterIds();
+export async function getClusters(projectId: string): Promise<ClusterListItem[]> {
+  const clusterIds = await getClusterIds(projectId);
 
   const clusters = await Promise.all(
     clusterIds.map(async (id) => {
-      const cluster = await getClusterHash(id);
+      const cluster = await getClusterHash(projectId, id);
       if (!cluster) return null;
 
-      const feedbackIds = await getClusterFeedbackIds(id);
+      const feedbackIds = await getClusterFeedbackIds(projectId, id);
 
       // Get ALL feedback items to determine sources and repos accurately
       const feedbackItems = await Promise.all(
-        feedbackIds.map((fid) => getFeedbackItem(fid))
+        feedbackIds.map((fid) => getFeedbackItem(projectId, fid))
       );
 
       const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
@@ -148,12 +156,12 @@ export async function getClusters(): Promise<ClusterListItem[]> {
 /**
  * Get detailed cluster info including all feedback items
  */
-export async function getClusterDetail(id: string): Promise<ClusterDetail | null> {
-  const cluster = await getClusterHash(id);
+export async function getClusterDetail(projectId: string, id: string): Promise<ClusterDetail | null> {
+  const cluster = await getClusterHash(projectId, id);
   if (!cluster) return null;
 
-  const feedbackIds = await getClusterFeedbackIds(id);
-  const feedbackItems = await Promise.all(feedbackIds.map((fid) => getFeedbackItem(fid)));
+  const feedbackIds = await getClusterFeedbackIds(projectId, id);
+  const feedbackItems = await Promise.all(feedbackIds.map((fid) => getFeedbackItem(projectId, fid)));
 
   const validItems = feedbackItems.filter((item): item is FeedbackItem => item !== null);
 
@@ -168,6 +176,7 @@ export async function getClusterDetail(id: string): Promise<ClusterDetail | null
  * Get feedback items with pagination and optional source/repo filters
  */
 export async function getFeedback(
+  projectId: string,
   limit: number = 100,
   offset: number = 0,
   source?: string,
@@ -177,18 +186,18 @@ export async function getFeedback(
 
   if (source) {
     // Get from source-specific sorted set
-    const allIds = await redis.zrange(`feedback:source:${source}`, 0, -1, { rev: true });
+    const allIds = await redis.zrange(feedbackSourceKey(projectId, source), 0, -1, { rev: true });
     feedbackIds = allIds as string[];
   } else {
     // Get from global created sorted set
-    const allIds = await redis.zrange('feedback:created', 0, -1, { rev: true });
+    const allIds = await redis.zrange(feedbackCreatedKey(projectId), 0, -1, { rev: true });
     feedbackIds = allIds as string[];
   }
 
   // Apply repo filter if specified
   if (repo) {
     // Fetch all items and filter by repo
-    const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(id)));
+    const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
     const filteredItems = allItems.filter(
       (item): item is FeedbackItem => item !== null && item.repo === repo
     );
@@ -205,10 +214,10 @@ export async function getFeedback(
   let items: (FeedbackItem | null)[];
   if (repo) {
     // Already fetched during repo filtering, just paginate
-    const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(id)));
+    const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
     items = allItems.slice(0, limit);
   } else {
-    items = await Promise.all(paginatedIds.map((id) => getFeedbackItem(id)));
+    items = await Promise.all(paginatedIds.map((id) => getFeedbackItem(projectId, id)));
   }
 
   const validItems = items.filter((item): item is FeedbackItem => item !== null);
@@ -222,23 +231,23 @@ export async function getFeedback(
 }
 
 /**
- * Get stats about feedback and clusters
+ * Get stats about feedback and clusters for a project.
  */
-export async function getStats(): Promise<{
+export async function getStats(projectId: string): Promise<{
   total_feedback: number;
   by_source: { reddit: number; manual: number; github: number };
   total_clusters: number;
 }> {
   // Get total feedback count using ZCARD (more efficient than ZRANGE)
-  const total_feedback = (await redis.zcard('feedback:created')) || 0;
+  const total_feedback = (await redis.zcard(feedbackCreatedKey(projectId))) || 0;
 
   // Get counts by source using ZCARD (more efficient than ZRANGE)
-  const redditCount = (await redis.zcard('feedback:source:reddit')) || 0;
-  const manualCount = (await redis.zcard('feedback:source:manual')) || 0;
-  const githubCount = (await redis.zcard('feedback:source:github')) || 0;
+  const redditCount = (await redis.zcard(feedbackSourceKey(projectId, 'reddit'))) || 0;
+  const manualCount = (await redis.zcard(feedbackSourceKey(projectId, 'manual'))) || 0;
+  const githubCount = (await redis.zcard(feedbackSourceKey(projectId, 'github'))) || 0;
 
   // Get total clusters count using SCARD on clusters:all set (avoids KEYS command)
-  const total_clusters = (await redis.scard('clusters:all')) || 0;
+  const total_clusters = (await redis.scard(clusterAllKey(projectId))) || 0;
 
   return {
     total_feedback,
@@ -254,8 +263,8 @@ export async function getStats(): Promise<{
 /**
  * Get Reddit subreddits configuration from Redis
  */
-export async function getRedditSubreddits(): Promise<string[]> {
-  const data = await redis.get('config:reddit:subreddits');
+export async function getRedditSubreddits(projectId: string): Promise<string[]> {
+  const data = await redis.get(redditSubredditsKey(projectId));
 
   if (!data) {
     return [];
@@ -281,27 +290,30 @@ export async function getRedditSubreddits(): Promise<string[]> {
 /**
  * Set Reddit subreddits configuration in Redis
  */
-export async function setRedditSubreddits(subreddits: string[]): Promise<void> {
-  await redis.set('config:reddit:subreddits', JSON.stringify(subreddits));
+export async function setRedditSubreddits(projectId: string, subreddits: string[]): Promise<void> {
+  await redis.set(redditSubredditsKey(projectId), JSON.stringify(subreddits));
 }
 
 /**
  * Create a new feedback item in Redis
  */
 export async function createFeedback(data: {
+  project_id: string;
   title: string;
   body: string;
   github_repo_url?: string;
   source?: 'reddit' | 'manual';
   metadata?: Record<string, any>;
 }): Promise<string> {
+  const { project_id: projectId } = data;
   const id = randomUUID();
   const timestamp = Date.now();
   const source = data.source || 'manual';
 
   // Store feedback hash
-  await redis.hset(`feedback:${id}`, {
+  await redis.hset(feedbackKey(projectId, id), {
     id,
+    project_id: projectId,
     source,
     title: data.title,
     body: data.body,
@@ -312,11 +324,11 @@ export async function createFeedback(data: {
   });
 
   // Add to sorted sets
-  await redis.zadd('feedback:created', { score: timestamp / 1000, member: id });
-  await redis.zadd(`feedback:source:${source}`, { score: timestamp / 1000, member: id });
+  await redis.zadd(feedbackCreatedKey(projectId), { score: timestamp / 1000, member: id });
+  await redis.zadd(feedbackSourceKey(projectId, source), { score: timestamp / 1000, member: id });
 
   // Add to unclustered set
-  await redis.sadd('feedback:unclustered', id);
+  await redis.sadd(feedbackUnclusteredKey(projectId), id);
 
   return id;
 }
@@ -324,24 +336,24 @@ export async function createFeedback(data: {
 /**
  * Get count of unclustered feedback items
  */
-export async function getUnclusteredCount(): Promise<number> {
-  const count = await redis.scard('feedback:unclustered');
+export async function getUnclusteredCount(projectId: string): Promise<number> {
+  const count = await redis.scard(feedbackUnclusteredKey(projectId));
   return count || 0;
 }
 
 /**
  * Get all unclustered feedback IDs
  */
-export async function getUnclusteredFeedbackIds(): Promise<string[]> {
-  const ids = await redis.smembers('feedback:unclustered');
+export async function getUnclusteredFeedbackIds(projectId: string): Promise<string[]> {
+  const ids = await redis.smembers(feedbackUnclusteredKey(projectId));
   return ids as string[];
 }
 
 /**
  * Update a feedback item in Redis
  */
-export async function updateFeedback(id: string, data: Partial<FeedbackItem>): Promise<void> {
-  const key = `feedback:${id}`;
+export async function updateFeedback(projectId: string, id: string, data: Partial<FeedbackItem>): Promise<void> {
+  const key = feedbackKey(projectId, id);
   const exists = await redis.exists(key);
 
   if (!exists) {

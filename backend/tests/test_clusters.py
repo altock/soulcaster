@@ -22,11 +22,12 @@ def setup_function():
     clear_feedback_items()
 
 
-def _seed_cluster_with_feedback():
+def _seed_cluster_with_feedback(project_id):
     now = datetime.now(timezone.utc)
 
     feedback_one = FeedbackItem(
         id=uuid4(),
+        project_id=project_id,
         source="reddit",
         external_id="ext_1",
         title="Crash on export",
@@ -36,6 +37,7 @@ def _seed_cluster_with_feedback():
     )
     feedback_two = FeedbackItem(
         id=uuid4(),
+        project_id=project_id,
         source="sentry",
         external_id="ext_2",
         title="Type error",
@@ -49,6 +51,7 @@ def _seed_cluster_with_feedback():
 
     cluster = IssueCluster(
         id=str(uuid4()),
+        project_id=project_id,
         title="Export issues",
         summary="Crashes and type errors during export flow",
         feedback_ids=[str(feedback_one.id), str(feedback_two.id)],
@@ -60,10 +63,11 @@ def _seed_cluster_with_feedback():
     return cluster, [feedback_one, feedback_two]
 
 
-def test_list_clusters_returns_transformed_items():
-    cluster, feedback_items = _seed_cluster_with_feedback()
+def test_list_clusters_returns_transformed_items(project_context):
+    pid = project_context["project_id"]
+    cluster, feedback_items = _seed_cluster_with_feedback(pid)
 
-    response = client.get("/clusters")
+    response = client.get(f"/clusters?project_id={pid}")
 
     assert response.status_code == 200
     data = response.json()
@@ -76,10 +80,11 @@ def test_list_clusters_returns_transformed_items():
     assert cluster_item["summary"] == cluster.summary
 
 
-def test_get_cluster_detail_returns_feedback_items():
-    cluster, feedback_items = _seed_cluster_with_feedback()
+def test_get_cluster_detail_returns_feedback_items(project_context):
+    pid = project_context["project_id"]
+    cluster, feedback_items = _seed_cluster_with_feedback(pid)
 
-    response = client.get(f"/clusters/{cluster.id}")
+    response = client.get(f"/clusters/{cluster.id}?project_id={pid}")
 
     assert response.status_code == 200
     body = response.json()
@@ -89,16 +94,18 @@ def test_get_cluster_detail_returns_feedback_items():
     assert returned_ids == {str(item.id) for item in feedback_items}
 
 
-def test_get_cluster_detail_missing_returns_404():
-    response = client.get(f"/clusters/{uuid4()}")
+def test_get_cluster_detail_missing_returns_404(project_context):
+    pid = project_context["project_id"]
+    response = client.get(f"/clusters/{uuid4()}?project_id={pid}")
 
     assert response.status_code == 404
 
 
-def test_start_fix_updates_cluster_status():
-    cluster, _ = _seed_cluster_with_feedback()
+def test_start_fix_updates_cluster_status(project_context):
+    pid = project_context["project_id"]
+    cluster, _ = _seed_cluster_with_feedback(pid)
 
-    response = client.post(f"/clusters/{cluster.id}/start_fix")
+    response = client.post(f"/clusters/{cluster.id}/start_fix?project_id={pid}")
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -107,10 +114,12 @@ def test_start_fix_updates_cluster_status():
     assert updated_cluster.status == "fixing"
 
 
-def test_cluster_fields_include_github_metadata():
+def test_cluster_fields_include_github_metadata(project_context):
     now = datetime.now(timezone.utc)
+    pid = project_context["project_id"]
     cluster = IssueCluster(
         id=str(uuid4()),
+        project_id=pid,
         title="GitHub PR Cluster",
         summary="Cluster with PR",
         feedback_ids=[],
@@ -126,7 +135,7 @@ def test_cluster_fields_include_github_metadata():
     add_cluster(cluster)
 
     # Check list endpoint
-    response = client.get("/clusters")
+    response = client.get(f"/clusters?project_id={pid}")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
@@ -136,7 +145,7 @@ def test_cluster_fields_include_github_metadata():
     assert data[0]["github_repo_url"] == "https://github.com/owner/repo"
 
     # Check detail endpoint
-    response = client.get(f"/clusters/{cluster.id}")
+    response = client.get(f"/clusters/{cluster.id}?project_id={pid}")
     assert response.status_code == 200
     data = response.json()
     assert data["github_pr_url"] == "https://github.com/owner/repo/pull/123"

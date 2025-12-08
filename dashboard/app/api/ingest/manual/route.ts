@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFeedback } from '@/lib/redis';
+import { requireProjectId } from '@/lib/project';
 
 export async function POST(request: NextRequest) {
   try {
+    const projectId = requireProjectId(request);
     const body = await request.json();
 
     if (!body.text || typeof body.text !== 'string') {
@@ -17,6 +19,7 @@ export async function POST(request: NextRequest) {
 
     // Write directly to Redis
     const feedbackId = await createFeedback({
+      project_id: projectId,
       title,
       body: bodyText,
       github_repo_url: githubRepoUrl,
@@ -31,7 +34,10 @@ export async function POST(request: NextRequest) {
       feedback_id: feedbackId,
       message: 'Feedback saved. Click "Run Clustering" to group it with similar issues.',
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error submitting feedback:', error);
     return NextResponse.json({ error: 'Failed to submit feedback' }, { status: 500 });
   }

@@ -13,6 +13,7 @@ class AgentJob(BaseModel):
     """
 
     id: UUID
+    project_id: UUID
     cluster_id: str
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
@@ -30,6 +31,7 @@ class FeedbackItem(BaseModel):
 
     Attributes:
         id: Unique identifier for this feedback item
+        project_id: Project this feedback belongs to (multi-tenant boundary)
         source: The origin of the feedback (reddit, sentry, or manual)
         external_id: ID from the original source system (e.g., Reddit post ID)
         title: Short summary or title (max 80 chars for manual entries)
@@ -39,18 +41,26 @@ class FeedbackItem(BaseModel):
     """
 
     id: UUID
+    project_id: UUID
     source: Literal["reddit", "sentry", "manual"]
     external_id: Optional[str] = None
     title: str
     body: str
+    raw_text: Optional[str] = None
     metadata: Dict = {}
     created_at: datetime
+
+    @property
+    def text(self) -> str:
+        """Alias for body to keep backward compatibility with downstream uses."""
+        return self.body
 
 
 class IssueCluster(BaseModel):
     """Represents a cluster of related feedback items."""
 
     id: str
+    project_id: UUID
     title: str
     summary: str
     feedback_ids: List[str]
@@ -65,3 +75,21 @@ class IssueCluster(BaseModel):
     issue_title: Optional[str] = None
     issue_description: Optional[str] = None
     github_repo_url: Optional[str] = None
+
+
+class User(BaseModel):
+    """Represents an authenticated user."""
+
+    id: UUID
+    email: Optional[str] = None
+    github_id: Optional[str] = None
+    created_at: datetime
+
+
+class Project(BaseModel):
+    """Represents a project/workspace owned by a user."""
+
+    id: UUID
+    user_id: UUID
+    name: str
+    created_at: datetime

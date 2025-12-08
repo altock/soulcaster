@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFeedback } from '@/lib/redis';
+import { requireProjectId } from '@/lib/project';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const projectId = requireProjectId(request);
     const source = searchParams.get('source');
     const repo = searchParams.get('repo');
     const limitParam = searchParams.get('limit') || '100';
@@ -30,9 +32,12 @@ export async function GET(request: NextRequest) {
     const offset = Math.max(offsetNum, 0);
 
     // Fetch from Redis
-    const data = await getFeedback(limit, offset, source || undefined, repo || undefined);
+    const data = await getFeedback(projectId, limit, offset, source || undefined, repo || undefined);
     return NextResponse.json(data);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error fetching feedback from Redis:', error);
     return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: 500 });
   }
@@ -41,6 +46,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
+    const projectId = requireProjectId(request);
     const { id, ...data } = body;
 
     if (!id) {
@@ -50,10 +56,13 @@ export async function PUT(request: NextRequest) {
     // Import dynamically to avoid circular dependencies if any, though not expected here
     const { updateFeedback } = await import('@/lib/redis');
 
-    await updateFeedback(id, data);
+    await updateFeedback(projectId, id, data);
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error updating feedback:', error);
     return NextResponse.json({ error: 'Failed to update feedback' }, { status: 500 });
   }
