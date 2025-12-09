@@ -15,14 +15,14 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 **Reference:** `documentation/ingestion_polling_architecture_plan.md` Phase 1
 
 ### Backend Tasks
-- [ ] **File: `backend/store.py`**
-  - [ ] Ensure `add_feedback_item()` writes to:
+- [x] **File: `backend/store.py`**
+  - [x] Ensure `add_feedback_item()` writes to:
     - `feedback:{uuid}` (hash)
     - `feedback:created` (sorted set, score=timestamp)
     - `feedback:source:{source}` (set)
     - `feedback:unclustered` (set)
-  - [ ] Add helper: `get_unclustered_feedback()` → returns all items in `feedback:unclustered`
-  - [ ] Add helper: `remove_from_unclustered(feedback_id)` → removes from set when clustered
+  - [x] Add helper: `get_unclustered_feedback()` → returns all items in `feedback:unclustered`
+  - [x] Add helper: `remove_from_unclustered(feedback_id)` → removes from set when clustered
 
 - [ ] **File: `backend/models.py`**
   - [ ] Verify `FeedbackItem` has all required fields: `id`, `source`, `created_at`, `raw_text`, `embedding`
@@ -40,9 +40,9 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 ### Testing
 - [ ] **File: `backend/tests/test_ingestion.py`**
   - [ ] Test `add_feedback_item()` writes to all 4 Redis keys
-  - [ ] Test `feedback:unclustered` contains new items
+  - [x] Test `feedback:unclustered` contains new items
   - [ ] Test each ingest endpoint produces consistent `FeedbackItem` shape
-  - [ ] Test duplicate detection (if implemented)
+  - [x] Test duplicate detection (if implemented)
 
 ### Acceptance Criteria
 - ✅ Every feedback item lands in `feedback:unclustered`

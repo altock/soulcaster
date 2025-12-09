@@ -23,9 +23,9 @@ cd worktrees/system-readiness
 git checkout -b phase1-ingestion-stability
 ```
 
-- [ ] **Open: `backend/store.py`**
-  - [ ] Find `add_feedback_item()` function
-  - [ ] Verify it writes to these 4 Redis keys:
+- [x] **Open: `backend/store.py`**
+  - [x] Find `add_feedback_item()` function
+  - [x] Verify it writes to these 4 Redis keys:
     ```python
     # 1. feedback:{uuid} → hash of full item
     # 2. feedback:created → sorted set (score=timestamp)
@@ -36,8 +36,8 @@ git checkout -b phase1-ingestion-stability
   - [ ] Add logging: `logger.info(f"Added feedback {item.id} to unclustered set")`
 
 ### Afternoon (3-4 hours)
-- [ ] **Open: `backend/tests/test_ingestion.py`**
-  - [ ] Add test:
+- [x] **Open: `backend/tests/test_ingestion.py`**
+  - [x] Add test:
     ```python
     def test_add_feedback_writes_to_unclustered():
         """Verify feedback lands in unclustered set"""
@@ -53,7 +53,7 @@ git checkout -b phase1-ingestion-stability
   - [ ] Run test: `pytest backend/tests/test_ingestion.py -v -k unclustered`
   - [ ] Make it pass (implement in store.py if needed)
 
-- [ ] **Add helper functions to `backend/store.py`:**
+- [x] **Add helper functions to `backend/store.py`:**
   ```python
   def get_unclustered_feedback() -> List[FeedbackItem]:
       """Get all feedback items that haven't been clustered yet."""
@@ -187,7 +187,7 @@ git checkout -b phase1-ingestion-stability
 
 ### Tasks
 - [ ] **Update `documentation/db_design.md`:**
-  - [ ] Document `feedback:unclustered` key pattern
+  - [x] Document `feedback:unclustered` key pattern
   - [ ] Add example data flow diagram
   - [ ] Document helper functions
 
