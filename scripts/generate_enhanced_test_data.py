@@ -19,7 +19,7 @@ import time
 import subprocess
 import shutil
 import argparse
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
@@ -924,7 +924,7 @@ def push_to_github(repo_url: str, target_dir: str = "."):
         raise
 
 
-def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: List[str] = None, noise_ratio: float = 0.3):
+def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: Optional[List[str]] = None, noise_ratio: float = 0.3):
     """
     Create clustered GitHub issues in the specified repository.
     
@@ -934,9 +934,10 @@ def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: Li
         repo_owner (str): GitHub repository owner (organization or user).
         repo_name (str): GitHub repository name.
         token (str): Personal access token used for authentication.
-        cluster_types (List[str], optional): If provided, only clusters whose keys are in this list will be posted. Defaults to None (all clusters).
+        cluster_types (Optional[List[str]], optional): If provided, only clusters whose keys are in this list will be posted. Defaults to None (all clusters).
         noise_ratio (float, optional): Fraction of the total clustered issues to add as unrelated "noise" issues (between 0.0 and 1.0). Defaults to 0.3.
     """
+    cluster_types = cluster_types or []
     print(f"Creating issues for {repo_owner}/{repo_name}...")
     url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues"
     headers = {
