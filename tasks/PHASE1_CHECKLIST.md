@@ -132,6 +132,9 @@ git checkout -b phase1-ingestion-stability
 - [ ] **Open: `backend/models.py`**
   - [ ] Review `FeedbackItem` model:
     ```python
+    from pydantic import BaseModel, field_validator
+    
+    
     class FeedbackItem(BaseModel):
         id: str
         source: Literal["reddit", "sentry", "manual", "github"]
@@ -143,8 +146,8 @@ git checkout -b phase1-ingestion-stability
     ```
   - [ ] Add validation:
     ```python
-    @validator("raw_text")
-    def raw_text_not_empty(cls, v):
+    @field_validator("raw_text")
+    def raw_text_not_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("raw_text cannot be empty")
         return v

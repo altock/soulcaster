@@ -12,13 +12,14 @@ from datetime import datetime
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
-from backend.models import FeedbackItem
+from backend.models import FeedbackItem, Project
 from backend.store import (
     add_feedback_item,
     get_all_feedback_items,
     get_unclustered_feedback,
     remove_from_unclustered,
-    clear_feedback_items
+    clear_feedback_items,
+    create_project,
 )
 
 def print_section(title):
@@ -29,6 +30,16 @@ def print_section(title):
 def main():
     print("🧪 Phase 1: Interactive Test Script")
     print("Testing feedback:unclustered functionality\n")
+    
+    project_id = uuid4()
+    project = Project(
+        id=project_id,
+        user_id=uuid4(),
+        name="Interactive Test Project",
+        created_at=datetime.now(),
+    )
+    create_project(project)
+    print(f"📦 Using project {project_id}")
     
     # Clear existing data
     print("🧹 Clearing existing feedback...")
@@ -41,6 +52,7 @@ def main():
     items = [
         FeedbackItem(
             id=uuid4(),
+            project_id=project_id,
             source="reddit",
             external_id="t3_test1",
             title="Bug in login",
@@ -50,6 +62,7 @@ def main():
         ),
         FeedbackItem(
             id=uuid4(),
+            project_id=project_id,
             source="sentry",
             external_id="sentry_001",
             title="ValueError in process_payment",
@@ -59,6 +72,7 @@ def main():
         ),
         FeedbackItem(
             id=uuid4(),
+            project_id=project_id,
             source="manual",
             title="Dashboard is slow",
             body="The dashboard takes 5+ seconds to load",
@@ -80,7 +94,7 @@ def main():
     
     # Test 3: Get unclustered feedback (KEY TEST!)
     print_section("Test 3: Get Unclustered Feedback (KEY TEST)")
-    unclustered = get_unclustered_feedback()
+    unclustered = get_unclustered_feedback(project_id)
     print(f"✅ Unclustered items: {len(unclustered)}")
     print(f"Expected: {len(items)}")
     
@@ -98,12 +112,12 @@ def main():
     item_to_remove = unclustered[0]
     print(f"Removing: {item_to_remove.source} - {item_to_remove.title[:50]}")
     
-    remove_from_unclustered(item_to_remove.id)
+    remove_from_unclustered(item_to_remove.id, project_id)
     print("✅ Removed")
     
     # Test 5: Verify removal
     print_section("Test 5: Verify Removal")
-    unclustered_after = get_unclustered_feedback()
+    unclustered_after = get_unclustered_feedback(project_id)
     print(f"Unclustered items after removal: {len(unclustered_after)}")
     print(f"Expected: {len(items) - 1}")
     

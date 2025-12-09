@@ -189,7 +189,7 @@ def test_add_feedback_writes_to_unclustered(project_context):
     assert len(items) >= 1
     
     # KEY TEST: Check it's in the unclustered set
-    unclustered = get_unclustered_feedback()
+    unclustered = get_unclustered_feedback(pid)
     assert len(unclustered) >= 1
     
     # Verify the specific item is in unclustered (use the ID from payload)
@@ -232,7 +232,7 @@ def test_all_sources_add_to_unclustered(project_context):
     client.post(f"/ingest/manual?project_id={pid}", json=manual_payload)
     
     # Check all are in unclustered
-    unclustered = get_unclustered_feedback()
+    unclustered = get_unclustered_feedback(pid)
     assert len(unclustered) >= 3, f"Expected at least 3 unclustered items, got {len(unclustered)}"
     
     sources = {item.source for item in unclustered}
@@ -262,22 +262,23 @@ def test_remove_from_unclustered(project_context):
     assert test_item is not None
     
     # Verify it's in unclustered
-    unclustered_before = get_unclustered_feedback()
+    unclustered_before = get_unclustered_feedback(pid)
     assert any(item.id == test_item.id for item in unclustered_before)
     
     # Remove from unclustered
-    remove_from_unclustered(test_item.id)
+    remove_from_unclustered(test_item.id, pid)
     
     # Verify it's no longer in unclustered
-    unclustered_after = get_unclustered_feedback()
+    unclustered_after = get_unclustered_feedback(pid)
     assert not any(item.id == test_item.id for item in unclustered_after), \
         f"Item {test_item.id} still in unclustered after removal"
 
 
 def test_get_unclustered_feedback_empty(project_context):
     """Phase 1: Verify get_unclustered_feedback returns empty list when no items."""
+    pid = project_context["project_id"]
     clear_feedback_items()
-    unclustered = get_unclustered_feedback()
+    unclustered = get_unclustered_feedback(pid)
     assert unclustered == [], "Expected empty list for unclustered feedback"
 
 
@@ -299,7 +300,7 @@ def test_duplicate_ingestion_does_not_duplicate_unclustered(project_context):
     first = client.post(f"/ingest/reddit?project_id={pid}", json=payload)
     assert first.status_code == 200
     
-    unclustered_after_first = get_unclustered_feedback()
+    unclustered_after_first = get_unclustered_feedback(pid)
     count_after_first = len(unclustered_after_first)
     
     # Second ingestion (duplicate)
@@ -308,7 +309,7 @@ def test_duplicate_ingestion_does_not_duplicate_unclustered(project_context):
     assert second.status_code == 200
     assert second.json()["status"] == "duplicate"
     
-    unclustered_after_second = get_unclustered_feedback()
+    unclustered_after_second = get_unclustered_feedback(pid)
     count_after_second = len(unclustered_after_second)
     
     assert count_after_second == count_after_first, \

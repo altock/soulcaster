@@ -142,7 +142,8 @@ class InMemoryStore:
         self.users: Dict[UUID, User] = {}
         self.reddit_subreddits: Dict[UUID, List[str]] = {}
         self.external_index: Dict[Tuple[UUID, str, str], UUID] = {}
-        self.unclustered_feedback_ids: set[UUID] = set()  # Phase 1: track unclustered items
+        # Track unclustered feedback per project (project_id -> set(feedback_ids))
+        self.unclustered_feedback_ids: Dict[UUID, set[UUID]] = {}
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
@@ -156,7 +157,7 @@ class InMemoryStore:
             self.external_index[key] = item.id
         self.feedback_items[item.id] = item
         # Add to unclustered set (Phase 1: ingestion moat)
-        self.unclustered_feedback_ids.add(item.id)
+        self.unclustered_feedback_ids.setdefault(item.project_id, set()).add(item.id)
         return item
 
     def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
@@ -165,13 +166,19 @@ class InMemoryStore:
     def get_all_feedback_items(self) -> List[FeedbackItem]:
         return list(self.feedback_items.values())
 
-    def get_unclustered_feedback(self) -> List[FeedbackItem]:
-        """Get all feedback items that haven't been clustered yet."""
-        return [self.feedback_items[item_id] for item_id in self.unclustered_feedback_ids if item_id in self.feedback_items]
+    def get_unclustered_feedback(self, project_id: UUID) -> List[FeedbackItem]:
+        """Get all feedback items that haven't been clustered yet for a project."""
+        project_unclustered = self.unclustered_feedback_ids.get(project_id, set())
+        return [
+            self.feedback_items[item_id]
+            for item_id in project_unclustered
+            if item_id in self.feedback_items
+        ]
 
-    def remove_from_unclustered(self, feedback_id: UUID):
+    def remove_from_unclustered(self, feedback_id: UUID, project_id: UUID):
         """Remove item from unclustered set (called after clustering)."""
-        self.unclustered_feedback_ids.discard(feedback_id)
+        if project_id in self.unclustered_feedback_ids:
+            self.unclustered_feedback_ids[project_id].discard(feedback_id)
 
     def clear_feedback_items(self):
         self.feedback_items.clear()
@@ -294,9 +301,9 @@ class RedisStore:
         return f"feedback:external:{project_id}:{source}:{external_id}"
 
     @staticmethod
-    def _feedback_unclustered_key() -> str:
-        """Key for the set of feedback items that haven't been clustered yet."""
-        return "feedback:unclustered"
+    def _feedback_unclustered_key(project_id: str) -> str:
+        """Key for the project-scoped set of unclustered feedback items."""
+        return f"feedback:unclustered:{project_id}"
 
     @staticmethod
     def _cluster_key(cluster_id: str) -> str:
@@ -356,7 +363,7 @@ class RedisStore:
         self._zadd(self._feedback_source_key(item.source), ts, str(item.id))
         
         # Add to unclustered set (Phase 1: ingestion moat)
-        self._sadd(self._feedback_unclustered_key(), str(item.id))
+        self._sadd(self._feedback_unclustered_key(str(item.project_id)), str(item.id))
         
         if item.external_id:
             self._set(self._feedback_external_key(str(item.project_id), item.source, item.external_id), str(item.id))
@@ -407,9 +414,9 @@ class RedisStore:
                 continue
         return items
 
-    def get_unclustered_feedback(self) -> List[FeedbackItem]:
-        """Get all feedback items that haven't been clustered yet."""
-        unclustered_ids = self._smembers(self._feedback_unclustered_key())
+    def get_unclustered_feedback(self, project_id: UUID) -> List[FeedbackItem]:
+        """Get all feedback items that haven't been clustered yet for a project."""
+        unclustered_ids = self._smembers(self._feedback_unclustered_key(str(project_id)))
         items: List[FeedbackItem] = []
         for item_id in unclustered_ids:
             try:
@@ -420,21 +427,26 @@ class RedisStore:
                 continue
         return items
 
-    def remove_from_unclustered(self, feedback_id: UUID):
+    def remove_from_unclustered(self, feedback_id: UUID, project_id: UUID):
         """Remove item from unclustered set (called after clustering)."""
         if self.mode == "redis":
-            self.client.srem(self._feedback_unclustered_key(), str(feedback_id))
+            self.client.srem(
+                self._feedback_unclustered_key(str(project_id)), str(feedback_id)
+            )
         else:
             # REST client now has srem method
-            self.client.srem(self._feedback_unclustered_key(), str(feedback_id))
+            self.client.srem(
+                self._feedback_unclustered_key(str(project_id)), str(feedback_id)
+            )
 
     def clear_feedback_items(self):
         # Remove keys matching feedback:* and related sorted sets
         feedback_keys = list(self._scan_iter("feedback:*"))
         if feedback_keys:
             self._delete(*feedback_keys)
+        # Legacy global key cleanup (pre-project-scoped unclustered set)
+        self._delete("feedback:unclustered")
         self._delete(self._feedback_created_key())
-        self._delete(self._feedback_unclustered_key())  # Clear unclustered set
         # Source sets: optional to scan
         source_keys = list(self._scan_iter("feedback:source:*"))
         if source_keys:
@@ -842,24 +854,28 @@ def clear_jobs():
         _STORE.clear_jobs()
 
 
-def get_unclustered_feedback() -> List[FeedbackItem]:
-    """Get all feedback items that haven't been clustered yet.
+def get_unclustered_feedback(project_id: UUID) -> List[FeedbackItem]:
+    """Get all feedback items that haven't been clustered yet for a project.
+    
+    Args:
+        project_id: Project scope for the unclustered feedback set.
     
     Returns:
-        List of FeedbackItem objects that are in the unclustered set.
+        List of FeedbackItem objects that are in the unclustered set for the project.
     """
-    return _STORE.get_unclustered_feedback()
+    return _STORE.get_unclustered_feedback(project_id)
 
 
-def remove_from_unclustered(feedback_id: UUID):
+def remove_from_unclustered(feedback_id: UUID, project_id: UUID):
     """Remove a feedback item from the unclustered set.
     
     This should be called after the item has been added to a cluster.
     
     Args:
         feedback_id: UUID of the feedback item to remove from unclustered set.
+        project_id: Project scope for the unclustered feedback set.
     """
-    return _STORE.remove_from_unclustered(feedback_id)
+    return _STORE.remove_from_unclustered(feedback_id, project_id)
 
 
 # User / Project API

@@ -195,10 +195,11 @@ export async function getFeedback(
   }
 
   // Apply repo filter if specified
+  let filteredItems: FeedbackItem[] | undefined;
   if (repo) {
     // Fetch all items and filter by repo
     const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
-    const filteredItems = allItems.filter(
+    filteredItems = allItems.filter(
       (item): item is FeedbackItem => item !== null && item.repo === repo
     );
     const filteredIds = filteredItems.map((item) => item.id);
@@ -213,9 +214,8 @@ export async function getFeedback(
   // Fetch the actual feedback items (if not already fetched for repo filtering)
   let items: (FeedbackItem | null)[];
   if (repo) {
-    // Already fetched during repo filtering, just paginate
-    const allItems = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
-    items = allItems.slice(0, limit);
+    // Already fetched during repo filtering, just paginate the filtered items
+    items = (filteredItems ?? []).slice(offset, offset + limit);
   } else {
     items = await Promise.all(paginatedIds.map((id) => getFeedbackItem(projectId, id)));
   }

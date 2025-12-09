@@ -10,33 +10,46 @@ import type { Adapter } from 'next-auth/adapters';
  * Returns the default project ID.
  */
 async function ensureDefaultProject(userId: string): Promise<string> {
-  // Ensure the user row exists (DB might be freshly reset)
-  const user = await prisma.user.upsert({
-    where: { id: userId },
-    update: {},
-    create: { id: userId },
-    select: { defaultProjectId: true, id: true },
+  return prisma.$transaction(async (tx) => {
+    // Ensure the user row exists (DB might be freshly reset)
+    const user = await tx.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: { id: userId },
+      select: { defaultProjectId: true, id: true },
+    });
+
+    // If a default already exists, return it immediately
+    if (user?.defaultProjectId) {
+      return user.defaultProjectId;
+    }
+
+    // Re-check inside the same transaction to avoid racing creations
+    const existingDefault = await tx.user.findUnique({
+      where: { id: userId },
+      select: { defaultProjectId: true },
+    });
+
+    if (existingDefault?.defaultProjectId) {
+      return existingDefault.defaultProjectId;
+    }
+
+    // Create a default project for the user and set it
+    const project = await tx.project.create({
+      data: {
+        name: 'Default Project',
+        userId: user.id,
+      },
+    });
+
+    const updatedUser = await tx.user.update({
+      where: { id: userId },
+      data: { defaultProjectId: project.id },
+      select: { defaultProjectId: true },
+    });
+
+    return updatedUser.defaultProjectId ?? project.id;
   });
-
-  if (user?.defaultProjectId) {
-    return user.defaultProjectId;
-  }
-
-  // Create a default project for the user
-  const project = await prisma.project.create({
-    data: {
-      name: 'Default Project',
-      userId: user.id,
-    },
-  });
-
-  // Set it as the user's default project
-  await prisma.user.update({
-    where: { id: userId },
-    data: { defaultProjectId: project.id },
-  });
-
-  return project.id;
 }
 
 export const authOptions: NextAuthOptions = {
@@ -64,11 +77,28 @@ export const authOptions: NextAuthOptions = {
 
       // Ensure user has a default project and add projectId to token
       if (token.sub) {
-        try {
-          const projectId = await ensureDefaultProject(token.sub);
-          token.projectId = projectId;
-        } catch (error) {
-          console.error('Failed to ensure default project:', error);
+        const maxAttempts = 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const projectId = await ensureDefaultProject(token.sub);
+            token.projectId = projectId;
+            break;
+          } catch (error) {
+            const backoffMs = 100 * 2 ** (attempt - 1);
+            console.error('Failed to ensure default project', {
+              attempt,
+              userId: token.sub,
+              error,
+            });
+
+            if (attempt === maxAttempts) {
+              throw new Error(
+                'We could not set up your default project. Please try signing in again.'
+              );
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          }
         }
       }
 

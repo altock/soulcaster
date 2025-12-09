@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFeedback } from '@/lib/redis';
-import { getProjectId } from '@/lib/project';
+import { requireProjectId } from '@/lib/project';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const projectId = await getProjectId(request);
-    
-    if (!projectId) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+    const projectId = await requireProjectId(request);
 
     const source = searchParams.get('source');
     const repo = searchParams.get('repo');
@@ -40,6 +36,9 @@ export async function GET(request: NextRequest) {
     const data = await getFeedback(projectId, limit, offset, source || undefined, repo || undefined);
     return NextResponse.json(data);
   } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error fetching feedback from Redis:', error);
     return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: 500 });
   }
@@ -48,11 +47,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const projectId = await getProjectId(request);
-    
-    if (!projectId) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+    const projectId = await requireProjectId(request);
 
     const { id, ...data } = body;
 
@@ -67,6 +62,9 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error updating feedback:', error);
     return NextResponse.json({ error: 'Failed to update feedback' }, { status: 500 });
   }

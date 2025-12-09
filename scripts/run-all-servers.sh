@@ -24,12 +24,18 @@ start_worktree_servers() {
     
     echo "[$worktree_name] Starting on ports $backend_port (backend) and $dashboard_port (dashboard)..."
     
-    # Start backend
-    cd "$worktree_path/backend"
+    # Start backend (fail fast if path is wrong)
+    cd "$worktree_path/backend" || {
+        echo "[$worktree_name-setup] Failed to cd into $worktree_path/backend"
+        exit 1
+    }
     PORT=$backend_port uvicorn main:app --reload --port $backend_port 2>&1 | sed "s/^/[$worktree_name-BE] /" &
     
-    # Start dashboard
-    cd "$worktree_path/dashboard"
+    # Start dashboard (fail fast if path is wrong)
+    cd "$worktree_path/dashboard" || {
+        echo "[$worktree_name-setup] Failed to cd into $worktree_path/dashboard"
+        exit 1
+    }
     PORT=$dashboard_port NEXT_PUBLIC_API_URL="http://localhost:$backend_port" npm run dev -- --port $dashboard_port 2>&1 | sed "s/^/[$worktree_name-FE] /" &
 }
 
