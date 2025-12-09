@@ -1,12 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { fetchRepoIssues, issueToFeedbackItem, logRateLimit } from '@/lib/github';
+import { getProjectId } from '@/lib/project';
 import type { GitHubRepo } from '@/types';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
+
+// Project-scoped Redis key helpers (matching lib/redis.ts patterns)
+const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${id}`;
+const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
+const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
+const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 
 /**
  * Synchronizes all enabled GitHub repositories stored in Redis and ingests their issues as feedback items.
@@ -19,9 +26,15 @@ const redis = new Redis({
  * @returns A JSON object describing the outcome. On success: `{ success: true, message: 'Sync completed', total_new, total_updated, total_closed, repos }`
  * where `repos` is an array of per-repo result objects (`{ repo, new, updated, closed, total, ignored_prs }`) or error entries for repos that failed. On failure: `{ success: false, error, detail }`.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    console.log('[GitHub Sync] Starting sync for all repos');
+    // Get project ID from authenticated session
+    const projectId = await getProjectId(request);
+    if (!projectId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    console.log(`[GitHub Sync] Starting sync for all repos (project: ${projectId})`);
 
     // Log initial rate limit
     await logRateLimit();
@@ -78,12 +91,13 @@ export async function POST() {
           const feedbackItem = issueToFeedbackItem(issue, repo.full_name);
 
           // Check if issue already exists in Redis
-          const existingFeedback = await redis.hgetall(`feedback:${feedbackItem.id}`);
+          const existingFeedback = await redis.hgetall(feedbackKey(projectId, feedbackItem.id));
           const exists = existingFeedback && Object.keys(existingFeedback).length > 0;
 
           // Store feedback item
-          await redis.hset(`feedback:${feedbackItem.id}`, {
+          await redis.hset(feedbackKey(projectId, feedbackItem.id), {
             id: feedbackItem.id,
+            project_id: projectId,
             source: feedbackItem.source,
             external_id: feedbackItem.external_id || '',
             title: feedbackItem.title,
@@ -99,19 +113,19 @@ export async function POST() {
 
           // Add to created sorted set (by timestamp)
           const timestamp = new Date(feedbackItem.created_at).getTime();
-          await redis.zadd('feedback:created', { score: timestamp, member: feedbackItem.id });
+          await redis.zadd(feedbackCreatedKey(projectId), { score: timestamp, member: feedbackItem.id });
 
           // Add to source-specific sorted set for filtering
-          await redis.zadd('feedback:source:github', { score: timestamp, member: feedbackItem.id });
+          await redis.zadd(feedbackSourceKey(projectId, 'github'), { score: timestamp, member: feedbackItem.id });
 
           // Manage unclustered set based on issue status
           if (feedbackItem.status === 'closed') {
             // Remove closed issues from unclustered set
-            await redis.srem('feedback:unclustered', feedbackItem.id);
+            await redis.srem(feedbackUnclusteredKey(projectId), feedbackItem.id);
             closedCount++;
           } else if (!exists) {
             // New open issue - add to unclustered
-            await redis.sadd('feedback:unclustered', feedbackItem.id);
+            await redis.sadd(feedbackUnclusteredKey(projectId), feedbackItem.id);
             newCount++;
           } else {
             // Existing open issue - updated

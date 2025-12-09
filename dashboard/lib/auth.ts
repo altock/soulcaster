@@ -5,10 +5,42 @@ import { prisma } from '@/lib/prisma';
 import type { NextAuthOptions } from 'next-auth';
 import type { Adapter } from 'next-auth/adapters';
 
+/**
+ * Ensures a user has a default project. Creates one if it doesn't exist.
+ * Returns the default project ID.
+ */
+async function ensureDefaultProject(userId: string): Promise<string> {
+  // Check if user already has a default project
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { defaultProjectId: true },
+  });
+
+  if (user?.defaultProjectId) {
+    return user.defaultProjectId;
+  }
+
+  // Create a default project for the user
+  const project = await prisma.project.create({
+    data: {
+      name: 'Default Project',
+      userId: userId,
+    },
+  });
+
+  // Set it as the user's default project
+  await prisma.user.update({
+    where: { id: userId },
+    data: { defaultProjectId: project.id },
+  });
+
+  return project.id;
+}
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as Adapter,
   session: {
-    strategy: 'jwt', // Use JWT strategy even with database adapter to keep session stateless if preferred, or remove for database sessions
+    strategy: 'jwt',
   },
   providers: [
     GitHub({
@@ -22,16 +54,28 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, account }) {
+    async jwt({ token, account, user }) {
       // Persist the OAuth access_token to the token right after signin
       if (account) {
         token.accessToken = account.access_token;
       }
+
+      // Ensure user has a default project and add projectId to token
+      if (token.sub) {
+        try {
+          const projectId = await ensureDefaultProject(token.sub);
+          token.projectId = projectId;
+        } catch (error) {
+          console.error('Failed to ensure default project:', error);
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
       // Send properties to the client
       session.accessToken = token.accessToken as string;
+      session.projectId = token.projectId as string;
       if (session.user && token.sub) {
         session.user.id = token.sub;
       }

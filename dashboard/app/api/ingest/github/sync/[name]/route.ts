@@ -1,12 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { fetchRepoIssues, issueToFeedbackItem, logRateLimit } from '@/lib/github';
+import { getProjectId } from '@/lib/project';
 import type { GitHubRepo } from '@/types';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
+
+// Project-scoped Redis key helpers (matching lib/redis.ts patterns)
+const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${id}`;
+const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
+const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
+const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 
 /**
  * Syncs issues from the specified GitHub repository into Redis and updates repository metadata.
@@ -15,16 +22,22 @@ const redis = new Redis({
  * @returns A NextResponse whose JSON body reports the sync result. On success includes `success: true`, `message`, `repo`, `new_issues`, `updated_issues`, `closed_issues`, `total_issues`, and `ignored_prs`. On failure includes `success: false`, `error`, and `detail`.
  */
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
+    // Get project ID from authenticated session
+    const projectId = await getProjectId(request);
+    if (!projectId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
     const { name } = await params;
 
     // Decode URL-encoded repo name
     const repoName = decodeURIComponent(name);
 
-    console.log(`[GitHub Sync] Starting sync for ${repoName}`);
+    console.log(`[GitHub Sync] Starting sync for ${repoName} (project: ${projectId})`);
 
     // Log initial rate limit
     await logRateLimit();
@@ -66,12 +79,13 @@ export async function POST(
       const feedbackItem = issueToFeedbackItem(issue, repo.full_name);
 
       // Check if issue already exists in Redis
-      const existingFeedback = await redis.hgetall(`feedback:${feedbackItem.id}`);
+      const existingFeedback = await redis.hgetall(feedbackKey(projectId, feedbackItem.id));
       const exists = existingFeedback && Object.keys(existingFeedback).length > 0;
 
       // Store feedback item
-      await redis.hset(`feedback:${feedbackItem.id}`, {
+      await redis.hset(feedbackKey(projectId, feedbackItem.id), {
         id: feedbackItem.id,
+        project_id: projectId,
         source: feedbackItem.source,
         external_id: feedbackItem.external_id || '',
         title: feedbackItem.title,
@@ -87,19 +101,19 @@ export async function POST(
 
       // Add to created sorted set (by timestamp)
       const timestamp = new Date(feedbackItem.created_at).getTime();
-      await redis.zadd('feedback:created', { score: timestamp, member: feedbackItem.id });
+      await redis.zadd(feedbackCreatedKey(projectId), { score: timestamp, member: feedbackItem.id });
 
       // Add to source-specific sorted set for filtering
-      await redis.zadd('feedback:source:github', { score: timestamp, member: feedbackItem.id });
+      await redis.zadd(feedbackSourceKey(projectId, 'github'), { score: timestamp, member: feedbackItem.id });
 
       // Manage unclustered set based on issue status
       if (feedbackItem.status === 'closed') {
         // Remove closed issues from unclustered set
-        await redis.srem('feedback:unclustered', feedbackItem.id);
+        await redis.srem(feedbackUnclusteredKey(projectId), feedbackItem.id);
         closedCount++;
       } else if (!exists) {
         // New open issue - add to unclustered
-        await redis.sadd('feedback:unclustered', feedbackItem.id);
+        await redis.sadd(feedbackUnclusteredKey(projectId), feedbackItem.id);
         newCount++;
       } else {
         // Existing open issue - updated
