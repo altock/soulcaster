@@ -148,6 +148,7 @@ async function createSingletonClusters(
       title: summary.title,
       summary: summary.summary,
       status: 'new',
+      project_id: projectId,
       created_at: timestamp,
       updated_at: timestamp,
       centroid: '[]', // no embedding, but keep consistent shape
