@@ -3,10 +3,10 @@ import { getClusterDetail } from '@/lib/redis';
 import { requireProjectId } from '@/lib/project';
 
 /**
- * Fetch a cluster by ID directly from Redis and return it as a JSON response.
+ * Retrieve a cluster by its ID and respond with JSON.
  *
- * @param params - Promise resolving to route parameters; must include `id` for the cluster
- * @returns The JSON response sent to the client: the cluster data on success, or an error response with appropriate HTTP status.
+ * @param params - Promise resolving to route parameters; must provide `id` of the cluster
+ * @returns The HTTP JSON response: the cluster object on success, or an error object (`{ error: string }`) with a corresponding HTTP status on failure
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

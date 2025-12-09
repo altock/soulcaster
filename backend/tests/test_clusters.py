@@ -18,11 +18,25 @@ client = TestClient(app)
 
 
 def setup_function():
+    """
+    Clear persistent clusters and feedback items before each test.
+    
+    This resets the test store to a clean state by removing all stored clusters and feedback items so subsequent tests run isolated from prior state.
+    """
     clear_clusters()
     clear_feedback_items()
 
 
 def _seed_cluster_with_feedback(project_id):
+    """
+    Create and persist an IssueCluster and two associated FeedbackItem objects for the given project.
+    
+    Parameters:
+        project_id (str | UUID): Identifier of the project to associate with the created cluster and feedback items.
+    
+    Returns:
+        tuple: (cluster, feedback_items) where `cluster` is the created IssueCluster associated with `project_id`, and `feedback_items` is a list containing the two created FeedbackItem instances. The created records are added to the test store and use the current UTC time for their timestamps.
+    """
     now = datetime.now(timezone.utc)
 
     feedback_one = FeedbackItem(
@@ -115,6 +129,14 @@ def test_start_fix_updates_cluster_status(project_context):
 
 
 def test_cluster_fields_include_github_metadata(project_context):
+    """
+    Verify that clusters expose GitHub metadata fields in both list and detail API responses.
+    
+    Creates an IssueCluster with GitHub-related fields, stores it, then requests the list and detail endpoints for the cluster's project and asserts the returned payload includes the same GitHub metadata.
+    
+    Parameters:
+    	project_context (dict): Test fixture providing `project_id` used to scope API requests.
+    """
     now = datetime.now(timezone.utc)
     pid = project_context["project_id"]
     cluster = IssueCluster(

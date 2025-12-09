@@ -3,8 +3,10 @@ import { getUnclusteredCount } from '@/lib/redis';
 import { requireProjectId } from '@/lib/project';
 
 /**
- * Get count of unclustered feedback items
- * GET /api/clusters/unclustered
+ * Get the unclustered feedback count for the project associated with the request.
+ *
+ * @param request - Incoming HTTP request used to derive the project ID.
+ * @returns A NextResponse containing JSON `{ count }` on success; responds with `400` and `{ error: 'project_id is required' }` if the project ID is missing, or `500` and `{ error: 'Failed to fetch unclustered count' }` on other failures.
  */
 export async function GET(request: Request) {
   try {

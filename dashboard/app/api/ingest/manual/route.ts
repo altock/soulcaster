@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createFeedback } from '@/lib/redis';
 import { requireProjectId } from '@/lib/project';
 
+/**
+ * Handle POST requests that create a manual feedback entry, store it in Redis, and return the created feedback id.
+ *
+ * @returns On success, a JSON object with `success: true`, `feedback_id` (the created feedback identifier), and a user-facing `message`. On validation failure, a JSON error with `{ error: 'Text field is required' }` and HTTP 400. If the request is missing a project id, a JSON error `{ error: 'project_id is required' }` with HTTP 400. On unexpected failures, a JSON error `{ error: 'Failed to submit feedback' }` with HTTP 500.
+ */
 export async function POST(request: NextRequest) {
   try {
     const projectId = await requireProjectId(request);

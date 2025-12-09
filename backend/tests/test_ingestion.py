@@ -12,6 +12,11 @@ from backend.store import (
 client = TestClient(app)
 
 def setup_function():
+    """
+    Reset persistent test data by clearing all stored feedback items and clusters.
+    
+    This is used by the test harness to ensure a clean storage state before each test by removing all feedback items and all clusters.
+    """
     clear_feedback_items()
     clear_clusters()
 

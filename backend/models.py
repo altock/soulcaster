@@ -52,7 +52,12 @@ class FeedbackItem(BaseModel):
 
     @property
     def text(self) -> str:
-        """Alias for body to keep backward compatibility with downstream uses."""
+        """
+        Provide the feedback item's text as an alias for its body for backward compatibility.
+        
+        Returns:
+            str: The feedback text (same value as `body`).
+        """
         return self.body
 
 

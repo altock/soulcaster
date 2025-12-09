@@ -59,18 +59,25 @@ interface ClusterSummaryData {
 }
 
 /**
- * Run vector-based clustering on unclustered feedback items
- * POST /api/clusters/run-vector
+ * Perform vector-based clustering of a project's unclustered feedback items and persist cluster state.
  *
- * This uses Upstash Vector for efficient similarity search instead of
- * comparing against all cluster centroids.
+ * Fetches unclustered feedback IDs, generates embeddings, assigns feedback to existing or new clusters
+ * using vector similarity, stores embeddings in the vector store, generates summaries for changed clusters,
+ * and updates Redis (cluster hashes, cluster membership sets, and feedback clustered flags). Removes processed
+ * items from the unclustered set.
  *
- * Algorithm:
- * 1. Get all unclustered feedback items
- * 2. Generate embeddings and query vector DB for similar items
- * 3. Assign to existing clusters or create new ones based on similarity
- * 4. Store embeddings in vector DB for future queries
- * 5. Update Redis with cluster data and summaries
+ * @param request - Incoming HTTP request; must include project context (a `project_id` is required)
+ * @returns A JSON payload describing the operation outcome:
+ * - `success`: `true` on success, `false` on error
+ * - `message`: human-readable status message
+ * - `clustered`: number of feedback items processed and clustered
+ * - `newClusters`: number of newly created clusters
+ * - `updatedClusters`: number of existing clusters updated
+ * - `embeddingFailures`: number of items that failed during embedding or processing
+ * - `missingFeedback`: number of feedback IDs that were not found and removed from unclustered set
+ * - `durationMs`: elapsed processing time in milliseconds
+ * - `threshold`: similarity threshold used for clustering
+ * On error, the response will include `error` and `details` fields with failure information.
  */
 export async function POST(request: Request) {
   try {

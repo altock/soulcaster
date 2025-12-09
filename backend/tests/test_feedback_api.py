@@ -12,7 +12,11 @@ client = TestClient(app)
 
 
 def setup_function():
-    """Clear store before each test."""
+    """
+    Clear in-memory stores used by tests.
+    
+    Removes all feedback items and clusters so each test starts with an empty store.
+    """
     clear_feedback_items()
     clear_clusters()
 
@@ -147,7 +151,9 @@ def test_get_feedback_by_id(project_context):
 
 
 def test_get_feedback_by_id_not_found(project_context):
-    """Test GET /feedback/{id} returns 404 for non-existent item."""
+    """
+    Verify that requesting a feedback item by a nonexistent ID returns a 404 response and a detail message containing "not found".
+    """
     pid = project_context["project_id"]
     fake_id = uuid4()
     response = client.get(f"/feedback/{fake_id}?project_id={pid}")

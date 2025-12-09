@@ -4,6 +4,14 @@ import { useState } from 'react';
 import type { BillingPlanId } from '@/lib/billing';
 import { BILLING_PLANS } from '@/lib/billing';
 
+/**
+ * Render the billing page with plan cards and a dummy Stripe checkout flow.
+ *
+ * The component displays available billing plans, an optional error banner, and a checkout button for each plan
+ * that initiates a POST to /api/billing/checkout and redirects to the returned URL on success.
+ *
+ * @returns A JSX element containing the billing UI (plan cards, error banner, and checkout buttons).
+ */
 export default function BillingPage() {
   const [loadingPlan, setLoadingPlan] = useState<BillingPlanId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,4 +92,3 @@ export default function BillingPage() {
     </div>
   );
 }
-

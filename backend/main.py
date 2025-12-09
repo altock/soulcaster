@@ -96,6 +96,18 @@ def read_root():
 
 
 def _require_project_id(project_id: Optional[UUID]) -> UUID:
+    """
+    Ensure a project_id is provided; return the validated project UUID.
+    
+    Parameters:
+        project_id (Optional[UUID]): The project identifier to validate.
+    
+    Returns:
+        UUID: The provided `project_id` when present.
+    
+    Raises:
+        HTTPException: With status code 400 if `project_id` is missing.
+    """
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
     return project_id
@@ -104,15 +116,22 @@ def _require_project_id(project_id: Optional[UUID]) -> UUID:
 @app.post("/ingest/reddit")
 def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
     """
-    Ingest a feedback item from Reddit.
-
-    This endpoint receives already-normalized Reddit posts from the reddit_poller.
-
-    Args:
-        item: FeedbackItem with Reddit post data
-
+    Create or deduplicate a Reddit-sourced FeedbackItem and associate it with a project.
+    
+    If `project_id` is provided it overrides `item.project_id`; otherwise the function requires
+    `item.project_id` to be present. If an existing item with the same `external_id` and source
+    exists for the project, the existing item's id is returned and no new item is created.
+    
+    Parameters:
+        project_id (UUID | None): Optional project UUID to associate the item with. If omitted,
+            the item's own `project_id` is used.
+    
     Returns:
-        Status response indicating success
+        dict: `{'status': 'duplicate', 'id': <id>}` if a matching external_id already exists;
+        `{'status': 'ok', 'id': <id>, 'project_id': <project_id>}` on successful creation.
+    
+    Raises:
+        HTTPException: If no project_id is available (neither argument nor item.project_id).
     """
     pid = _require_project_id(project_id or item.project_id)
     item = item.model_copy(update={"project_id": pid})
@@ -128,16 +147,17 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
 @app.post("/ingest/sentry")
 def ingest_sentry(payload: dict, project_id: Optional[UUID] = Query(None)):
     """
-    Ingest an error report from Sentry webhook.
-
-    Parses Sentry's webhook payload and normalizes it into a FeedbackItem.
-    Extracts exception type, message, and stack trace frames.
-
-    Args:
-        payload: Raw Sentry webhook payload
-
+    Normalize a Sentry webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
+    
+    Parameters:
+        payload (dict): Raw JSON payload received from Sentry's webhook.
+        project_id (UUID | None): UUID of the project to associate the created FeedbackItem; required and validated by the function.
+    
     Returns:
-        Status response with created feedback item ID
+        dict: A response containing keys `"status"` (always `"ok"` on success), `"id"` (created feedback item UUID as a string), and `"project_id"` (associated project UUID as a string).
+    
+    Raises:
+        HTTPException: If processing fails, an HTTP 500 error is raised with details about the failure.
     """
     try:
         event_id = payload.get("event_id")
@@ -200,7 +220,17 @@ class CreateProjectRequest(BaseModel):
 
 @app.post("/users")
 def create_user(payload: CreateUserRequest):
-    """Create a user and their default project."""
+    """
+    Create a new user and a default project owned by that user.
+    
+    Creates a User record and a Project named "My Project", persists them together, and returns both objects.
+    
+    Parameters:
+        payload (CreateUserRequest): Request data containing optional `email` and `github_id` for the new user.
+    
+    Returns:
+        dict: A dictionary with keys `user` (the created User) and `default_project` (the created Project).
+    """
     now = datetime.now(timezone.utc)
     user = User(id=uuid4(), email=payload.email, github_id=payload.github_id, created_at=now)
     default_project = Project(
@@ -221,7 +251,15 @@ def list_projects(user_id: UUID = Query(...)):
 
 @app.post("/projects")
 def create_project_endpoint(payload: CreateProjectRequest):
-    """Create a project for a user."""
+    """
+    Create a new Project for the specified user.
+    
+    Parameters:
+        payload (CreateProjectRequest): Request containing `name` for the new project and the `user_id` of its owner.
+    
+    Returns:
+        dict: A mapping with key `"project"` whose value is the created Project instance.
+    """
     now = datetime.now(timezone.utc)
     project = Project(id=uuid4(), user_id=payload.user_id, name=payload.name, created_at=now)
     create_project(project)
@@ -231,15 +269,16 @@ def create_project_endpoint(payload: CreateProjectRequest):
 @app.post("/ingest/manual")
 def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Query(None)):
     """
-    Ingest manually submitted feedback text.
-
-    Creates a FeedbackItem from raw text input. Title is truncated to 80 characters.
-
-    Args:
-        request: ManualIngestRequest containing the feedback text
-
+    Create and persist a FeedbackItem from manual text, then trigger automatic clustering.
+    
+    The submitted text becomes the item's body; the item's title is the first 80 characters of the text.
+    
+    Parameters:
+        request (ManualIngestRequest): Object containing the manual feedback text in `text`.
+        project_id (UUID | None): Optional project UUID to associate the item with; a project_id is required and will be validated.
+    
     Returns:
-        Status response with created feedback item ID
+        dict: {"status": "ok", "id": "<created-item-uuid>", "project_id": "<project-uuid>"} containing the created item's ID and the project it was assigned to.
     """
     pid = _require_project_id(project_id)
     item = FeedbackItem(
@@ -260,6 +299,14 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Que
 
 
 def _sanitize_subreddits(values: List[str]) -> List[str]:
+    """
+    Normalize a list of subreddit strings by trimming whitespace, converting to lowercase, removing empty entries, and deduplicating while preserving the original order.
+    
+    Empty or all-whitespace input strings are dropped.
+    
+    Returns:
+        List[str]: Cleaned subreddit slugs in their original order with duplicates removed.
+    """
     cleaned = []
     for value in values:
         slug = value.strip()
@@ -278,7 +325,17 @@ def _sanitize_subreddits(values: List[str]) -> List[str]:
 
 @app.get("/config/reddit/subreddits")
 def get_reddit_config(project_id: Optional[UUID] = Query(None)):
-    """Return the active subreddit list (store-backed or env fallback) for a project."""
+    """
+    Get the active subreddit list for a project.
+    
+    Checks the project's stored subreddit configuration; if none exists, falls back to the REDDIT_SUBREDDITS or REDDIT_SUBREDDIT environment variable, and if still unset returns ["claudeai"].
+    
+    Parameters:
+        project_id (UUID): Project UUID used to scope the subreddit configuration lookup.
+    
+    Returns:
+        dict: A dictionary with keys `subreddits` (List[str]) and `project_id` (str) representing the resolved subreddit list and the project id.
+    """
     pid = _require_project_id(project_id)
     configured = get_reddit_subreddits_for_project(pid)
     if configured:
@@ -293,7 +350,21 @@ def get_reddit_config(project_id: Optional[UUID] = Query(None)):
 
 @app.post("/config/reddit/subreddits")
 def set_reddit_config(payload: SubredditConfig, project_id: Optional[UUID] = Query(None)):
-    """Set the subreddit list used by the poller (per project)."""
+    """
+    Set the subreddits configured for polling for a specific project.
+    
+    Validates and normalizes the provided subreddit names, requires a project_id, persists the cleaned list for that project, and returns the stored subreddits and project id.
+    
+    Parameters:
+        payload (SubredditConfig): Object containing `subreddits`, the list of subreddit strings to set.
+        project_id (UUID | None): Project identifier used to scope the configuration.
+    
+    Returns:
+        dict: {"subreddits": List[str], "project_id": str} — the cleaned subreddit list and the project id as a string.
+    
+    Raises:
+        HTTPException: If the cleaned subreddit list is empty (400) or if `project_id` is missing/invalid (400).
+    """
     cleaned = _sanitize_subreddits(payload.subreddits)
     if not cleaned:
         raise HTTPException(status_code=400, detail="At least one subreddit is required.")
@@ -304,7 +375,22 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[UUID] = Que
 
 @app.post("/admin/trigger-poll")
 async def trigger_poll(project_id: Optional[UUID] = Query(None)):
-    """Manually trigger a Reddit poll cycle (waits for completion)."""
+    """
+    Trigger a single Reddit polling cycle for the specified project and wait for completion.
+    
+    Polls the project's configured subreddits and ingests any found posts directly into the store, then runs automatic clustering for each ingested item. If no subreddits are configured for the project, the operation is skipped.
+    
+    Parameters:
+        project_id (Optional[UUID]): Project identifier used to scope the poll; required and validated by the endpoint.
+    
+    Returns:
+        dict: A status payload. Examples:
+            - {"status": "ok", "message": "Polled N subreddits", "project_id": "<uuid>"} on success.
+            - {"status": "skipped", "message": "No subreddits configured", "project_id": "<uuid>"} if no subreddits are set.
+    
+    Raises:
+        HTTPException: With status 500 if the polling or ingest process fails.
+    """
     pid = _require_project_id(project_id)
     subreddits = get_reddit_subreddits_for_project(pid) or []
     if not subreddits:
@@ -314,6 +400,14 @@ async def trigger_poll(project_id: Optional[UUID] = Query(None)):
     
     # Helper to ingest directly without HTTP request (avoids deadlock)
     def direct_ingest(payload: dict):
+        """
+        Ingest a raw feedback payload into storage and trigger automatic clustering for its project.
+        
+        The function constructs a FeedbackItem from the provided payload (after injecting the current project id), persists it, and runs the automatic clustering routine for the new item. Any exception raised during construction, persistence, or clustering is propagated.
+        
+        Parameters:
+            payload (dict): Raw mapping of fields acceptable to FeedbackItem; the function will inject the current `project_id` before creating the item.
+        """
         try:
             # Inject project_id so the ingested feedback stays scoped correctly
             payload["project_id"] = pid
@@ -336,6 +430,15 @@ async def trigger_poll(project_id: Optional[UUID] = Query(None)):
 
 # Simple clustering: group by source (and subreddit for Reddit)
 def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
+    """
+    Determines an IssueCluster for a FeedbackItem based on its source (and subreddit when present) and ensures the item is associated with that cluster, creating a new cluster if none exists for the same project and title.
+    
+    Parameters:
+        item (FeedbackItem): The feedback item to assign to a cluster.
+    
+    Returns:
+        IssueCluster: The existing or newly created cluster that contains the item.
+    """
     now = datetime.now(timezone.utc)
     subreddit = None
     if isinstance(item.metadata, dict):
@@ -400,15 +503,25 @@ def get_feedback(
     project_id: Optional[UUID] = Query(None),
 ):
     """
-    Retrieve feedback items with optional filtering and pagination.
-
-    Args:
-        source: Optional source filter (reddit, sentry, manual)
-        limit: Maximum number of items to return (default 100, max 1000)
-        offset: Number of items to skip for pagination (default 0)
-
+    Retrieve feedback items for a project with optional source filtering and pagination.
+    
+    Filters items to the provided project_id and, if specified, by source.
+    Requires a valid project_id; a missing project_id will result in an HTTP 400.
+    
+    Parameters:
+        source (Optional[str]): Filter by source — "reddit", "sentry", or "manual".
+        limit (int): Maximum number of items to return (1 to 1000).
+        offset (int): Number of items to skip for pagination (>= 0).
+        project_id (Optional[UUID]): Project UUID used to scope results; required.
+    
     Returns:
-        Dictionary with items list and total count
+        dict: {
+            "items": List[FeedbackItem] — the page of feedback items,
+            "total": int — total number of matching items for the project,
+            "limit": int — the limit used,
+            "offset": int — the offset used,
+            "project_id": str — the project UUID as a string
+        }
     """
     pid = _require_project_id(project_id)
     all_items = [item for item in get_all_feedback_items() if item.project_id == pid]
@@ -434,16 +547,17 @@ def get_feedback(
 @app.get("/feedback/{item_id}")
 def get_feedback_by_id(item_id: UUID, project_id: Optional[UUID] = Query(None)):
     """
-    Retrieve a single feedback item by its ID.
-
-    Args:
-        item_id: UUID of the feedback item
-
+    Retrieve a feedback item by its ID within the specified project.
+    
+    Parameters:
+        item_id (UUID): ID of the feedback item to retrieve.
+        project_id (UUID, optional): Project scope for the lookup; required and validated by the endpoint.
+    
     Returns:
-        The FeedbackItem if found
-
+        FeedbackItem: The matching feedback item.
+    
     Raises:
-        HTTPException: 404 if item not found
+        HTTPException: 404 if the item does not exist or does not belong to the specified project.
     """
     pid = _require_project_id(project_id)
     item = get_feedback_item(item_id)
@@ -459,13 +573,14 @@ def get_feedback_by_id(item_id: UUID, project_id: Optional[UUID] = Query(None)):
 @app.get("/stats")
 def get_stats(project_id: Optional[UUID] = Query(None)):
     """
-    Get summary statistics about feedback items and clusters.
-
+    Return statistics for a project's feedback items and clusters.
+    
     Returns:
-        Dictionary with:
-        - total_feedback: Total number of feedback items
-        - by_source: Breakdown of feedback by source
-        - total_clusters: Number of clusters (placeholder for future)
+        A dictionary containing:
+        - total_feedback (int): Number of feedback items for the project.
+        - by_source (dict): Counts of feedback items grouped by source keys `"reddit"`, `"sentry"`, and `"manual"`.
+        - total_clusters (int): Number of clusters associated with the project.
+        - project_id (str): The project's UUID as a string.
     """
     pid = _require_project_id(project_id)
     all_items = [item for item in get_all_feedback_items() if item.project_id == pid]
@@ -489,7 +604,26 @@ def get_stats(project_id: Optional[UUID] = Query(None)):
 
 @app.get("/clusters")
 def list_clusters(project_id: Optional[UUID] = Query(None)):
-    """List all issue clusters with aggregated metadata."""
+    """
+    List issue clusters for a project, including aggregated metadata.
+    
+    Parameters:
+        project_id (UUID): Project identifier used to scope clusters. Required.
+    
+    Returns:
+        list[dict]: A list of cluster summaries. Each dict contains:
+            - id: cluster id (str)
+            - title: cluster title (str)
+            - summary: cluster summary (str)
+            - count: number of feedback items referenced by the cluster (int)
+            - status: cluster status (str)
+            - sources: sorted list of distinct feedback sources present in the cluster (list[str])
+            - github_pr_url: URL of an associated GitHub PR, if any (str or None)
+            - issue_title: suggested issue title, if any (str or None)
+            - issue_description: suggested issue description, if any (str or None)
+            - github_repo_url: associated GitHub repository URL, if any (str or None)
+            - project_id: the project id as a string (str)
+    """
 
     pid = _require_project_id(project_id)
     clusters = [c for c in get_all_clusters() if c.project_id == pid]
@@ -525,7 +659,23 @@ def list_clusters(project_id: Optional[UUID] = Query(None)):
 
 @app.get("/clusters/{cluster_id}")
 def get_cluster_detail(cluster_id: str, project_id: Optional[UUID] = Query(None)):
-    """Retrieve a cluster with its feedback items."""
+    """
+    Retrieve a cluster scoped to the requested project and include its resolved feedback items.
+    
+    Validates that the specified cluster exists and belongs to the provided project_id, resolves any feedback items referenced by the cluster (skipping invalid IDs), and returns the cluster representation augmented with a `feedback_items` list and `project_id`.
+    
+    Parameters:
+        cluster_id (str): The cluster's identifier.
+        project_id (UUID | None): Project scope to validate the cluster against; required.
+    
+    Returns:
+        dict: Cluster data as a mapping with additional keys:
+            - `feedback_items` (list): Resolved feedback item objects associated with the cluster.
+            - `project_id` (str): The project UUID as a string.
+    
+    Raises:
+        HTTPException: 404 if the cluster does not exist or does not belong to the specified project.
+    """
 
     pid = _require_project_id(project_id)
     cluster = get_cluster(cluster_id)
@@ -553,7 +703,19 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[UUID] = Query(None)
 
 @app.post("/clusters/{cluster_id}/start_fix")
 def start_cluster_fix(cluster_id: str, project_id: Optional[UUID] = Query(None)):
-    """Begin fix generation for a cluster (stub implementation)."""
+    """
+    Start fix generation for the specified cluster.
+    
+    Returns:
+        result (dict): Response containing:
+            - status (str): "ok"
+            - message (str): confirmation message
+            - cluster_id (str): ID of the updated cluster
+            - project_id (str): project UUID as a string
+    
+    Raises:
+        HTTPException: 404 if the cluster does not exist or does not belong to the specified project.
+    """
 
     pid = _require_project_id(project_id)
     cluster = get_cluster(cluster_id)
@@ -572,7 +734,16 @@ def start_cluster_fix(cluster_id: str, project_id: Optional[UUID] = Query(None))
 
 
 def seed_mock_data():
-    """Seed a handful of feedback items and clusters for local testing."""
+    """
+    Create and persist a small set of mock data (user, project, three feedback items, and one cluster) for local testing.
+    
+    The function inserts a mock user and project, three FeedbackItem records covering reddit, sentry, and manual sources, and a single IssueCluster that references those items.
+    
+    Returns:
+        result (dict): A dictionary containing:
+            - cluster_id (str): The ID of the created cluster.
+            - feedback_ids (list[UUID]): The UUIDs of the created feedback items.
+    """
 
     now = datetime.now(timezone.utc)
     pid = uuid4()
@@ -644,14 +815,34 @@ class UpdateJobRequest(BaseModel):
 
 @app.get("/jobs")
 def list_jobs(project_id: Optional[UUID] = Query(None)):
-    """List all tracking jobs."""
+    """
+    List AgentJob records for the specified project.
+    
+    Parameters:
+        project_id (UUID): Project identifier used to scope the returned jobs. If omitted or None, an HTTP 400 error is raised.
+    
+    Returns:
+        jobs (List[AgentJob]): List of jobs that belong to the given project.
+    """
     pid = _require_project_id(project_id)
     return [job for job in get_all_jobs() if job.project_id == pid]
 
 
 @app.post("/jobs")
 def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(None)):
-    """Create a new tracking job for the coding agent."""
+    """
+    Create a new agent tracking job for the specified cluster within a project.
+    
+    Parameters:
+        payload (CreateJobRequest): Request containing `cluster_id` of the cluster to attach the job to.
+        project_id (UUID, optional): Project UUID to scope the job; required and validated by the endpoint.
+    
+    Returns:
+        dict: {"status": "ok", "job_id": <str>, "project_id": <str>} with the created job's id and the project id.
+    
+    Raises:
+        HTTPException: 404 if the cluster does not exist or does not belong to the given project.
+    """
     pid = _require_project_id(project_id)
     cluster = get_cluster(payload.cluster_id)
     if not cluster or cluster.project_id != pid:
@@ -672,7 +863,21 @@ def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(Non
 
 @app.patch("/jobs/{job_id}")
 def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optional[UUID] = Query(None)):
-    """Update job status and/or logs."""
+    """
+    Update the status and/or logs of an AgentJob scoped to a project.
+    
+    Parameters:
+        job_id (UUID): Identifier of the job to update.
+        payload (UpdateJobRequest): Fields to update; may include `status` and/or `logs`.
+        project_id (Optional[UUID]): Project scope; required to locate the job.
+    
+    Returns:
+        dict: On no-op, `{"status": "ok", "message": "No updates provided"}`.
+              On successful update, `{"status": "ok", "project_id": "<project_id>"}`.
+    
+    Raises:
+        HTTPException: If the job does not exist or does not belong to the specified project (404).
+    """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
     if not job or job.project_id != pid:
@@ -694,7 +899,19 @@ def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optio
 
 @app.get("/jobs/{job_id}")
 def get_job_details(job_id: UUID, project_id: Optional[UUID] = Query(None)):
-    """Retrieve details of a specific job."""
+    """
+    Retrieve the specified AgentJob scoped to the given project.
+    
+    Parameters:
+        job_id (UUID): ID of the job to retrieve.
+        project_id (UUID, optional): Project scope to validate ownership; required and validated by the endpoint.
+    
+    Returns:
+        AgentJob: The job matching `job_id` that belongs to `project_id`.
+    
+    Raises:
+        HTTPException: Raised with status 404 if the job does not exist or does not belong to the project.
+    """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
     if not job or job.project_id != pid:
@@ -704,7 +921,14 @@ def get_job_details(job_id: UUID, project_id: Optional[UUID] = Query(None)):
 
 @app.get("/clusters/{cluster_id}/jobs")
 def get_cluster_jobs(cluster_id: str, project_id: Optional[UUID] = Query(None)):
-    """List all jobs associated with a cluster."""
+    """
+    Return the AgentJob records for the given cluster that belong to the specified project.
+    
+    Filters jobs by `cluster_id` and the provided `project_id` (required); if `project_id` is missing an HTTP 400 is raised.
+    
+    Returns:
+        List[AgentJob]: Jobs belonging to the cluster and project.
+    """
     pid = _require_project_id(project_id)
     cluster_jobs = get_jobs_by_cluster(cluster_id)
     return [job for job in cluster_jobs if job.project_id == pid]

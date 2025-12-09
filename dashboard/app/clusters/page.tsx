@@ -6,12 +6,14 @@ import type { ClusterListItem } from '@/types';
 import SourceConfig from '@/components/SourceConfig';
 
 /**
- * Renders a client-side page that lists issue clusters and handles loading, error, and empty states.
+ * Display the Issue Clusters page and manage its loading, error, empty, and populated states.
  *
- * Fetches clusters from /api/clusters on mount and displays them in a table with title, summary,
- * count, source icons, status badges, and a link to view details.
+ * On mount the component loads cluster data and the count of unclustered items, automatically
+ * triggering a silent clustering run when unclustered items exist. The UI lets users manually
+ * run clustering, toggle source configuration, and browse clusters in a table that shows title,
+ * summary, repositories, status, feedback count, and a link to cluster details.
  *
- * @returns The React element for the clusters list page.
+ * @returns The React element for the Issue Clusters page
  */
 export default function ClustersListPage() {
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);

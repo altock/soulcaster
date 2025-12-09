@@ -99,14 +99,38 @@ class UpstashRESTClient:
         return self._cmd("SADD", key, member)
 
     def smembers(self, key: str) -> List[str]:
+        """
+        Retrieve all members of the Redis set stored at the given key.
+        
+        Returns:
+            List[str]: Members of the set as strings; empty list if the key does not exist or the set is empty.
+        """
         result = self._cmd("SMEMBERS", key)
         return result or []
 
     def srem(self, key: str, member: str):
-        """Remove member from set."""
+        """
+        Remove a member from the Redis set stored at `key`.
+        
+        Parameters:
+            key (str): Redis key of the set.
+            member (str): Member value to remove from the set.
+        
+        Returns:
+            int: The number of members that were removed (0 if the member was not present).
+        """
         return self._cmd("SREM", key, member)
 
     def delete(self, *keys: str):
+        """
+        Delete one or more Redis keys via the Upstash REST client.
+        
+        Parameters:
+            keys (str): One or more Redis keys to delete.
+        
+        Returns:
+            number_deleted (int): The number of keys that were removed.
+        """
         if not keys:
             return 0
         return self._cmd("DEL", *keys)
@@ -135,6 +159,19 @@ def _upstash_rest_client_from_env():
 
 class InMemoryStore:
     def __init__(self):
+        """
+        Initialize an in-memory storage backend holding feedback, clusters, jobs, projects, users, configs, and lookup indices.
+        
+        Attributes:
+            feedback_items: Mapping from feedback ID to FeedbackItem.
+            issue_clusters: Mapping from cluster ID to IssueCluster.
+            agent_jobs: Mapping from job ID to AgentJob.
+            projects: Mapping from project ID to Project.
+            users: Mapping from user ID to User.
+            reddit_subreddits: Per-project subreddit list mapping (project ID -> list of subreddit names).
+            external_index: Mapping from (project_id, source, external_id) to feedback ID for deduplication/lookup.
+            unclustered_feedback_ids: Per-project set of feedback IDs that have not been assigned to any cluster.
+        """
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[UUID, IssueCluster] = {}
         self.agent_jobs: Dict[UUID, AgentJob] = {}
@@ -147,6 +184,18 @@ class InMemoryStore:
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
+        """
+        Add a FeedbackItem to the store, indexing by external_id and marking it as unclustered.
+        
+        Parameters:
+            item (FeedbackItem): The feedback item to add; must reference an existing project.
+        
+        Returns:
+            FeedbackItem: The stored feedback item (the newly added item or an existing item when an external_id duplicate is detected).
+        
+        Raises:
+            KeyError: If the item's project_id does not exist in the store.
+        """
         if item.project_id not in self.projects:
             raise KeyError("project not found")
         if item.external_id:
@@ -161,13 +210,30 @@ class InMemoryStore:
         return item
 
     def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
+        """
+        Retrieve a feedback item by its UUID.
+        
+        Returns:
+            `FeedbackItem` if an item with the given `item_id` exists, `None` otherwise.
+        """
         return self.feedback_items.get(item_id)
 
     def get_all_feedback_items(self) -> List[FeedbackItem]:
+        """
+        Get all stored feedback items.
+        
+        Returns:
+            list[FeedbackItem]: All FeedbackItem instances currently held in the store.
+        """
         return list(self.feedback_items.values())
 
     def get_unclustered_feedback(self, project_id: UUID) -> List[FeedbackItem]:
-        """Get all feedback items that haven't been clustered yet for a project."""
+        """
+        Return feedback items for a project that have not been assigned to any cluster.
+        
+        Returns:
+            List[FeedbackItem]: FeedbackItem objects from the project's unclustered set (existing items only).
+        """
         project_unclustered = self.unclustered_feedback_ids.get(project_id, set())
         return [
             self.feedback_items[item_id]
@@ -176,17 +242,40 @@ class InMemoryStore:
         ]
 
     def remove_from_unclustered(self, feedback_id: UUID, project_id: UUID):
-        """Remove item from unclustered set (called after clustering)."""
+        """
+        Remove a feedback item's ID from the project's unclustered set.
+        
+        Parameters:
+            feedback_id (UUID): ID of the feedback item to remove.
+            project_id (UUID): ID of the project whose unclustered set will be modified.
+        
+        Behavior:
+            Performs a no-op if the project does not exist or the feedback ID is not present in the set.
+        """
         if project_id in self.unclustered_feedback_ids:
             self.unclustered_feedback_ids[project_id].discard(feedback_id)
 
     def clear_feedback_items(self):
+        """
+        Remove all stored feedback-related data from the in-memory store.
+        
+        This clears feedback_items, the external_id index, and the set tracking unclustered feedback IDs.
+        """
         self.feedback_items.clear()
         self.external_index.clear()
         self.unclustered_feedback_ids.clear()
 
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
+        """
+        Store the provided IssueCluster in the backend store.
+        
+        Parameters:
+        	cluster (IssueCluster): IssueCluster to persist; it will be stored keyed by its `id`.
+        
+        Returns:
+        	IssueCluster: The stored cluster instance.
+        """
         self.issue_clusters[cluster.id] = cluster
         return cluster
 
@@ -203,23 +292,64 @@ class InMemoryStore:
         return updated_cluster
 
     def clear_clusters(self):
+        """
+        Remove all stored issue clusters from the in-memory store.
+        
+        This clears the internal collection that holds IssueCluster objects for this store instance.
+        """
         self.issue_clusters.clear()
 
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: UUID) -> List[str]:
+        """
+        Set the list of Reddit subreddits for a project.
+        
+        Parameters:
+            subreddits (List[str]): Ordered list of subreddit names to associate with the project.
+            project_id (UUID): Identifier of the project to update.
+        
+        Returns:
+            List[str]: The same list of subreddits that was stored.
+        
+        Raises:
+            KeyError: If no project exists with the given `project_id`.
+        """
         if project_id not in self.projects:
             raise KeyError("project not found")
         self.reddit_subreddits[project_id] = subreddits
         return subreddits
 
     def get_reddit_subreddits(self, project_id: UUID) -> Optional[List[str]]:
+        """
+        Retrieve the configured Reddit subreddit names for a project.
+        
+        Returns:
+            List[str]: The subreddit names for the project, or `None` if no configuration exists.
+        """
         return self.reddit_subreddits.get(project_id)
 
     def clear_config(self):
+        """
+        Remove all stored Reddit subreddit configurations for all projects.
+        
+        This clears any per-project subreddit lists so subsequent lookups return no configuration.
+        """
         self.reddit_subreddits = {}
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
+        """
+        Add an AgentJob to the store for its associated project.
+        
+        Parameters:
+            job (AgentJob): Job to store; its project_id must reference an existing project.
+        
+        Returns:
+            AgentJob: The stored job object.
+        
+        Raises:
+            KeyError: If the job's project_id does not exist.
+        """
         if job.project_id not in self.projects:
             raise KeyError("project not found")
         self.agent_jobs[job.id] = job
@@ -243,9 +373,23 @@ class InMemoryStore:
         return list(self.agent_jobs.values())
 
     def clear_jobs(self):
+        """
+        Clear all AgentJob entries from the store.
+        """
         self.agent_jobs.clear()
 
     def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
+        """
+        Look up a FeedbackItem by project, source, and external identifier.
+        
+        Parameters:
+            project_id (UUID): ID of the project that scopes the lookup.
+            source (str): Source name or namespace of the external identifier.
+            external_id (str): External identifier provided by the source.
+        
+        Returns:
+            FeedbackItem | None: The matching FeedbackItem if found, `None` otherwise.
+        """
         key = (project_id, source, external_id)
         item_id = self.external_index.get(key)
         if not item_id:
@@ -254,18 +398,52 @@ class InMemoryStore:
 
     # Users / Projects
     def create_user_with_default_project(self, user: User, default_project: Project) -> Project:
+        """
+        Create a user record and its default project in the in-memory store.
+        
+        Parameters:
+            user (User): The user to create or store.
+            default_project (Project): The user's default project to create or store.
+        
+        Returns:
+            Project: The stored default project.
+        """
         self.users[user.id] = user
         self.projects[default_project.id] = default_project
         return default_project
 
     def create_project(self, project: Project) -> Project:
+        """
+        Store the given Project in the in-memory store and return it.
+        
+        Parameters:
+            project (Project): Project to add; stored under project.id.
+        
+        Returns:
+            Project: The stored project instance.
+        """
         self.projects[project.id] = project
         return project
 
     def get_projects_for_user(self, user_id: UUID) -> List[Project]:
+        """
+        Retrieve all projects owned by the given user.
+        
+        Parameters:
+            user_id (UUID): ID of the user whose projects to retrieve.
+        
+        Returns:
+            List[Project]: Projects belonging to the specified user (empty list if none).
+        """
         return [p for p in self.projects.values() if p.user_id == user_id]
 
     def get_project(self, project_id: UUID) -> Optional[Project]:
+        """
+        Retrieve a project by its identifier.
+        
+        Returns:
+            Project or None: The Project with the given `project_id` if it exists, otherwise `None`.
+        """
         return self.projects.get(project_id)
 
 
@@ -294,19 +472,56 @@ class RedisStore:
 
     @staticmethod
     def _feedback_source_key(source: str) -> str:
+        """
+        Construct the Redis key for a given feedback source.
+        
+        Parameters:
+            source (str): Identifier of the feedback source (for example, 'reddit' or 'github').
+        
+        Returns:
+            str: The Redis key in the form "feedback:source:{source}".
+        """
         return f"feedback:source:{source}"
 
     @staticmethod
     def _feedback_external_key(project_id: str, source: str, external_id: str) -> str:
+        """
+        Constructs the Redis key used to map an external feedback identifier to a feedback item.
+        
+        Parameters:
+            project_id (str): UUID or identifier of the project.
+            source (str): Source system name (e.g., "github", "zendesk").
+            external_id (str): The external system's identifier for the feedback item.
+        
+        Returns:
+            str: Redis key in the form "feedback:external:{project_id}:{source}:{external_id}".
+        """
         return f"feedback:external:{project_id}:{source}:{external_id}"
 
     @staticmethod
     def _feedback_unclustered_key(project_id: str) -> str:
-        """Key for the project-scoped set of unclustered feedback items."""
+        """
+        Return the Redis key for the project's set of unclustered feedback item IDs.
+        
+        Parameters:
+            project_id (str): Project identifier (UUID string).
+        
+        Returns:
+            key (str): Redis key in the form "feedback:unclustered:{project_id}".
+        """
         return f"feedback:unclustered:{project_id}"
 
     @staticmethod
     def _cluster_key(cluster_id: str) -> str:
+        """
+        Constructs the Redis key for a cluster using its identifier.
+        
+        Parameters:
+            cluster_id (str): The cluster identifier (typically a UUID string).
+        
+        Returns:
+            str: Redis key in the form `cluster:<cluster_id>`.
+        """
         return f"cluster:{cluster_id}"
 
     @staticmethod
@@ -315,34 +530,93 @@ class RedisStore:
 
     @staticmethod
     def _cluster_all_key() -> str:
+        """
+        Redis key for the set that indexes all cluster IDs.
+        
+        Returns:
+            The Redis key string used to store the set of all cluster IDs.
+        """
         return "clusters:all"
 
     @staticmethod
     def _reddit_subreddits_key(project_id: UUID) -> str:
+        """
+        Constructs the Redis key used to store a project's Reddit subreddit list.
+        
+        Returns:
+            str: Redis key in the form "config:reddit:subreddits:{project_id}".
+        """
         return f"config:reddit:subreddits:{project_id}"
 
     @staticmethod
     def _job_key(job_id: UUID) -> str:
+        """
+        Builds the Redis key for a job identifier.
+        
+        Returns:
+            The Redis key string in the form "job:<job_id>".
+        """
         return f"job:{job_id}"
 
     @staticmethod
     def _cluster_jobs_key(cluster_id: str) -> str:
+        """
+        Constructs the Redis key used to store job IDs for a specific cluster.
+        
+        Parameters:
+            cluster_id (str): Identifier of the cluster.
+        
+        Returns:
+            str: Redis key in the form "cluster:jobs:{cluster_id}".
+        """
         return f"cluster:jobs:{cluster_id}"
 
     @staticmethod
     def _user_key(user_id: UUID) -> str:
+        """
+        Constructs the Redis key for a user.
+        
+        Returns:
+            str: Redis key in the form "user:{user_id}".
+        """
         return f"user:{user_id}"
 
     @staticmethod
     def _project_key(project_id: UUID) -> str:
+        """
+        Constructs the Redis key used to store or reference a project by its UUID.
+        
+        Returns:
+            str: Redis key in the form "project:{project_id}".
+        """
         return f"project:{project_id}"
 
     @staticmethod
     def _user_projects_key(user_id: UUID) -> str:
+        """
+        Constructs the Redis key used to store project IDs associated with a user.
+        
+        Parameters:
+            user_id (UUID): The user's UUID.
+        
+        Returns:
+            str: Redis key in the form "user:projects:{user_id}".
+        """
         return f"user:projects:{user_id}"
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
+        """
+        Add a FeedbackItem to the store and update all relevant indexes and mappings.
+        
+        Persists the feedback item, indexes it by creation time and source, adds it to the project's unclustered set, and records an external_id mapping when present. Metadata and datetimes are converted to storable formats.
+        
+        Parameters:
+            item (FeedbackItem): Feedback item to persist.
+        
+        Returns:
+            FeedbackItem: The same feedback item that was added.
+        """
         payload = item.model_dump()
         if isinstance(payload["created_at"], datetime):
             payload["created_at"] = _dt_to_iso(payload["created_at"])
@@ -371,6 +645,14 @@ class RedisStore:
 
     def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
         # Try HGETALL first (new format)
+        """
+        Retrieve a FeedbackItem by its UUID, handling both current hash storage and legacy JSON string formats.
+        
+        If a stored hash is present, parse and convert fields into the FeedbackItem model (converts ISO datetimes and parses JSON metadata). If legacy JSON is present, attempt to decode it into the model. Returns None when no record exists or when stored data cannot be decoded into a valid FeedbackItem.
+        
+        Returns:
+            FeedbackItem or None: `FeedbackItem` if found and successfully parsed, `None` otherwise.
+        """
         key = self._feedback_key(item_id)
         data = self._hgetall(key)
         
@@ -402,6 +684,14 @@ class RedisStore:
         return FeedbackItem(**data)
 
     def get_all_feedback_items(self) -> List[FeedbackItem]:
+        """
+        Retrieve all stored FeedbackItem objects ordered by their creation time.
+        
+        Skips entries whose stored IDs are not valid UUIDs or whose referenced items cannot be loaded.
+        
+        Returns:
+            List[FeedbackItem]: Feedback items present in storage, ordered by creation timestamp.
+        """
         ids = self._zrange(self._feedback_created_key(), 0, -1)
         items: List[FeedbackItem] = []
         for item_id in ids:
@@ -415,7 +705,14 @@ class RedisStore:
         return items
 
     def get_unclustered_feedback(self, project_id: UUID) -> List[FeedbackItem]:
-        """Get all feedback items that haven't been clustered yet for a project."""
+        """
+        Return all feedback items for a project that have not yet been assigned to a cluster.
+        
+        Invalid or missing feedback IDs encountered in the store are ignored and not included in the result.
+        
+        Returns:
+        	List[FeedbackItem]: List of unclustered FeedbackItem objects for the specified project.
+        """
         unclustered_ids = self._smembers(self._feedback_unclustered_key(str(project_id)))
         items: List[FeedbackItem] = []
         for item_id in unclustered_ids:
@@ -441,6 +738,11 @@ class RedisStore:
 
     def clear_feedback_items(self):
         # Remove keys matching feedback:* and related sorted sets
+        """
+        Delete all stored feedback data and related Redis keys.
+        
+        Removes keys for individual feedback items, per-source indexes, external-id mappings, the (legacy) unclustered set, and the feedback created-time index.
+        """
         feedback_keys = list(self._scan_iter("feedback:*"))
         if feedback_keys:
             self._delete(*feedback_keys)
@@ -538,17 +840,41 @@ class RedisStore:
         return self.add_cluster(updated)
 
     def clear_clusters(self):
+        """
+        Remove all cluster records and the global clusters index from the store.
+        
+        This deletes every stored cluster entry and the cluster "all" index key so that no cluster data remains in the backend.
+        """
         cluster_keys = list(self._scan_iter("cluster:*")) + [self._cluster_all_key()]
         if cluster_keys:
             self._delete(*cluster_keys)
 
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: UUID) -> List[str]:
+        """
+        Store the given subreddit names as the Reddit configuration for the specified project.
+        
+        Parameters:
+            subreddits (List[str]): List of subreddit names to associate with the project.
+            project_id (UUID): Identifier of the project to set the subreddit configuration for.
+        
+        Returns:
+            List[str]: The same list of subreddit names that was stored.
+        """
         payload = json.dumps(subreddits)
         self._set(self._reddit_subreddits_key(project_id), payload)
         return subreddits
 
     def get_reddit_subreddits(self, project_id: UUID) -> Optional[List[str]]:
+        """
+        Retrieve the list of configured Reddit subreddits for a project.
+        
+        Parameters:
+            project_id (UUID): Identifier of the project whose subreddit list to fetch.
+        
+        Returns:
+            List[str]: The subreddit names for the project, or `None` if no valid configuration exists.
+        """
         raw = self._get(self._reddit_subreddits_key(project_id))
         if not raw:
             return None
@@ -562,12 +888,26 @@ class RedisStore:
 
     def clear_config(self):
         # Remove all subreddit config entries across projects
+        """
+        Remove all per-project Reddit subreddit configuration entries from the store.
+        
+        This deletes every key matching the `config:reddit:subreddits:*` pattern so no project-specific subreddit lists remain.
+        """
         keys = list(self._scan_iter("config:reddit:subreddits:*"))
         if keys:
             self._delete(*keys)
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
+        """
+        Persist the given AgentJob in the store and index it for cluster-based retrieval.
+        
+        Parameters:
+            job (AgentJob): The job to persist.
+        
+        Returns:
+            AgentJob: The same job instance that was stored.
+        """
         payload = job.model_dump()
         for field in ("created_at", "updated_at"):
             if isinstance(payload.get(field), datetime):
@@ -633,11 +973,27 @@ class RedisStore:
         return jobs
 
     def clear_jobs(self):
+        """
+        Remove all stored AgentJob entries and their cluster indexes from the backend.
+        
+        This deletes keys matching `job:*` (individual job hashes) and `cluster:jobs:*` (cluster-specific job sorted sets) from the configured store.
+        """
         job_keys = list(self._scan_iter("job:*")) + list(self._scan_iter("cluster:jobs:*"))
         if job_keys:
             self._delete(*job_keys)
 
     def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
+        """
+        Resolve a feedback item by its external identifier within a project.
+        
+        Parameters:
+            project_id (UUID): Project that owns the external identifier.
+            source (str): External source name (e.g., "github", "zendesk").
+            external_id (str): External identifier provided by the source.
+        
+        Returns:
+            FeedbackItem or None: The corresponding FeedbackItem if a mapping exists and points to a valid UUID, `None` if no mapping exists, `external_id` is empty, or the stored id is invalid.
+        """
         if not external_id:
             return None
         key = self._feedback_external_key(str(project_id), source, external_id)
@@ -651,6 +1007,16 @@ class RedisStore:
 
     # Users / Projects
     def create_user_with_default_project(self, user: User, default_project: Project) -> Project:
+        """
+        Create a user record in storage and create the user's default project.
+        
+        Parameters:
+        	user (User): The user to persist.
+        	default_project (Project): The initial project to create for the user.
+        
+        Returns:
+        	Project: The created default project.
+        """
         payload = user.model_dump()
         if isinstance(payload.get("created_at"), datetime):
             payload["created_at"] = _dt_to_iso(payload["created_at"])
@@ -661,6 +1027,15 @@ class RedisStore:
         return self.create_project(default_project)
 
     def create_project(self, project: Project) -> Project:
+        """
+        Store the given Project and associate it with its owner.
+        
+        Parameters:
+            project (Project): Project to persist.
+        
+        Returns:
+            Project: The same Project instance that was stored.
+        """
         payload = project.model_dump()
         if isinstance(payload.get("created_at"), datetime):
             payload["created_at"] = _dt_to_iso(payload["created_at"])
@@ -671,6 +1046,15 @@ class RedisStore:
         return project
 
     def get_projects_for_user(self, user_id: UUID) -> List[Project]:
+        """
+        Return the list of projects associated with a user.
+        
+        Parameters:
+            user_id (UUID): The user's unique identifier.
+        
+        Returns:
+            List[Project]: Projects linked to the given user; invalid or unparsable project IDs are ignored and an empty list is returned if none are found.
+        """
         project_ids = self._smembers(self._user_projects_key(user_id))
         projects: List[Project] = []
         for pid in project_ids:
@@ -683,6 +1067,15 @@ class RedisStore:
         return projects
 
     def get_project(self, project_id: UUID) -> Optional[Project]:
+        """
+        Retrieve the stored project for a given project UUID.
+        
+        Parameters:
+            project_id (UUID): The UUID of the project to fetch.
+        
+        Returns:
+            Project | None: The Project matching `project_id`, or `None` if no project exists. If the stored `created_at` is an ISO string, it is converted to a `datetime` on return.
+        """
         data = self._hgetall(self._project_key(project_id))
         if not data:
             return None
@@ -694,6 +1087,13 @@ class RedisStore:
 
     # --- client wrappers ---
     def _set(self, key: str, value: str):
+        """
+        Store a raw string value under the given key in the configured backend client.
+        
+        Parameters:
+            key (str): Redis-style key to set.
+            value (str): Raw string value to store.
+        """
         if self.mode == "redis":
             self.client.set(key, value)
         else:
@@ -776,10 +1176,27 @@ def get_feedback_item(item_id: UUID) -> Optional[FeedbackItem]:
 
 
 def get_all_feedback_items() -> List[FeedbackItem]:
+    """
+    Retrieve all stored feedback items.
+    
+    Returns:
+        A list of FeedbackItem objects, one entry per stored feedback item.
+    """
     return _STORE.get_all_feedback_items()
 
 
 def get_feedback_by_external_id(project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
+    """
+    Lookup a feedback item for a given project by its source and external identifier.
+    
+    Parameters:
+        project_id (UUID): ID of the project that owns the feedback item.
+        source (str): Source system or provider name associated with the external identifier.
+        external_id (str): External identifier assigned by the source; if empty, the lookup returns `None`.
+    
+    Returns:
+        FeedbackItem | None: The matching `FeedbackItem` if found, `None` otherwise.
+    """
     if not external_id:
         return None
     if hasattr(_STORE, "get_feedback_by_external_id"):
@@ -816,15 +1233,32 @@ def clear_clusters():
 
 
 def set_reddit_subreddits(subreddits: List[str]) -> List[str]:
+    """
+    Placeholder that enforces using a project-scoped API when setting subreddit configuration.
+    
+    Raises:
+        TypeError: always raised to indicate a required `project_id` parameter.
+    """
     raise TypeError("set_reddit_subreddits requires project_id")
 
 
 def get_reddit_subreddits() -> Optional[List[str]]:
+    """
+    Raise an error because a project identifier is required to retrieve subreddit configuration.
+    
+    Raises:
+        TypeError: Always raised indicating that `project_id` is required.
+    """
     raise TypeError("get_reddit_subreddits requires project_id")
 
 
 def clear_config():
     # Primarily for tests
+    """
+    Clear all per-project Reddit subreddit configuration from the active storage backend.
+    
+    This delegates to the selected store's `clear_config` method when available; if the active store does not implement `clear_config`, this function is a no-op.
+    """
     if hasattr(_STORE, "clear_config"):
         _STORE.clear_config()
 
@@ -850,55 +1284,113 @@ def get_all_jobs() -> List[AgentJob]:
 
 
 def clear_jobs():
+    """
+    Remove all agent job records and their indexes from the active storage backend.
+    
+    If the configured store exposes a `clear_jobs` operation, this function invokes it; otherwise it does nothing.
+    """
     if hasattr(_STORE, "clear_jobs"):
         _STORE.clear_jobs()
 
 
 def get_unclustered_feedback(project_id: UUID) -> List[FeedbackItem]:
-    """Get all feedback items that haven't been clustered yet for a project.
+    """
+    Retrieve feedback items that are currently unclustered for the given project.
     
-    Args:
-        project_id: Project scope for the unclustered feedback set.
+    Parameters:
+        project_id (UUID): ID of the project whose unclustered feedback should be returned.
     
     Returns:
-        List of FeedbackItem objects that are in the unclustered set for the project.
+        List[FeedbackItem]: Feedback items contained in the project's unclustered set.
     """
     return _STORE.get_unclustered_feedback(project_id)
 
 
 def remove_from_unclustered(feedback_id: UUID, project_id: UUID):
-    """Remove a feedback item from the unclustered set.
+    """
+    Remove a feedback item from the project's unclustered set.
     
-    This should be called after the item has been added to a cluster.
-    
-    Args:
-        feedback_id: UUID of the feedback item to remove from unclustered set.
-        project_id: Project scope for the unclustered feedback set.
+    Parameters:
+    	feedback_id (UUID): ID of the feedback item to remove.
+    	project_id (UUID): ID of the project that owns the unclustered set.
     """
     return _STORE.remove_from_unclustered(feedback_id, project_id)
 
 
 # User / Project API
 def create_user_with_default_project(user: User, project: Project) -> Project:
+    """
+    Create the user record and create a default project associated with that user.
+    
+    Parameters:
+        user (User): User model to persist.
+        project (Project): Project model to persist as the user's default project.
+    
+    Returns:
+        Project: The persisted default project, potentially updated with store-assigned fields.
+    """
     return _STORE.create_user_with_default_project(user, project)
 
 
 def create_project(project: Project) -> Project:
+    """
+    Create and persist a new project.
+    
+    Parameters:
+        project (Project): Project data to store; returned value may include generated fields such as an assigned `id`.
+    
+    Returns:
+        Project: The stored Project, including any server- or store-generated fields.
+    """
     return _STORE.create_project(project)
 
 
 def get_projects_for_user(user_id: UUID) -> List[Project]:
+    """
+    Retrieve projects associated with the specified user.
+    
+    Parameters:
+        user_id (UUID): Identifier of the user whose projects should be returned.
+    
+    Returns:
+        projects (List[Project]): List of Project objects belonging to the given user.
+    """
     return _STORE.get_projects_for_user(user_id)
 
 
 def get_project(project_id: UUID) -> Optional[Project]:
+    """
+    Retrieve the project with the given ID.
+    
+    Returns:
+        Project if a project with `project_id` exists, `None` otherwise.
+    """
     return _STORE.get_project(project_id)
 
 
 # Project-scoped config API
 def set_reddit_subreddits_for_project(subreddits: List[str], project_id: UUID) -> List[str]:
+    """
+    Set the subreddit list for a specific project.
+    
+    Parameters:
+        subreddits (List[str]): List of subreddit names to store for the project.
+        project_id (UUID): Identifier of the project to associate the subreddit list with.
+    
+    Returns:
+        stored_subreddits (List[str]): The list of subreddit names that were stored for the project.
+    """
     return _STORE.set_reddit_subreddits(subreddits, project_id)
 
 
 def get_reddit_subreddits_for_project(project_id: UUID) -> Optional[List[str]]:
+    """
+    Retrieve the configured Reddit subreddit names for a specific project.
+    
+    Parameters:
+        project_id (UUID): The project identifier to lookup subreddit configuration for.
+    
+    Returns:
+        A list of subreddit names for the given project, or `None` if no subreddit configuration exists.
+    """
     return _STORE.get_reddit_subreddits(project_id)

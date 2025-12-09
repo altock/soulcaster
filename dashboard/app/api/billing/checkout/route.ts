@@ -5,6 +5,12 @@ interface CheckoutRequestBody {
   planId?: BillingPlanId;
 }
 
+/**
+ * Creates a dummy billing checkout session for the requested plan and returns session details.
+ *
+ * @param request - HTTP request whose JSON body may include `planId` (BillingPlanId). If omitted, `planId` defaults to `'pro'`.
+ * @returns A JSON response: on success (`ok: true`) includes `mode`, `sessionId`, `planId`, and `url` with HTTP 200; on failure (`ok: false`) includes `error` with HTTP 400.
+ */
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CheckoutRequestBody;
@@ -35,4 +41,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

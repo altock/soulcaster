@@ -8,6 +8,12 @@ interface FeedbackListProps {
   refreshTrigger?: number;
 }
 
+/**
+ * Render a filterable feedback list with source tabs, optional repository filter, loading state, and empty-state handling.
+ *
+ * @param refreshTrigger - Optional external numeric trigger; changing this value forces the list to re-fetch feedback.
+ * @returns The component's rendered JSX containing filters, a loading indicator, an empty-state message, or a grid of feedback cards.
+ */
 export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);

@@ -32,7 +32,11 @@ def mock_store():
 
 @pytest.fixture(autouse=True)
 def clear_data(mock_store):
-    """Clear project-scoped data between tests."""
+    """
+    Clear project-scoped data between tests.
+    
+    Removes all jobs, clusters, and feedback items from the in-memory store so each test starts with a clean state.
+    """
     clear_jobs()
     clear_clusters()
     clear_feedback_items()
@@ -40,7 +44,14 @@ def clear_data(mock_store):
 
 @pytest.fixture()
 def project_context():
-    """Create a user and default project for each test."""
+    """
+    Create and register a default test user and project, then return their identifiers.
+    
+    The created user and project are timestamped with the current UTC time and persisted via the store helper.
+    
+    Returns:
+        dict: A mapping with keys "user_id" and "project_id" containing the created UUIDs.
+    """
     now = datetime.now(timezone.utc)
     user = User(id=DEFAULT_USER_ID, email="test@example.com", github_id=None, created_at=now)
     project = Project(id=DEFAULT_PROJECT_ID, user_id=user.id, name="My Project", created_at=now)

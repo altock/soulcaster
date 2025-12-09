@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFeedback } from '@/lib/redis';
 import { requireProjectId } from '@/lib/project';
 
+/**
+ * Retrieve feedback entries for the project identified in the request.
+ *
+ * @returns A JSON response containing the feedback payload from Redis on success; a 400 JSON error when `limit` or `offset` are invalid or when the project ID is missing; or a 500 JSON error when fetching fails.
+ */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -44,6 +49,13 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Update an existing feedback entry for the authorized project.
+ *
+ * Attempts to update feedback identified by `id` with the provided data for the project derived from the request.
+ *
+ * @returns A `NextResponse` containing `{ success: true }` on successful update. On failure returns a JSON error message with HTTP status 400 when the project ID or feedback `id` is missing, or 500 for other server errors.
+ */
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();

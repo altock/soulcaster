@@ -35,17 +35,23 @@ export const BILLING_PLANS: BillingPlan[] = [
   },
 ];
 
+/**
+ * Retrieve the billing plan that matches the provided plan id.
+ *
+ * @param planId - The billing plan identifier to look up
+ * @returns The matching billing plan if found, otherwise `undefined`
+ */
 export function getBillingPlan(planId: BillingPlanId): BillingPlan | undefined {
   return BILLING_PLANS.find((plan) => plan.id === planId);
 }
 
 /**
- * Create a dummy checkout session.
+ * Creates a fake checkout session object for the specified billing plan.
  *
- * This does not talk to Stripe yet. It just returns
- * a fake URL that the dashboard can redirect to, so
- * we can wire the UX and later swap the implementation
- * for a real Stripe integration.
+ * The session is synthetic (no external payment provider is contacted) and includes a redirect URL that simulates a successful checkout flow.
+ *
+ * @returns A `CheckoutSession` containing `sessionId`, `planId`, `mode` set to `'dummy'`, and a `url` pointing to a simulated success page with encoded query parameters.
+ * @throws Error if `planId` does not correspond to a known billing plan.
  */
 export async function createDummyCheckoutSession(planId: BillingPlanId): Promise<CheckoutSession> {
   const plan = getBillingPlan(planId);
@@ -62,4 +68,3 @@ export async function createDummyCheckoutSession(planId: BillingPlanId): Promise
     url: `/billing/success?session_id=${encodeURIComponent(sessionId)}&plan=${encodeURIComponent(planId)}`,
   };
 }
-

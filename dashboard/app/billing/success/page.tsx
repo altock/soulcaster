@@ -4,6 +4,14 @@ interface BillingSuccessPageProps {
   searchParams?: Record<string, string | string[] | undefined>;
 }
 
+/**
+ * Render a billing success UI for a completed dummy Stripe checkout.
+ *
+ * Redirects to `/billing` if `searchParams.session_id` is missing or not a string.
+ *
+ * @param searchParams - Optional query parameters; the component reads `session_id` and `plan` when they are strings.
+ * @returns A React element showing a success message, the session ID, and the optional plan label when provided.
+ */
 export default function BillingSuccessPage({ searchParams }: BillingSuccessPageProps) {
   const sessionId = typeof searchParams?.session_id === 'string' ? searchParams.session_id : '';
   const plan = typeof searchParams?.plan === 'string' ? searchParams.plan : '';
@@ -39,4 +47,3 @@ export default function BillingSuccessPage({ searchParams }: BillingSuccessPageP
     </div>
   );
 }
-

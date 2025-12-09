@@ -9,7 +9,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "🧪 Testing all worktrees in parallel..."
 echo ""
 
-# Function to run tests in a worktree
+# test_worktree runs backend and dashboard tests in the specified worktree and prefixes every output line with the provided worktree name.
+# worktree_path is the filesystem path to the worktree where tests should be executed.
+# worktree_name is a short label used to prefix and identify all printed output for this worktree.
 test_worktree() {
     local worktree_path=$1
     local worktree_name=$2
@@ -69,4 +71,3 @@ if [ $BILLING_EXIT -ne 0 ] || [ $SYSTEM_EXIT -ne 0 ] || [ $ONBOARDING_EXIT -ne 0
 fi
 
 exit 0
-

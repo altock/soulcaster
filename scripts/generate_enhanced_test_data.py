@@ -36,7 +36,14 @@ class CodeGenerator:
     
     @staticmethod
     def generate_math_ops() -> str:
-        """Math operations module with division, sqrt, and factorial bugs."""
+        """
+        Generate a Python module source containing basic math operation functions intentionally crafted with common bugs for testing.
+        
+        The returned module implements add, subtract, multiply, divide, power, sqrt, factorial, and modulo functions; the implementation intentionally omits checks for division/modulo by zero, does not handle sqrt of negative numbers, and does not validate negative input for factorial.
+        
+        Returns:
+            module_source (str): The Python source code of the generated math operations module.
+        """
         return """import math
 
 def add(a, b):
@@ -92,7 +99,16 @@ def modulo(a, b):
 
     @staticmethod
     def generate_string_utils() -> str:
-        """String utilities with case sensitivity and boundary bugs."""
+        """
+        Generate source code for a Python module containing string utility functions with intentional case-sensitivity and boundary bugs.
+        
+        Returns:
+            module_src (str): Python source code as a string defining the functions
+            `reverse_string`, `to_upper`, `to_lower`, `is_palindrome`, `truncate`,
+            `word_count`, and `starts_with_vowel`. Several functions include
+            intentionally introduced bugs (case-sensitive comparisons, improper
+            boundary checks, and missing edge-case handling) for testing purposes.
+        """
         return """def reverse_string(s):
     \"\"\"Reverse a string.\"\"\"
     return s[::-1]
@@ -143,7 +159,14 @@ def starts_with_vowel(s):
 
     @staticmethod
     def generate_user_manager() -> str:
-        """User management class with delete bug and race condition."""
+        """
+        Generate source code for an in-memory UserManager module that intentionally contains concurrency and deletion bugs.
+        
+        The returned source defines a UserManager class with methods to add, get, delete, update, and list users. The implementation includes deliberate issues for testing: deletion is a no-op (does not remove users), get_user may return None silently when a user is missing, add_user and update_user lack proper thread-safety (race conditions), and several TODO comments note missing validations and exception handling.
+        
+        Returns:
+            str: Python source code for the UserManager module containing the described behaviours and deliberate bugs.
+        """
         return """import threading
 
 class UserManager:
@@ -200,7 +223,14 @@ class UserManager:
 
     @staticmethod
     def generate_api_client() -> str:
-        """API client with timeout and retry bugs."""
+        """
+        Generate the Python source for a toy API client module that intentionally includes timeout, error-handling, and retry/backoff bugs.
+        
+        The returned source defines an APIClient class with `get`, `post`, and `retry_request` methods. The generated code purposefully omits a timeout on GET requests, provides minimal connection/error handling on POST, and retries without exponential backoff to serve as test data containing common networking bugs.
+        
+        Returns:
+            module_source (str): Python source code for the defective API client module.
+        """
         return """import requests
 import time
 
@@ -255,7 +285,18 @@ class APIClient:
 
     @staticmethod
     def generate_database_layer() -> str:
-        """Database layer with SQL injection and connection bugs."""
+        """
+        Return a Python module source string that defines a deliberately insecure Database wrapper.
+        
+        The generated module contains a Database class with intentional defects for testing:
+        - non-parameterized query construction (SQL injection vulnerability),
+        - unsafe handling of connection lifecycle (connect/close misuse and missing existence checks),
+        - use of string formatting for query parameters,
+        and inline TODO comments indicating missing security and error-handling improvements.
+        
+        Returns:
+            str: Source code of the Python module implementing the insecure Database class.
+        """
         return """import sqlite3
 
 class Database:
@@ -305,7 +346,21 @@ class Database:
 
     @staticmethod
     def generate_cache_manager() -> str:
-        """Cache manager with memory leak and TTL bugs."""
+        """
+        Provide the source code for a test CacheManager module that intentionally contains TTL and memory-leak bugs.
+        
+        The returned string is a complete Python module defining a CacheManager class with methods:
+        `set(key, value, ttl)`, `get(key)`, `delete(key)`, and `cleanup_expired()`.
+        
+        Known intentional issues encoded in the module:
+        - Expired entries may still be returned by `get`.
+        - No automatic cleanup task is implemented, leading to potential memory leaks.
+        - `delete` removes cache entries but does not remove their TTL records.
+        - `cleanup_expired` may raise `KeyError` if an entry is removed from the cache before TTL cleanup.
+        
+        Returns:
+            str: Python source code for the buggy CacheManager module, suitable for use in test repositories.
+        """
         return """import time
 from typing import Any, Optional
 
@@ -363,7 +418,14 @@ class IssueClusterGenerator:
     
     @staticmethod
     def get_all_clusters() -> Dict[str, List[Dict[str, Any]]]:
-        """Get all issue clusters organized by bug type."""
+        """
+        Collects all predefined issue clusters keyed by cluster name.
+        
+        Each cluster value is a list of issue dictionaries describing specific bug scenarios; each issue dict contains keys such as `title`, `body`, and `labels`.
+        
+        Returns:
+            clusters (Dict[str, List[Dict[str, Any]]]): Mapping from cluster key to a list of issue dictionaries.
+        """
         return {
             "division_by_zero": IssueClusterGenerator._division_by_zero_cluster(),
             "sqrt_negative": IssueClusterGenerator._sqrt_negative_cluster(),
@@ -379,6 +441,17 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _division_by_zero_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide a set of GitHub issue templates focused on division-by-zero bugs and related validations.
+        
+        Each entry describes a reproducible problem or enhancement for handling division/modulo by zero, including crash reports, reproduction steps, and suggested fixes or validations.
+        
+        Returns:
+            A list of dictionaries where each dictionary has keys:
+              - `title` (str): short issue title
+              - `body` (str): detailed issue description and reproduction steps
+              - `labels` (List[str]): labels to categorize the issue (e.g., "bug", "critical")
+        """
         return [
             {
                 "title": "ZeroDivisionError in math_ops.divide",
@@ -409,6 +482,17 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _sqrt_negative_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide issue-cluster templates focused on handling square-root of negative numbers.
+        
+        Each item is a dictionary describing a GitHub issue with keys:
+        - `title`: short issue title
+        - `body`: detailed description or repro/stack trace
+        - `labels`: list of label strings
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries covering bug reports, enhancement suggestions, production crashes, and validation/good-first-issue items related to `sqrt` handling of negative inputs.
+        """
         return [
             {
                 "title": "ValueError when calculating square root of negative numbers",
@@ -434,6 +518,12 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _factorial_recursion_cluster() -> List[Dict[str, Any]]:
+        """
+        Produce a set of GitHub issue templates describing factorial recursion bugs and an input-validation enhancement.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries; each dict contains `title`, `body`, and `labels` describing specific problems (infinite recursion on negative input, stack overflow, and a suggestion to add input validation).
+        """
         return [
             {
                 "title": "Factorial causes infinite recursion on negative numbers",
@@ -454,6 +544,14 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _palindrome_case_cluster() -> List[Dict[str, Any]]:
+        """
+        Produce a cluster of issue descriptors describing palindrome case-sensitivity bugs and related enhancements.
+        
+        Each item is a dictionary representing an issue with keys `title`, `body`, and `labels`.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries for palindrome case-related bugs and improvements.
+        """
         return [
             {
                 "title": "is_palindrome should be case insensitive",
@@ -479,6 +577,14 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _truncate_error_cluster() -> List[Dict[str, Any]]:
+        """
+        Return a list of issue definitions describing bugs and enhancements for string truncate behavior.
+        
+        The cluster focuses on cases where the truncate implementation raises an exception when the requested length exceeds the string length and on the desired behavior of returning the full string in that case.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries, each containing `title` (str), `body` (str), and `labels` (List[str]).
+        """
         return [
             {
                 "title": "IndexError in truncate function",
@@ -499,6 +605,17 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _delete_user_noop_cluster() -> List[Dict[str, Any]]:
+        """
+        Return a list of GitHub issue templates describing deletion-related bugs in the UserManager.
+        
+        Each list item is a dictionary representing an issue with keys:
+        - `title`: short issue title.
+        - `body`: issue description and reproduction or suggested fix.
+        - `labels`: list of labels to tag the issue (e.g., "bug", "critical").
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries focused on delete_user being a no-op or causing related problems.
+        """
         return [
             {
                 "title": "delete_user doesn't actually delete users",
@@ -524,6 +641,14 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _race_condition_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide a set of GitHub issue templates describing race-condition and thread-safety problems in the UserManager module.
+        
+        Each issue dictionary contains a `title`, a descriptive `body`, and `labels` indicating severity or type (e.g., "bug", "threading", "critical", "enhancement").
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries for race-condition and threading-related bugs or enhancements.
+        """
         return [
             {
                 "title": "Race condition in UserManager.update_user",
@@ -549,6 +674,17 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _api_timeout_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide a list of issue dictionaries for API client timeout bugs and related enhancements.
+        
+        Each dictionary contains:
+        - `title`: a short issue title,
+        - `body`: a detailed description of the problem or proposal,
+        - `labels`: a list of labels to apply to the issue.
+        
+        Returns:
+            List[Dict[str, Any]]: Issue dictionaries representing the API timeout cluster.
+        """
         return [
             {
                 "title": "APIClient.get hangs forever on slow endpoints",
@@ -569,6 +705,13 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _sql_injection_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide issue templates for SQL injection vulnerabilities and remediation in the database layer.
+        
+        Each item is a dict with `title`, `body`, and `labels` describing a specific security bug or enhancement related to SQL injection.
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries suitable for creating GitHub issues.
+        """
         return [
             {
                 "title": "SQL injection vulnerability in Database.insert_user",
@@ -589,6 +732,17 @@ class IssueClusterGenerator:
     
     @staticmethod
     def _memory_leak_cluster() -> List[Dict[str, Any]]:
+        """
+        Provide issue templates describing memory-leak–related problems and enhancements for the CacheManager.
+        
+        Each item represents a GitHub issue dictionary with keys 'title', 'body', and 'labels' describing a specific bug or enhancement related to memory growth, TTL handling, or cleanup behavior.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of issue dictionaries; each dictionary contains:
+                - 'title' (str): short issue summary
+                - 'body' (str): detailed issue description
+                - 'labels' (List[str]): labels to apply to the issue
+        """
         return [
             {
                 "title": "Memory leak in CacheManager",
@@ -614,7 +768,12 @@ class IssueClusterGenerator:
     
     @staticmethod
     def get_noise_issues() -> List[Dict[str, Any]]:
-        """Get unrelated noise issues."""
+        """
+        Return a list of unrelated "noise" GitHub issue templates used to mix with bug clusters.
+        
+        Returns:
+            issues (List[Dict[str, Any]]): A list of issue dictionaries, each containing keys `title` (str), `body` (str), and `labels` (List[str]).
+        """
         return [
             {"title": "Update README with installation instructions", "body": "Add setup steps and requirements.", "labels": ["documentation"]},
             {"title": "Add CI/CD pipeline", "body": "Setup GitHub Actions for tests.", "labels": ["devops"]},
@@ -635,7 +794,15 @@ class IssueClusterGenerator:
 
 
 def create_local_files(target_dir: str = ".", module_set: str = "all"):
-    """Create project directory with generated Python modules."""
+    """
+    Create a local test project containing generated buggy modules for Soulcaster.
+    
+    Creates or replaces the directory at `target_dir`, writes generated module files, a README.md describing included modules, and a requirements.txt. Always writes math_ops.py, string_utils.py, and user_manager.py; if `module_set` is "all" also writes api_client.py, database.py, and cache_manager.py.
+    
+    Parameters:
+        target_dir (str): Filesystem path where the project will be created. If the path exists it will be removed and recreated.
+        module_set (str): Which module set to generate. "basic" creates only the core modules; "all" (default) includes additional advanced modules.
+    """
     print(f"Creating files in {target_dir} (module set: {module_set})...")
     
     if os.path.exists(target_dir):
@@ -704,7 +871,17 @@ This is a test repository for Soulcaster. Do not use in production!
 
 
 def push_to_github(repo_url: str, target_dir: str = "."):
-    """Initialize Git repo and push to GitHub."""
+    """
+    Initialize a local git repository in target_dir, commit the files, add the given GitHub remote, and push the main branch.
+    
+    Parameters:
+        repo_url (str): HTTPS or SSH GitHub repository URL (e.g. https://github.com/owner/repo.git or git@github.com:owner/repo.git).
+        target_dir (str): Path to the local directory to initialize and push (defaults to current directory).
+    
+    Raises:
+        ValueError: If repo_url is not a valid GitHub HTTPS or SSH URL.
+        subprocess.CalledProcessError: If any git command fails.
+    """
     if not (repo_url.startswith("https://github.com/") or repo_url.startswith("git@github.com:")):
         raise ValueError(f"Invalid repo_url: '{repo_url}'. Must be a GitHub URL.")
     
@@ -740,7 +917,18 @@ def push_to_github(repo_url: str, target_dir: str = "."):
 
 
 def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: List[str] = None, noise_ratio: float = 0.3):
-    """Create clustered issues on GitHub."""
+    """
+    Create clustered GitHub issues in the specified repository.
+    
+    This function aggregates issue clusters from IssueClusterGenerator (optionally filtered by `cluster_types`), appends a proportion of unrelated "noise" issues, shuffles the list, and posts each issue to the repository's GitHub Issues API. It implements retry logic for transient failures, basic rate-limit handling, and prints progress and a final summary of created/failed counts.
+    
+    Parameters:
+        repo_owner (str): GitHub repository owner (organization or user).
+        repo_name (str): GitHub repository name.
+        token (str): Personal access token used for authentication.
+        cluster_types (List[str], optional): If provided, only clusters whose keys are in this list will be posted. Defaults to None (all clusters).
+        noise_ratio (float, optional): Fraction of the total clustered issues to add as unrelated "noise" issues (between 0.0 and 1.0). Defaults to 0.3.
+    """
     print(f"Creating issues for {repo_owner}/{repo_name}...")
     url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/issues"
     headers = {
@@ -820,7 +1008,20 @@ def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: Li
 
 
 def parse_github_url(repo_url: str) -> Tuple[str, str]:
-    """Parse GitHub URL to extract owner and repo name."""
+    """
+    Extract the repository owner and repository name from a GitHub URL.
+    
+    Accepts common GitHub URL formats (HTTPS and SSH, with or without a trailing `.git`) and returns the final two path segments as (owner, repo).
+    
+    Parameters:
+        repo_url (str): GitHub repository URL in HTTPS (e.g. https://github.com/owner/repo or https://github.com/owner/repo.git) or SSH (e.g. git@github.com:owner/repo.git) form.
+    
+    Returns:
+        tuple: A 2-tuple `(repo_owner, repo_name)` containing the repository owner and repository name.
+    
+    Raises:
+        ValueError: If the URL is malformed or owner/repo cannot be extracted.
+    """
     try:
         if repo_url.startswith("git@"):
             if ":" not in repo_url:
@@ -858,6 +1059,14 @@ def parse_github_url(repo_url: str) -> Tuple[str, str]:
 
 
 def main():
+    """
+    Orchestrates command-line parsing and the end-to-end workflow to generate test code, optionally push it to GitHub, and optionally create clustered issues.
+    
+    Parses CLI arguments (repository URL, GitHub token, module selection, cluster selection, noise ratio, and skip flags), generates a temporary test repository with selected buggy modules, conditionally pushes the repository to the provided GitHub URL, and conditionally creates GitHub issues based on selected clusters and noise ratio. Always attempts to remove the temporary repository directory on exit.
+    
+    Returns:
+        exit_code (int): `0` on success, `1` on error.
+    """
     parser = argparse.ArgumentParser(
         description="Generate test data for Soulcaster (code + issues)",
         formatter_class=argparse.RawDescriptionHelpFormatter,

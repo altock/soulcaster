@@ -24,12 +24,16 @@ const feedbackKey = (projectId: string, feedbackId: string) => `feedback:${proje
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 
 /**
- * Execute batched Redis operations using pipeline
- * This is MUCH more efficient than individual calls
+ * Apply all cluster and feedback updates to Redis in a single pipelined batch.
  *
- * @param idsToRemoveFromUnclustered - Only IDs that were successfully clustered
- *   or whose feedback document was missing. IDs that failed embedding generation
- *   are NOT included here so they remain in feedback:unclustered for retry.
+ * Performs writes for only the clusters that changed: creates new cluster records, updates existing cluster hashes and centroids, replaces cluster item sets, marks feedback items as clustered, and removes specified IDs from the project's unclustered set.
+ *
+ * @param projectId - Project identifier used to scope Redis keys
+ * @param batch - ClusteringBatch containing clusters and their current feedback IDs and centroids
+ * @param changedClusterIds - Set of cluster IDs whose data or membership changed and should be written
+ * @param newClusterIds - Set of cluster IDs that were created in this run (written with `status: 'new'` and creation timestamp)
+ * @param summariesByClusterId - Map of cluster ID → generated summary payload (title, summary, and optional issueTitle, issueDescription, repoUrl) to store on cluster records
+ * @param idsToRemoveFromUnclustered - Set of feedback IDs to remove from the project's unclustered set; only includes IDs that were successfully clustered or whose feedback documents were missing (IDs that failed embedding generation are intentionally excluded so they remain for retry)
  */
 async function executeBatchedRedisOperations(
   projectId: string,
@@ -113,6 +117,18 @@ async function executeBatchedRedisOperations(
   await pipeline.exec();
 }
 
+/**
+ * Create singleton clusters for each provided feedback item and mark them as clustered.
+ *
+ * Generates a cluster and cluster-item membership for each item, writes cluster metadata to Redis
+ * (including a generated summary and timestamped fields), marks the feedback item as clustered,
+ * and removes it from the project's unclustered set while adding its id to `removeFromUnclustered`.
+ *
+ * @param projectId - Project identifier used to scope Redis keys
+ * @param feedbackItems - Array of feedback items to convert into singleton clusters
+ * @param removeFromUnclustered - Set that will be populated with IDs removed from the unclustered set
+ * @returns An object with `created` equal to the number of singleton clusters created
+ */
 async function createSingletonClusters(
   projectId: string,
   feedbackItems: FeedbackItem[],
@@ -177,15 +193,11 @@ async function createSingletonClusters(
 }
 
 /**
- * Run clustering on unclustered feedback items
- * POST /api/clusters/run
+ * Handle POST /api/clusters/run to run optimized clustering for a project's unclustered feedback.
  *
- * OPTIMIZATIONS:
- * 1. Only regenerate summaries for changed clusters (not all)
- * 2. Use Redis pipeline for batch operations
- * 3. Cache feedback items to avoid re-fetching
- * 4. Incremental centroid updates
- */
+ * Performs optimized clustering using existing clusters and unclustered feedback: regenerates summaries only for changed clusters, batches all Redis writes in a single pipeline, caches fetched feedback, updates centroids incrementally, and falls back to creating singleton clusters for items that could not be clustered.
+ *
+ * @returns A JSON response: on success includes clustering metrics (`clustered`, `newClusters`, `updatedClusters`, `skippedClusters`, `failedEmbeddings`, `missingFeedback`, `durationMs`); if `project_id` is missing returns a 400 with an `error` message; other failures return a 500 with `error` and `details`.
 export async function POST(request: Request) {
   try {
     const projectId = await requireProjectId(request);

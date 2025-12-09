@@ -15,7 +15,11 @@ echo ""
 echo "Press Ctrl+C to stop all servers"
 echo ""
 
-# Function to start servers in a worktree
+# start_worktree_servers starts a worktree's backend and dashboard processes, prefixes their logs with the worktree tag, and exits if expected directories are missing.
+# worktree_path: path to the worktree root.
+# worktree_name: short name used in log prefixes (e.g., MAIN, BILLING).
+# backend_port: port for the backend server.
+# dashboard_port: port for the dashboard (frontend) server.
 start_worktree_servers() {
     local worktree_path=$1
     local worktree_name=$2
@@ -52,4 +56,3 @@ trap 'echo "Stopping all servers..."; kill $(jobs -p); exit 0' INT TERM
 
 # Keep script running
 wait
-

@@ -6,8 +6,10 @@ import type { NextAuthOptions } from 'next-auth';
 import type { Adapter } from 'next-auth/adapters';
 
 /**
- * Ensures a user has a default project. Creates one if it doesn't exist.
- * Returns the default project ID.
+ * Ensure the specified user has a default project; create and assign one if missing.
+ *
+ * @param userId - The user's ID to ensure a default project for
+ * @returns The ID of the user's default project
  */
 async function ensureDefaultProject(userId: string): Promise<string> {
   return prisma.$transaction(async (tx) => {
