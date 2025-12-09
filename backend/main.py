@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, Header, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -290,6 +290,7 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Que
 async def ingest_github_sync(
     repo_name: str = Path(..., description="GitHub repo in the form owner/repo"),
     project_id: Optional[UUID] = Query(None),
+    x_github_token: Optional[str] = Header(None, alias="X-GitHub-Token"),
 ):
     """
     Sync GitHub issues for a repository and store them as FeedbackItems.
@@ -297,6 +298,7 @@ async def ingest_github_sync(
     Notes:
         - Pull requests are ignored.
         - Uses in-memory state for `last_synced`; promote to Redis if persistence is required.
+        - Accepts X-GitHub-Token header for user OAuth authentication.
     """
     pid = _require_project_id(project_id)
 
@@ -309,7 +311,7 @@ async def ingest_github_sync(
     since = GITHUB_SYNC_STATE.get(state_key, {}).get("last_synced")
 
     try:
-        issues = fetch_repo_issues(owner, repo, since=since)
+        issues = fetch_repo_issues(owner, repo, since=since, token=x_github_token)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"GitHub sync failed: {exc}")
 

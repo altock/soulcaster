@@ -21,14 +21,22 @@ logger = logging.getLogger(__name__)
 GITHUB_API_URL = "https://api.github.com"
 
 
-def _auth_headers() -> Dict[str, str]:
+def _auth_headers(token: Optional[str] = None) -> Dict[str, str]:
+    """
+    Build GitHub API headers with optional authentication.
+    
+    Args:
+        token: GitHub access token (from OAuth or env). If not provided,
+               falls back to GITHUB_TOKEN environment variable.
+    """
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "FeedbackAgent/1.0",
     }
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"token {token}"
+    # Use provided token, or fall back to env var
+    auth_token = token or os.getenv("GITHUB_TOKEN")
+    if auth_token:
+        headers["Authorization"] = f"token {auth_token}"
     return headers
 
 
@@ -52,7 +60,9 @@ def _parse_github_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
-def fetch_repo_issues(owner: str, repo: str, since: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_repo_issues(
+    owner: str, repo: str, since: Optional[str] = None, token: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Fetch all issues (excluding pull requests) for a repository.
 
@@ -60,6 +70,7 @@ def fetch_repo_issues(owner: str, repo: str, since: Optional[str] = None) -> Lis
         owner: GitHub repo owner.
         repo: Repository name.
         since: Optional ISO timestamp to fetch issues updated since then.
+        token: Optional GitHub access token (from user OAuth session).
 
     Returns:
         List of issue dicts (pull requests filtered out).
@@ -78,7 +89,7 @@ def fetch_repo_issues(owner: str, repo: str, since: Optional[str] = None) -> Lis
     session = requests.Session()
 
     while url:
-        resp = session.get(url, headers=_auth_headers(), params=params, timeout=15)
+        resp = session.get(url, headers=_auth_headers(token), params=params, timeout=15)
         resp.raise_for_status()
         page_items = resp.json()
 

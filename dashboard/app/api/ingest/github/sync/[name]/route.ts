@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getProjectId } from '@/lib/project';
+import { getGitHubToken } from '@/lib/auth';
 
 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
@@ -7,6 +8,7 @@ const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000
  * Proxy GitHub sync to the backend ingestion API.
  *
  * The backend owns all writes; this route simply forwards the request.
+ * Passes the user's GitHub OAuth token for API authentication.
  */
 export async function POST(
   request: NextRequest,
@@ -15,6 +17,14 @@ export async function POST(
   const projectId = await getProjectId(request);
   if (!projectId) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  const githubToken = await getGitHubToken();
+  if (!githubToken) {
+    return NextResponse.json(
+      { error: 'GitHub authentication required. Please sign in with GitHub.' },
+      { status: 401 }
+    );
   }
 
   const { name } = await params;
@@ -27,6 +37,7 @@ export async function POST(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-GitHub-Token': githubToken,
       },
     });
 
