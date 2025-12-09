@@ -1,10 +1,11 @@
 import { getServerSession } from 'next-auth';
 import GitHub from 'next-auth/providers/github';
 import { PrismaAdapter } from '@auth/prisma-adapter';
-import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { NextAuthOptions } from 'next-auth';
 import type { Adapter } from 'next-auth/adapters';
+
+type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
  * Ensure the specified user has a default project; create and assign one if missing.
@@ -13,10 +14,9 @@ import type { Adapter } from 'next-auth/adapters';
  * @returns The ID of the user's default project
  */
 async function ensureDefaultProject(userId: string): Promise<string> {
-  return prisma.$transaction(async (tx: unknown) => {
-    const db = tx as unknown as Prisma.TransactionClient & Record<string, any>;
+  return prisma.$transaction(async (tx: TransactionClient) => {
     // Ensure the user row exists (DB might be freshly reset)
-    const user = await db.user.upsert({
+    const user = await tx.user.upsert({
       where: { id: userId },
       update: {},
       create: { id: userId },
@@ -29,7 +29,7 @@ async function ensureDefaultProject(userId: string): Promise<string> {
     }
 
     // Re-check inside the same transaction to avoid racing creations
-    const existingDefault = await db.user.findUnique({
+    const existingDefault = await tx.user.findUnique({
       where: { id: userId },
       select: { defaultProjectId: true },
     });
@@ -39,14 +39,14 @@ async function ensureDefaultProject(userId: string): Promise<string> {
     }
 
     // Create a default project for the user and set it
-    const project = await db.project.create({
+    const project = await tx.project.create({
       data: {
         name: 'Default Project',
         userId: user.id,
       },
     });
 
-    const updatedUser = await db.user.update({
+    const updatedUser = await tx.user.update({
       where: { id: userId },
       data: { defaultProjectId: project.id },
       select: { defaultProjectId: true },
