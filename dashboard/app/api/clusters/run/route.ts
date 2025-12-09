@@ -58,6 +58,7 @@ async function executeBatchedRedisOperations(
       // Create new cluster
       const payload: Record<string, string> = {
         id: cluster.id,
+        project_id: projectId,
         title: summary.title,
         summary: summary.summary,
         status: 'new',

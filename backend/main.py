@@ -43,7 +43,7 @@ try:
         get_projects_for_user,
         get_project,
     )
-    from .reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
+    from .reddit_poller import poll_once
 except ImportError:
     from models import FeedbackItem, IssueCluster, AgentJob, User, Project
     from store import (
@@ -68,7 +68,7 @@ except ImportError:
         get_projects_for_user,
         get_project,
     )
-    from reddit_poller import poll_once, get_configured_subreddits as get_reddit_config_list
+    from reddit_poller import poll_once
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -306,7 +306,7 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[UUID] = Que
 async def trigger_poll(project_id: Optional[UUID] = Query(None)):
     """Manually trigger a Reddit poll cycle (waits for completion)."""
     pid = _require_project_id(project_id)
-    subreddits = get_reddit_config_list()
+    subreddits = get_reddit_subreddits_for_project(pid) or []
     if not subreddits:
         return {"status": "skipped", "message": "No subreddits configured", "project_id": str(pid)}
     
@@ -314,13 +314,9 @@ async def trigger_poll(project_id: Optional[UUID] = Query(None)):
     
     # Helper to ingest directly without HTTP request (avoids deadlock)
     def direct_ingest(payload: dict):
-        # Convert dict payload to FeedbackItem
-        # Note: payload has 'created_at' as ISO string, but FeedbackItem expects datetime
-        # However, pydantic might handle string parsing if type is datetime
-        # Let's check models.py or just try. Pydantic usually handles ISO strings.
-        # But wait, payload['created_at'] is string. FeedbackItem.created_at is datetime.
-        # Pydantic V2 handles this. V1 does too usually.
         try:
+            # Inject project_id so the ingested feedback stays scoped correctly
+            payload["project_id"] = pid
             item = FeedbackItem(**payload)
             add_feedback_item(item)
             _auto_cluster_feedback(item)
@@ -580,6 +576,11 @@ def seed_mock_data():
 
     now = datetime.now(timezone.utc)
     pid = uuid4()
+    
+    # Create a user and project so feedback validation passes
+    user = User(id=uuid4(), email="test@example.com", created_at=now)
+    project = Project(id=pid, user_id=user.id, name="Mock Project", created_at=now)
+    create_user_with_default_project(user, project)
 
     feedback_one = FeedbackItem(
         id=uuid4(),

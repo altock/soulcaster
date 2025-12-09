@@ -290,8 +290,8 @@ class RedisStore:
         return f"feedback:source:{source}"
 
     @staticmethod
-    def _feedback_external_key(source: str, external_id: str) -> str:
-        return f"feedback:external:{source}:{external_id}"
+    def _feedback_external_key(project_id: str, source: str, external_id: str) -> str:
+        return f"feedback:external:{project_id}:{source}:{external_id}"
 
     @staticmethod
     def _feedback_unclustered_key() -> str:
@@ -311,8 +311,8 @@ class RedisStore:
         return "clusters:all"
 
     @staticmethod
-    def _reddit_subreddits_key() -> str:
-        return "config:reddit:subreddits"
+    def _reddit_subreddits_key(project_id: UUID) -> str:
+        return f"config:reddit:subreddits:{project_id}"
 
     @staticmethod
     def _job_key(job_id: UUID) -> str:
@@ -359,7 +359,7 @@ class RedisStore:
         self._sadd(self._feedback_unclustered_key(), str(item.id))
         
         if item.external_id:
-            self._set(self._feedback_external_key(item.source, item.external_id), str(item.id))
+            self._set(self._feedback_external_key(str(item.project_id), item.source, item.external_id), str(item.id))
         return item
 
     def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
@@ -531,13 +531,13 @@ class RedisStore:
             self._delete(*cluster_keys)
 
     # Config (Reddit)
-    def set_reddit_subreddits(self, subreddits: List[str]) -> List[str]:
+    def set_reddit_subreddits(self, subreddits: List[str], project_id: UUID) -> List[str]:
         payload = json.dumps(subreddits)
-        self._set(self._reddit_subreddits_key(), payload)
+        self._set(self._reddit_subreddits_key(project_id), payload)
         return subreddits
 
-    def get_reddit_subreddits(self) -> Optional[List[str]]:
-        raw = self._get(self._reddit_subreddits_key())
+    def get_reddit_subreddits(self, project_id: UUID) -> Optional[List[str]]:
+        raw = self._get(self._reddit_subreddits_key(project_id))
         if not raw:
             return None
         try:
@@ -549,7 +549,10 @@ class RedisStore:
         return None
 
     def clear_config(self):
-        self._delete(self._reddit_subreddits_key())
+        # Remove all subreddit config entries across projects
+        keys = list(self._scan_iter("config:reddit:subreddits:*"))
+        if keys:
+            self._delete(*keys)
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
@@ -622,10 +625,10 @@ class RedisStore:
         if job_keys:
             self._delete(*job_keys)
 
-    def get_feedback_by_external_id(self, source: str, external_id: str) -> Optional[FeedbackItem]:
+    def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
         if not external_id:
             return None
-        key = self._feedback_external_key(source, external_id)
+        key = self._feedback_external_key(str(project_id), source, external_id)
         existing_id = self._get(key)
         if not existing_id:
             return None

@@ -14,6 +14,7 @@ const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${
 const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
 const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
+const repoKey = (projectId: string, repoName: string) => `github:repo:${projectId}:${repoName}`;
 
 /**
  * Syncs issues from the specified GitHub repository into Redis and updates repository metadata.
@@ -43,7 +44,7 @@ export async function POST(
     await logRateLimit();
 
     // Get repo config
-    const repoData = await redis.hgetall(`github:repo:${repoName}`);
+    const repoData = await redis.hgetall(repoKey(projectId, repoName));
     if (!repoData || Object.keys(repoData).length === 0) {
       return NextResponse.json(
         { error: 'Repository not found in configuration' },
@@ -123,7 +124,7 @@ export async function POST(
 
     // Update repo metadata
     const now = new Date().toISOString();
-    await redis.hset(`github:repo:${repoName}`, {
+    await redis.hset(repoKey(projectId, repoName), {
       last_synced: now,
       issue_count: (repo.issue_count || 0) + newCount,
     });

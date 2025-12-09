@@ -14,6 +14,7 @@ const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${
 const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
 const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
+const repoKey = (projectId: string, repoName: string) => `github:repo:${projectId}:${repoName}`;
 
 /**
  * Synchronizes all enabled GitHub repositories stored in Redis and ingests their issues as feedback items.
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
     // Fetch repo configs
     const repos: GitHubRepo[] = [];
     for (const repoName of repoNames) {
-      const repoData = await redis.hgetall(`github:repo:${repoName}`);
+      const repoData = await redis.hgetall(repoKey(projectId, repoName));
       if (repoData && repoData.enabled === 'true') {
         repos.push({
           owner: repoData.owner as string,
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
 
         // Update repo metadata
         const now = new Date().toISOString();
-        await redis.hset(`github:repo:${repo.full_name}`, {
+        await redis.hset(repoKey(projectId, repo.full_name), {
           last_synced: now,
           issue_count: (repo.issue_count || 0) + newCount,
         });
