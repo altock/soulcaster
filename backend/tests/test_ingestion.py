@@ -246,6 +246,35 @@ def test_all_sources_add_to_unclustered(project_context):
     assert "manual" in sources
 
 
+def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch):
+    """GitHub ingestion should add open issues to the unclustered set."""
+    pid = project_context["project_id"]
+    issue_open = {
+        "id": 555,
+        "number": 99,
+        "title": "GitHub issue",
+        "body": "Found a bug",
+        "state": "open",
+        "html_url": "https://github.com/org/repo/issues/99",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-02T00:00:00Z",
+        "labels": [],
+        "user": {"login": "alice"},
+        "assignees": [],
+    }
+
+    monkeypatch.setattr(
+        "backend.main.fetch_repo_issues",
+        lambda owner, repo, since=None: [issue_open],
+    )
+
+    response = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert response.status_code == 200
+
+    unclustered = get_unclustered_feedback(pid)
+    assert any(item.source == "github" for item in unclustered)
+
+
 def test_remove_from_unclustered(project_context):
     """Phase 1: Verify items can be removed from unclustered set."""
     pid = project_context["project_id"]

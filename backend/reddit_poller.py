@@ -5,6 +5,12 @@ Reddit's unauthenticated JSON listings. It normalizes posts and forwards them to
 the ingestion API while respecting rate limits and caching.
 """
 
+# ============================================================
+# PHASE 2: REDDIT INTEGRATION (Currently deferred)
+# ============================================================
+# The poller remains available for backward compatibility but is not part of
+# the current GitHub-only ingestion scope.
+
 import os
 import time
 from datetime import datetime, timezone

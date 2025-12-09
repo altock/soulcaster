@@ -7,74 +7,59 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 """
 
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from datetime import datetime, timezone
-from typing import List, Optional, Literal
+from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-try:
-    from .models import FeedbackItem, IssueCluster, AgentJob, User, Project
-    from .store import (
-        add_cluster,
-        add_feedback_item,
-        get_all_clusters,
-        get_all_feedback_items,
-        get_cluster,
-        get_feedback_item,
-        get_feedback_by_external_id,
-        clear_clusters,
-        set_reddit_subreddits_for_project,
-        get_reddit_subreddits_for_project,
-        update_cluster,
-        add_job,
-        get_job,
-        update_job,
-        get_jobs_by_cluster,
-        get_all_jobs,
-        create_user_with_default_project,
-        create_project,
-        get_projects_for_user,
-        get_project,
-    )
-    from .reddit_poller import poll_once
-except ImportError:
-    from models import FeedbackItem, IssueCluster, AgentJob, User, Project
-    from store import (
-        add_cluster,
-        add_feedback_item,
-        get_all_clusters,
-        get_all_feedback_items,
-        get_cluster,
-        get_feedback_item,
-        get_feedback_by_external_id,
-        clear_clusters,
-        set_reddit_subreddits_for_project,
-        get_reddit_subreddits_for_project,
-        update_cluster,
-        add_job,
-        get_job,
-        update_job,
-        get_jobs_by_cluster,
-        get_all_jobs,
-        create_user_with_default_project,
-        create_project,
-        get_projects_for_user,
-        get_project,
-    )
-    from reddit_poller import poll_once
+# Support running as a script from ./backend (adds this dir to sys.path)
+if __package__ is None:
+    sys.path.append(os.path.dirname(__file__))
+
+from models import FeedbackItem, IssueCluster, AgentJob, User, Project
+from store import (
+    add_cluster,
+    add_feedback_item,
+    get_all_clusters,
+    get_all_feedback_items,
+    get_cluster,
+    get_feedback_item,
+    get_feedback_by_external_id,
+    remove_from_unclustered,
+    clear_clusters,
+    set_reddit_subreddits_for_project,
+    get_reddit_subreddits_for_project,
+    update_cluster,
+    add_job,
+    get_job,
+    update_job,
+    get_jobs_by_cluster,
+    get_all_jobs,
+    create_user_with_default_project,
+    create_project,
+    get_projects_for_user,
+    get_project,
+)
+from github_client import fetch_repo_issues, issue_to_feedback_item
+from reddit_poller import poll_once
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
     description="API for ingesting user feedback from multiple sources",
     version="0.1.0",
 )
+
+# Track GitHub sync metadata in-memory (per process). If persistence is needed,
+# promote this to Redis-backed storage.
+GITHUB_SYNC_STATE: Dict[Tuple[UUID, str], Dict[str, str]] = {}
 
 # Configure CORS for frontend access
 app.add_middleware(
@@ -113,6 +98,9 @@ def _require_project_id(project_id: Optional[UUID]) -> UUID:
     return project_id
 
 
+# ============================================================
+# PHASE 2: REDDIT INTEGRATION (Currently deferred)
+# ============================================================
 @app.post("/ingest/reddit")
 def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
     """
@@ -144,6 +132,9 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
     return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
 
 
+# ============================================================
+# PHASE 2: SENTRY INTEGRATION (Currently deferred)
+# ============================================================
 @app.post("/ingest/sentry")
 def ingest_sentry(payload: dict, project_id: Optional[UUID] = Query(None)):
     """
@@ -293,6 +284,82 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Que
     add_feedback_item(item)
     _auto_cluster_feedback(item)
     return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
+
+
+@app.post("/ingest/github/sync/{repo_name:path}")
+async def ingest_github_sync(
+    repo_name: str = Path(..., description="GitHub repo in the form owner/repo"),
+    project_id: Optional[UUID] = Query(None),
+):
+    """
+    Sync GitHub issues for a repository and store them as FeedbackItems.
+    
+    Notes:
+        - Pull requests are ignored.
+        - Uses in-memory state for `last_synced`; promote to Redis if persistence is required.
+    """
+    pid = _require_project_id(project_id)
+
+    if "/" not in repo_name:
+        raise HTTPException(status_code=400, detail="repo_name must be in the form owner/repo")
+
+    owner, repo = repo_name.split("/", 1)
+    repo_full_name = f"{owner}/{repo}"
+    state_key = (pid, repo_full_name)
+    since = GITHUB_SYNC_STATE.get(state_key, {}).get("last_synced")
+
+    try:
+        issues = fetch_repo_issues(owner, repo, since=since)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GitHub sync failed: {exc}")
+
+    new_count = 0
+    updated_count = 0
+    closed_count = 0
+    synced_ids: List[str] = []
+
+    for issue in issues:
+        external_id = str(issue.get("id"))
+        existing = get_feedback_by_external_id(pid, "github", external_id)
+
+        if existing:
+            # Refresh fields while preserving the stored UUID
+            refreshed = issue_to_feedback_item(issue, repo_full_name, pid).model_copy(
+                update={"id": existing.id}
+            )
+            feedback_item = refreshed
+            updated_count += 1
+        else:
+            feedback_item = issue_to_feedback_item(issue, repo_full_name, pid)
+            new_count += 1
+
+        add_feedback_item(feedback_item)
+
+        if issue.get("state") == "closed":
+            remove_from_unclustered(feedback_item.id, pid)
+            closed_count += 1
+        else:
+            _auto_cluster_feedback(feedback_item)
+
+        synced_ids.append(str(feedback_item.id))
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    GITHUB_SYNC_STATE[state_key] = {
+        "last_synced": now_iso,
+        "issue_count": str(len(issues)),
+    }
+
+    return {
+        "success": True,
+        "repo": repo_full_name,
+        "new_issues": new_count,
+        "updated_issues": updated_count,
+        "closed_issues": closed_count,
+        "total_issues": len(issues),
+        "last_synced": now_iso,
+        "project_id": str(pid),
+        "synced_ids": synced_ids,
+    }
 
 
 # Reddit config endpoints (per project)

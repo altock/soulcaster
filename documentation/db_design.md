@@ -177,6 +177,10 @@ Today's implementation (via `backend/store.py` and dashboard helpers) uses a **g
     - Value: `uuid` to deduplicate by external ID.
   - `feedback:unclustered` (set):
     - Feedback IDs pending vector clustering (dashboard path).
+  - **GitHub ingestion (current)**:
+    - Backend endpoint `/ingest/github/sync/{owner/repo}` normalizes issues to `FeedbackItem` (`source="github"`) and writes via `add_feedback_item()`.
+    - Pull requests are filtered out; closed issues are removed from `feedback:unclustered` after ingestion.
+    - Deduplication uses `feedback:external:github:{external_id}` (external_id = GitHub issue id). `last_synced` is tracked in-process for now; promote to Redis when persistence is required.
 
 - **Clusters**
   - `cluster:{cluster_id}` (hash):

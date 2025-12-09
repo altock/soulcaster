@@ -26,13 +26,13 @@ class FeedbackItem(BaseModel):
     """
     Represents a single piece of user feedback from any source.
 
-    This model normalizes feedback from different sources (Reddit, Sentry, manual)
+    This model normalizes feedback from different sources (Reddit, Sentry, manual, GitHub)
     into a consistent schema for processing by the FeedbackAgent system.
 
     Attributes:
         id: Unique identifier for this feedback item
         project_id: Project this feedback belongs to (multi-tenant boundary)
-        source: The origin of the feedback (reddit, sentry, or manual)
+        source: The origin of the feedback (reddit, sentry, manual, or github)
         external_id: ID from the original source system (e.g., Reddit post ID)
         title: Short summary or title (max 80 chars for manual entries)
         body: Full text content of the feedback
@@ -42,13 +42,18 @@ class FeedbackItem(BaseModel):
 
     id: UUID
     project_id: UUID
-    source: Literal["reddit", "sentry", "manual"]
+    source: Literal["reddit", "sentry", "manual", "github"]
     external_id: Optional[str] = None
     title: str
     body: str
     raw_text: Optional[str] = None
     metadata: Dict = {}
     created_at: datetime
+    # GitHub-specific fields (optional; present when source == "github")
+    repo: Optional[str] = None
+    github_issue_number: Optional[int] = None
+    github_issue_url: Optional[str] = None
+    status: Optional[Literal["open", "closed"]] = None
 
     @property
     def text(self) -> str:

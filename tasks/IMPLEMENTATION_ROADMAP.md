@@ -24,16 +24,16 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
   - [x] Add helper: `get_unclustered_feedback()` → returns all items in `feedback:unclustered`
   - [x] Add helper: `remove_from_unclustered(feedback_id)` → removes from set when clustered
 
-- [ ] **File: `backend/models.py`**
-  - [ ] Verify `FeedbackItem` has all required fields: `id`, `source`, `created_at`, `raw_text`, `embedding`
-  - [ ] Add validation to ensure consistent shape across all sources
+- [x] **File: `backend/models.py`**
+  - [x] Verify `FeedbackItem` has all required fields: `id`, `source`, `created_at`, `raw_text`, `embedding`
+  - [x] Add validation to ensure consistent shape across all sources
 
 - [ ] **File: `backend/main.py`**
   - [ ] Review all ingest endpoints:
     - `/ingest/reddit` ✓
     - `/ingest/sentry` ✓
     - `/ingest/manual` (via `/feedback` POST)
-    - `/ingest/github/sync/{name}` ✓
+    - `/ingest/github/sync/{name}` ✓ (moved ingestion to backend; frontend now proxies)
   - [ ] Ensure each normalizes to `FeedbackItem` before calling `store.add_feedback_item()`
   - [ ] Add consistent logging: `logger.info(f"Ingested {source} feedback: {feedback_id}")`
 
@@ -49,6 +49,7 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 - ✅ All ingest sources produce identical data shape
 - ✅ Tests cover happy path + edge cases
 - ✅ Redis key patterns documented in `documentation/db_design.md`
+- ℹ️ Current deployment supports GitHub ingestion only; Reddit/Sentry are deferred to Phase 2.
 
 ---
 
