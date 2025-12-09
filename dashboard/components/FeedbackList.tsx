@@ -11,7 +11,6 @@ interface FeedbackListProps {
 export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedbackSource | 'all'>('all');
   const [repoFilter, setRepoFilter] = useState<string>('all');
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
@@ -39,7 +38,6 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
   const fetchFeedback = async () => {
     try {
       setLoading(true);
-      setError(null);
       const queryParams = new URLSearchParams({ limit: '50' });
       if (sourceFilter !== 'all') {
         queryParams.append('source', sourceFilter);
@@ -49,12 +47,18 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
       }
       const response = await fetch(`/api/feedback?${queryParams}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch feedback');
+        // Handle gracefully - show empty state instead of error for expected cases
+        // like missing project_id or no data
+        console.warn('Failed to fetch feedback:', response.status);
+        setItems([]);
+        return;
       }
       const data = await response.json();
-      setItems(data.items);
+      setItems(data.items || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      console.error('Error fetching feedback:', err);
+      // Show empty state instead of error for better UX
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -64,25 +68,6 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-gray-500">Loading feedback...</div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-md bg-red-50 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error loading feedback</h3>
-            <div className="mt-2 text-sm text-red-700">{error}</div>
-            <button
-              onClick={fetchFeedback}
-              className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
-            >
-              Try again
-            </button>
-          </div>
-        </div>
       </div>
     );
   }
