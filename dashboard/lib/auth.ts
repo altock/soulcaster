@@ -10,10 +10,12 @@ import type { Adapter } from 'next-auth/adapters';
  * Returns the default project ID.
  */
 async function ensureDefaultProject(userId: string): Promise<string> {
-  // Check if user already has a default project
-  const user = await prisma.user.findUnique({
+  // Ensure the user row exists (DB might be freshly reset)
+  const user = await prisma.user.upsert({
     where: { id: userId },
-    select: { defaultProjectId: true },
+    update: {},
+    create: { id: userId },
+    select: { defaultProjectId: true, id: true },
   });
 
   if (user?.defaultProjectId) {
@@ -24,7 +26,7 @@ async function ensureDefaultProject(userId: string): Promise<string> {
   const project = await prisma.project.create({
     data: {
       name: 'Default Project',
-      userId: userId,
+      userId: user.id,
     },
   });
 
