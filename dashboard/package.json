@@ -35,7 +35,7 @@
     "dotenv": "^17.2.3",
     "eslint-config-next": "^16.0.3",
     "next": "^16.0.3",
-    "next-auth": "^4.24.7",
+    "next-auth": "^4.24.13",
     "octokit": "^5.0.5",
     "pg": "^8.16.3",
     "postcss": "^8.5.6",

@@ -3,8 +3,5 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "functions": {
-    "runtime": "nodejs20.x"
-  }
+  "outputDirectory": ".next"
 }
