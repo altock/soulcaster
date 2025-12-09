@@ -1,6 +1,6 @@
-# GitHub Integration & Test Data Tasks
+# Soulcaster Tasks & Documentation
 
-This worktree is dedicated to GitHub integration, test data generation, and system testing.
+This directory contains task plans, implementation roadmaps, and testing strategies for the Soulcaster project.
 
 ## Task Documents
 
@@ -34,12 +34,14 @@ cd backend && pytest tests -v --cov=backend
 cd dashboard && npm run test
 ```
 
-## Related Worktrees
+## Status
 
-- **`system-readiness`** - Core system stability (ingestion, clustering, storage)
-- **`billing-integration`** - Payment and subscription features
-- **`onboarding-flow`** - User onboarding and setup
+The core system is now operational with:
+- ✅ Multi-source feedback ingestion (Reddit, GitHub, Sentry, manual)
+- ✅ AI-powered clustering with embeddings
+- ✅ Multi-tenant projects and users
+- ✅ Job tracking for agent fixes
+- ✅ Dashboard with authentication
+- ✅ Coding agent (local and Fargate deployment)
 
-## Branch
-
-This worktree tracks the `github-test-data` branch.
+See individual task documents for implementation details and completion status.

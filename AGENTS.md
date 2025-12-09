@@ -8,7 +8,8 @@
 
 ## Backend (FastAPI)
 - Install: `pip install -r backend/requirements.txt`.
-- Run API: `uvicorn backend.main:app --reload` (from root) or `cd backend && uvicorn main:app --reload`.
+- Run API locally: `uvicorn backend.main:app --reload` (from root) or `cd backend && uvicorn main:app --reload`.
+- Deploy: Build path `./backend/`, start command `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}`. Use `main:app` (not `backend.main:app`) when build/working dir is inside backend folder.
 - Reddit poller: `python -m backend.reddit_poller` (respects `REDDIT_SUBREDDITS`, `REDDIT_SORTS`, `BACKEND_URL`).
 - Storage: defaults to in-memory; set `REDIS_URL`/`UPSTASH_REDIS_URL` or `UPSTASH_REDIS_REST_URL`+`UPSTASH_REDIS_REST_TOKEN` to enable Redis/Upstash (key patterns in `documentation/db_design.md`).
 - Tests: `pytest backend/tests -q --cov=backend`.

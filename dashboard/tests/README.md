@@ -21,7 +21,11 @@ This script tests the `/api/trigger-agent` endpoint, which is responsible for tr
 ### Prerequisites
 
 *   The Next.js dashboard must be running locally (`npm run dev` in `dashboard` directory).
-*   Environment variables must be set in `dashboard/.env.local` (or `.env`):
-    *   `GITHUB_OWNER`: Owner of the repo for new issues.
-    *   `GITHUB_REPO`: Repository name for new issues.
-    *   `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: Required for triggering the ECS task.
+*   Environment variables must be set in `dashboard/.env.local`:
+    *   `GITHUB_OWNER`: Owner of the repo for new issues
+    *   `GITHUB_REPO`: Repository name for new issues
+    *   `GITHUB_TOKEN`: GitHub personal access token (optional, for higher API limits)
+    *   AWS credentials (required only if using Fargate deployment):
+        *   `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+        *   `ECS_CLUSTER_NAME`, `ECS_TASK_DEFINITION`
+        *   `ECS_SUBNET_IDS`, `ECS_SECURITY_GROUP_IDS`

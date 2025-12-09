@@ -16,15 +16,27 @@ Soulcaster is an open-source feedback triage and automated fix generation system
   - GitHub Issues (via manual sync or webhooks)
   - Manual feedback submission
 
-- **AI-Powered Clustering**: Uses embedding-based similarity to group related feedback into issue clusters
+- **AI-Powered Clustering**: Uses embedding-based similarity (via Gemini) to group related feedback into issue clusters with automatic deduplication
+
+- **Multi-Tenant Projects**: Support for multiple projects per user with project-level isolation for feedback and clusters
+
+- **Authentication & Authorization**: GitHub OAuth integration via NextAuth for secure access control
 
 - **Automated Fix Generation**: LLM-powered coding agent that:
   - Analyzes clustered issues
   - Selects relevant files to modify
   - Generates code patches
   - Opens GitHub pull requests
+  - Can run locally or on AWS Fargate
 
-- **Web Dashboard**: Next.js dashboard for reviewing clusters, triggering fixes, and managing feedback
+- **Job Tracking**: Monitor agent fix generation jobs with status updates, logs, and PR links
+
+- **Web Dashboard**: Next.js dashboard for:
+  - Reviewing clusters and feedback
+  - Managing multiple projects
+  - Triggering fixes with one click
+  - Configuring Reddit sources per project
+  - Viewing PRs and job status
 
 ## Architecture
 
@@ -37,11 +49,11 @@ The system consists of three main components:
 ## Prerequisites
 
 - Python 3.12+
-- Node.js 18+
+- Node.js 20+
 - Redis instance (Upstash recommended for serverless)
-- PostgreSQL database
+- PostgreSQL database (for dashboard authentication and project management only)
 - GitHub account with repository access
-- LLM API key (Gemini recommended)
+- LLM API key (Gemini recommended for embeddings and fix generation)
 
 ## Quick Start
 
@@ -109,24 +121,44 @@ See `.env.example` for all available environment variables. Key configuration in
 **Backend** (`.env`):
 - `UPSTASH_REDIS_REST_URL` - Redis REST API URL (Upstash)
 - `UPSTASH_REDIS_REST_TOKEN` - Redis REST API token
-- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - For embeddings and LLM operations
-- `GITHUB_TOKEN` - GitHub personal access token with repo permissions
+- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - For embeddings and LLM operations (required for clustering)
+- `GITHUB_TOKEN` - GitHub personal access token with repo permissions (optional, for higher API limits)
 
 **Dashboard** (`.env.local`):
 - `UPSTASH_REDIS_REST_URL` - Same Redis credentials
 - `UPSTASH_REDIS_REST_TOKEN` - Same Redis token
+- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - For embeddings (clustering runs in dashboard)
 - `GITHUB_ID` - GitHub OAuth app client ID
 - `GITHUB_SECRET` - GitHub OAuth app client secret
 - `NEXTAUTH_URL` - Your app URL (e.g., `http://localhost:3000`)
 - `NEXTAUTH_SECRET` - Random secret for NextAuth (generate with `openssl rand -base64 32`)
-- `DATABASE_URL` - PostgreSQL connection string
+- `DATABASE_URL` - PostgreSQL connection string for NextAuth and projects
+- `GITHUB_TOKEN` - Optional GitHub token for higher API limits when syncing issues
+
+**Coding Agent** (`.env` in `coding-agent/`):
+- `GEMINI_API_KEY` or `MINIMAX_API_KEY` - LLM provider for fix generation
+- `GH_TOKEN` - GitHub token with repo scope (for creating branches and PRs)
+- `GIT_USER_EMAIL` - Email for git commits
+- `GIT_USER_NAME` - Name for git commits
+- `BACKEND_URL` - Backend API URL for status reporting (optional)
+- `JOB_ID` - Job ID for tracking (optional, auto-passed when triggered from dashboard)
 
 ### Optional Variables
 
+**Backend**:
 - `REDDIT_SUBREDDITS` - Comma-separated list of subreddits to monitor (e.g., `"claudeai,programming"`)
-- `GITHUB_OWNER` - Default GitHub repository owner
-- `GITHUB_REPO` - Default GitHub repository name
+- `REDDIT_SORTS` - Listing sorts to pull (`new`, `hot`, `top`) - defaults to `"new"`
+- `REDDIT_POLL_INTERVAL_SECONDS` - How often to poll Reddit - defaults to `300`
+- `REDIS_URL` or `UPSTASH_REDIS_URL` - Alternative Redis connection string (if not using REST API)
+
+**Dashboard**:
 - `BACKEND_URL` - Backend API URL (defaults to `http://localhost:8000`)
+- `GITHUB_OWNER` - Default GitHub repository owner (for new issues)
+- `GITHUB_REPO` - Default GitHub repository name (for new issues)
+- AWS configuration (for Fargate agent deployment):
+  - `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+  - `ECS_CLUSTER_NAME`, `ECS_TASK_DEFINITION`
+  - `ECS_SUBNET_IDS`, `ECS_SECURITY_GROUP_IDS`
 
 ## Development
 
@@ -154,6 +186,24 @@ black backend && ruff backend
 npm run lint --prefix dashboard
 ```
 
+## Deployment
+
+### Backend Deployment (Sevalla, Railway, Render, etc.)
+
+**Platform Settings:**
+- Build path: `./backend/`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}`
+- Health probe: `GET /` (recommended for readiness checks)
+
+**Environment Variables:**
+Configure all required variables from the Configuration section above (Redis, Gemini API key, etc.).
+
+### Dashboard Deployment (Vercel recommended)
+
+Vercel is recommended for the Next.js dashboard. Set the root directory to `dashboard/` and configure all required environment variables.
+
+**Note**: When deploying the backend with build path `./backend/`, the working directory is already inside the backend folder, so use `main:app` (not `backend.main:app`) in the uvicorn command.
+
 ## Project Structure
 
 ```
@@ -175,16 +225,27 @@ soulcaster/
 
 ## How It Works
 
-1. **Ingestion**: The system continuously monitors configured sources (Reddit, Sentry, GitHub) for new feedback
-2. **Clustering**: New feedback items are embedded and compared against existing clusters using cosine similarity
-3. **Triage**: Clusters are displayed in the dashboard with AI-generated summaries
-4. **Fix Generation**: When a developer clicks "Generate Fix", the coding agent:
-   - Analyzes the cluster context
-   - Identifies relevant files to modify
-   - Generates code patches using an LLM
-   - Validates syntax
-   - Opens a GitHub PR
-5. **Review**: Developers review and merge the PR as normal
+1. **Setup**: Create a project in the dashboard and configure your GitHub repository
+2. **Ingestion**: The system monitors configured sources (Reddit, Sentry, GitHub) for new feedback
+   - Reddit: Background poller checks configured subreddits periodically
+   - GitHub: Manual sync or webhook integration
+   - Sentry: Webhook integration
+   - Manual: Direct submission via dashboard
+3. **Clustering**: New feedback items are:
+   - Embedded using Gemini's text-embedding models
+   - Compared against existing clusters using cosine similarity
+   - Automatically assigned to matching clusters or create new ones
+4. **Triage**: Clusters are displayed in the dashboard with:
+   - AI-generated summaries and titles
+   - Feedback count and source breakdown
+   - Links to original feedback items
+5. **Fix Generation**: When you click "Generate Fix":
+   - A job is created and tracked
+   - The coding agent (local or Fargate) is triggered
+   - Agent analyzes the cluster context and generates code patches
+   - Creates a branch and opens a GitHub PR
+   - Job status updates with logs and PR link
+6. **Review**: Review and merge the PR through GitHub as normal
 
 ## License
 

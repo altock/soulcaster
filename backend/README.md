@@ -1,13 +1,16 @@
-# FeedbackAgent Backend - Data Ingestion Layer
+# Soulcaster Backend
 
-This is the data ingestion layer for FeedbackAgent, built with FastAPI and following TDD principles.
+FastAPI-based backend service for the Soulcaster self-healing development loop system. Handles multi-source feedback ingestion, AI-powered clustering, job tracking, and multi-tenant project management.
 
 ## Features
 
-- **Multi-source ingestion**: Reddit, Sentry, and manual text feedback
-- **In-memory storage**: Simple dict-based storage for MVP (will be replaced with database)
+- **Multi-source ingestion**: Reddit, Sentry, GitHub Issues, and manual text feedback
+- **Redis storage**: Upstash Redis (REST API) with fallback to in-memory for development
+- **AI-powered clustering**: Automatic feedback clustering using Gemini embeddings and cosine similarity
 - **Reddit polling**: Background service that reads subreddits via Reddit's public JSON feed (no OAuth)
-- **Full test coverage**: Comprehensive test suite with edge cases
+- **Job tracking**: Monitor coding agent fix generation jobs with status, logs, and PR links
+- **Multi-tenant projects**: Support for multiple users and projects with proper isolation
+- **Full test coverage**: Comprehensive test suite with pytest
 
 ## Project Structure
 
@@ -34,6 +37,8 @@ pip install -r requirements.txt
 
 ## Running the Server
 
+### Local Development
+
 ```bash
 # Start the FastAPI server
 cd backend
@@ -42,6 +47,17 @@ uvicorn main:app --reload
 # Server will be available at http://localhost:8000
 # API docs at http://localhost:8000/docs
 ```
+
+### Production Deployment
+
+For platforms like Sevalla, Railway, Render, etc.:
+
+**Settings:**
+- Build path: `./backend/`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}`
+- Health probe: GET `/` (recommended)
+
+The `${PORT}` variable is injected by most platforms and defaults to 8080. The app will bind to whatever port the platform expects.
 
 ## Running the Reddit Poller
 
@@ -81,73 +97,90 @@ pytest backend/tests --cov=backend --cov-report=term-missing
 ### Health Check
 - **GET** `/` - Returns service status
 
+### User & Project Management
+- **POST** `/users` - Create a new user
+  - Body: `{"email": "user@example.com", "name": "User Name"}`
+- **GET** `/projects?user_id=<uuid>` - List projects for a user
+- **POST** `/projects` - Create a new project
+  - Body: `{"name": "My Project", "user_id": "<uuid>"}`
+
 ### Ingestion Endpoints
 
-#### POST /ingest/reddit
-Ingest feedback from Reddit (called by reddit_poller).
+All ingestion endpoints support optional `?project_id=<uuid>` query parameter for multi-tenant isolation.
 
-**Request Body**:
-```json
-{
-  "id": "uuid",
-  "source": "reddit",
-  "external_id": "t3_12345",
-  "title": "Bug found in feature X",
-  "body": "Detailed description...",
-  "metadata": {
-    "subreddit": "programming",
-    "permalink": "/r/programming/...",
-    "author": "username"
-  },
-  "created_at": "2023-10-27T10:00:00Z"
-}
-```
+- **POST** `/ingest/reddit?project_id=<uuid>` - Ingest Reddit feedback (called by poller)
+- **POST** `/ingest/sentry?project_id=<uuid>` - Ingest Sentry error reports via webhook
+- **POST** `/ingest/manual?project_id=<uuid>` - Manually submit feedback
+  - Body: `{"text": "Bug description", "title": "Optional title"}`
 
-#### POST /ingest/sentry
-Ingest error reports from Sentry webhook.
+### Feedback Management
+- **GET** `/feedback?project_id=<uuid>` - List all feedback items with optional filters:
+  - `source`: Filter by source (reddit, sentry, manual)
+  - `cluster_id`: Filter by cluster
+  - `limit` and `offset`: Pagination
+- **GET** `/feedback/{item_id}?project_id=<uuid>` - Get specific feedback item
+- **GET** `/stats?project_id=<uuid>` - Get aggregate statistics
 
-**Request Body**: Standard Sentry webhook payload
+### Clustering
+- **GET** `/clusters?project_id=<uuid>` - List all issue clusters
+- **GET** `/clusters/{cluster_id}?project_id=<uuid>` - Get cluster details with feedback items
+- **POST** `/clusters/{cluster_id}/start_fix?project_id=<uuid>` - Trigger coding agent for a cluster
 
-#### POST /ingest/manual
-Ingest manually submitted text feedback.
+### Jobs (Coding Agent Tracking)
+- **GET** `/jobs?project_id=<uuid>` - List all agent jobs
+- **POST** `/jobs?project_id=<uuid>` - Create a new job
+  - Body: `{"cluster_id": "cluster-id", "project_id": "<uuid>"}`
+- **PATCH** `/jobs/{job_id}?project_id=<uuid>` - Update job status
+  - Body: `{"status": "success", "pr_url": "https://...", "logs": "..."}`
+- **GET** `/jobs/{job_id}?project_id=<uuid>` - Get job details
+- **GET** `/clusters/{cluster_id}/jobs?project_id=<uuid>` - Get jobs for a cluster
 
-**Request Body**:
-```json
-{
-  "text": "The login button doesn't work on mobile"
-}
-```
-
-### Reddit Config
-- **GET** `/config/reddit/subreddits` - Returns active subreddit list (Redis-backed; falls back to env/default).
-- **POST** `/config/reddit/subreddits` - Set subreddit list globally. Body: `{"subreddits": ["claudeai", "yoursub"]}`
+### Reddit Configuration
+- **GET** `/config/reddit/subreddits?project_id=<uuid>` - Get subreddit list for project
+- **POST** `/config/reddit/subreddits?project_id=<uuid>` - Set subreddit list
+  - Body: `{"subreddits": ["claudeai", "programming"]}`
+- **POST** `/reddit/poll?project_id=<uuid>` - Trigger immediate poll
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `REDDIT_SUBREDDITS` | Subreddit(s) to monitor (comma-separated). `REDDIT_SUBREDDIT` is also supported for backward compatibility. | `"all"` |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST API URL (recommended) | _unset (in-memory)_ |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST API token | _unset (in-memory)_ |
+| `REDIS_URL` / `UPSTASH_REDIS_URL` | Alternative Redis connection string (via redis-py) | _unset (in-memory)_ |
+| `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Google Gemini API key for embeddings (required for clustering) | _unset_ |
+| `REDDIT_SUBREDDITS` | Subreddit(s) to monitor (comma-separated). `REDDIT_SUBREDDIT` also supported. | `"all"` |
 | `REDDIT_SORTS` | Listing sorts to pull (`new`, `hot`, `top`) | `"new"` |
 | `REDDIT_POLL_INTERVAL_SECONDS` | How often to poll Reddit | `300` |
-| `BACKEND_URL` | URL of the ingestion API | `http://localhost:8000` |
-| `REDIS_URL` / `UPSTASH_REDIS_URL` | Redis connection string (enables Redis store) | _unset (in-memory)_ |
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Upstash REST credentials (used if Redis URL is not set) | _unset (in-memory)_ |
+| `BACKEND_URL` | URL of the ingestion API (for reddit poller) | `http://localhost:8000` |
+| `GITHUB_TOKEN` | GitHub personal access token (optional, for higher API limits) | _unset_ |
 
 ## Development Notes
 
-- This is an MVP implementation with in-memory storage
-- Follow TDD: write tests before implementation
-- All code includes comprehensive docstrings
-- Error handling implemented for production resilience
+- Storage: Defaults to in-memory for development; use Redis for production
+- Testing: Follow TDD principles; write tests before implementation
+- Code style: Black + Ruff formatting, comprehensive docstrings
+- Multi-tenancy: All endpoints support optional `project_id` query parameter
+- Clustering: Automatic on ingestion when Gemini API key is configured
+- Error handling: Production-ready with comprehensive error responses
 
-## Next Steps
+## Key Implementation Details
 
-From the task plan (tasks/data_ingestion.md):
-- ✅ Environment & Project Structure
-- ✅ Domain Models
-- ✅ In-Memory Store
-- ✅ API Endpoints (TDD)
-- ✅ Reddit Poller (TDD)
-- ✅ Integration Verification
+### Data Models
+- `FeedbackItem`: Normalized feedback from any source (Reddit, Sentry, GitHub, manual)
+- `IssueCluster`: Groups of semantically similar feedback items
+- `AgentJob`: Tracks coding agent fix generation tasks
+- `User` and `Project`: Multi-tenant user and project management
 
-Ready to integrate with the Brain layer (clustering and triage)!
+### Storage Layer (`store.py`)
+- Redis-backed with Upstash REST API support
+- In-memory fallback for development
+- Key patterns documented in `documentation/db_design.md`
+- Automatic JSON serialization/deserialization
+
+### Clustering Algorithm
+- Embeds feedback text using Gemini (`text-embedding-004`)
+- Compares against existing clusters using cosine similarity
+- Threshold: 0.75 for automatic cluster assignment
+- Creates new cluster if no match found
+- Generates AI summaries and titles for clusters
