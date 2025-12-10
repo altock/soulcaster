@@ -190,3 +190,49 @@ def test_get_stats(project_context):
     assert data["by_source"]["sentry"] == 1
     assert data["by_source"]["manual"] == 1
     assert data["total_clusters"] == 0  # Placeholder for future
+
+
+def test_get_feedback_with_cuid_project():
+    """Ensure /feedback accepts CUID project_id without 422."""
+    cuid = "cmiy0tdxz00022mo0aa3ywqsx"
+    item = FeedbackItem(
+        id=uuid4(),
+        project_id=cuid,
+        source="github",
+        external_id="ext-cuid-1",
+        title="CUID item",
+        body="Body",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+    add_feedback_item(item)
+
+    response = client.get(f"/feedback?project_id={cuid}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["project_id"] == cuid
+    assert data["total"] == 1
+    assert data["items"][0]["project_id"] == cuid
+
+
+def test_get_stats_with_cuid_project():
+    """Ensure /stats accepts CUID project_id without 422."""
+    cuid = "cmiy0tdxz00022mo0aa3ywqsx"
+    add_feedback_item(
+        FeedbackItem(
+            id=uuid4(),
+            project_id=cuid,
+            source="manual",
+            external_id="ext-cuid-2",
+            title="CUID stats",
+            body="Body",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    response = client.get(f"/stats?project_id={cuid}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["project_id"] == cuid
+    assert data["total_feedback"] == 1

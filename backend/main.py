@@ -92,29 +92,29 @@ def read_root():
     return {"status": "ok", "service": "feedbackagent-ingestion"}
 
 
-def _require_project_id(project_id: Optional[UUID]) -> UUID:
+def _require_project_id(project_id: Optional[UUID | str]) -> str:
     """
-    Ensure a project_id is provided; return the validated project UUID.
+    Ensure a project_id is provided; return it as a string (UUID or CUID).
     
     Parameters:
-        project_id (Optional[UUID]): The project identifier to validate.
+        project_id (Optional[UUID | str]): The project identifier to validate.
     
     Returns:
-        UUID: The provided `project_id` when present.
+        str: The provided `project_id` as a string when present.
     
     Raises:
         HTTPException: With status code 400 if `project_id` is missing.
     """
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
-    return project_id
+    return str(project_id)
 
 
 # ============================================================
 # PHASE 2: REDDIT INTEGRATION (Currently deferred)
 # ============================================================
 @app.post("/ingest/reddit")
-def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
+def ingest_reddit(item: FeedbackItem, project_id: Optional[str] = Query(None)):
     """
     Create or deduplicate a Reddit-sourced FeedbackItem and associate it with a project.
     
@@ -149,7 +149,7 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[UUID] = Query(None)):
 # PHASE 2: SENTRY INTEGRATION (Currently deferred)
 # ============================================================
 @app.post("/ingest/sentry")
-def ingest_sentry(payload: dict, project_id: Optional[UUID] = Query(None)):
+def ingest_sentry(payload: dict, project_id: Optional[str] = Query(None)):
     """
     Normalize a Sentry webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
     
@@ -271,7 +271,7 @@ def create_project_endpoint(payload: CreateProjectRequest):
 
 
 @app.post("/ingest/manual")
-def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Query(None)):
+def ingest_manual(request: ManualIngestRequest, project_id: Optional[str] = Query(None)):
     """
     Create and persist a FeedbackItem from manual text, then trigger automatic clustering.
     
@@ -431,7 +431,7 @@ def _sanitize_subreddits(values: List[str]) -> List[str]:
 
 
 @app.get("/config/reddit/subreddits")
-def get_reddit_config(project_id: Optional[UUID] = Query(None)):
+def get_reddit_config(project_id: Optional[str] = Query(None)):
     """
     Get the active subreddit list for a project.
     
@@ -456,7 +456,7 @@ def get_reddit_config(project_id: Optional[UUID] = Query(None)):
 
 
 @app.post("/config/reddit/subreddits")
-def set_reddit_config(payload: SubredditConfig, project_id: Optional[UUID] = Query(None)):
+def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Query(None)):
     """
     Set the subreddits configured for polling for a specific project.
     
@@ -481,7 +481,7 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[UUID] = Que
 
 
 @app.post("/admin/trigger-poll")
-async def trigger_poll(project_id: Optional[UUID] = Query(None)):
+async def trigger_poll(project_id: Optional[str] = Query(None)):
     """
     Trigger a single Reddit polling cycle for the specified project and wait for completion.
     
@@ -616,7 +616,7 @@ def get_feedback(
         100, ge=1, le=1000, description="Maximum number of items to return"
     ),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
-    project_id: Optional[UUID] = Query(None),
+    project_id: Optional[str] = Query(None),
 ):
     """
     Retrieve feedback items for a project with optional source filtering and pagination.
@@ -672,7 +672,7 @@ class FeedbackUpdate(BaseModel):
 
 @app.put("/feedback/{item_id}")
 def update_feedback_entry(
-    item_id: UUID, payload: FeedbackUpdate, project_id: Optional[UUID] = Query(None)
+    item_id: UUID, payload: FeedbackUpdate, project_id: Optional[str] = Query(None)
 ):
     """
     Update mutable fields on a FeedbackItem scoped to a project.
@@ -692,7 +692,7 @@ def update_feedback_entry(
 
 
 @app.get("/feedback/{item_id}")
-def get_feedback_by_id(item_id: UUID, project_id: Optional[UUID] = Query(None)):
+def get_feedback_by_id(item_id: UUID, project_id: Optional[str] = Query(None)):
     """
     Retrieve a feedback item by its ID within the specified project.
     
@@ -716,7 +716,7 @@ def get_feedback_by_id(item_id: UUID, project_id: Optional[UUID] = Query(None)):
 
 
 @app.get("/stats")
-def get_stats(project_id: Optional[UUID] = Query(None)):
+def get_stats(project_id: Optional[str] = Query(None)):
     """
     Return statistics for a project's feedback items and clusters.
     
@@ -749,7 +749,7 @@ def get_stats(project_id: Optional[UUID] = Query(None)):
 
 
 @app.get("/clusters")
-def list_clusters(project_id: Optional[UUID] = Query(None)):
+def list_clusters(project_id: Optional[str] = Query(None)):
     """
     List issue clusters for a project, including aggregated metadata.
     
@@ -805,7 +805,7 @@ def list_clusters(project_id: Optional[UUID] = Query(None)):
 
 
 @app.get("/clusters/{cluster_id}")
-def get_cluster_detail(cluster_id: str, project_id: Optional[UUID] = Query(None)):
+def get_cluster_detail(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
     Retrieve a cluster scoped to the requested project and include its resolved feedback items.
     
@@ -848,7 +848,7 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[UUID] = Query(None)
 
 
 @app.post("/clusters/{cluster_id}/start_fix")
-def start_cluster_fix(cluster_id: str, project_id: Optional[UUID] = Query(None)):
+def start_cluster_fix(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
     Start fix generation for the specified cluster.
     
@@ -960,7 +960,7 @@ class UpdateJobRequest(BaseModel):
 
 
 @app.get("/jobs")
-def list_jobs(project_id: Optional[UUID] = Query(None)):
+def list_jobs(project_id: Optional[str] = Query(None)):
     """
     List AgentJob records for the specified project.
     
@@ -971,11 +971,11 @@ def list_jobs(project_id: Optional[UUID] = Query(None)):
         jobs (List[AgentJob]): List of jobs that belong to the given project.
     """
     pid = _require_project_id(project_id)
-    return [job for job in get_all_jobs() if job.project_id == pid]
+    return [job for job in get_all_jobs() if str(job.project_id) == pid]
 
 
 @app.post("/jobs")
-def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(None)):
+def create_job(payload: CreateJobRequest, project_id: Optional[str] = Query(None)):
     """
     Create a new agent tracking job for the specified cluster within a project.
     
@@ -1009,7 +1009,7 @@ def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(Non
 
 
 @app.patch("/jobs/{job_id}")
-def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optional[UUID] = Query(None)):
+def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optional[str] = Query(None)):
     """
     Update the status and/or logs of an AgentJob scoped to a project.
     
@@ -1027,7 +1027,7 @@ def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optio
     """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
-    if not job or job.project_id != pid:
+    if not job or str(job.project_id) != pid:
         raise HTTPException(status_code=404, detail="Job not found for project")
 
     updates = {}
@@ -1045,7 +1045,7 @@ def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optio
 
 
 @app.get("/jobs/{job_id}")
-def get_job_details(job_id: UUID, project_id: Optional[UUID] = Query(None)):
+def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
     """
     Retrieve the specified AgentJob scoped to the given project.
     
@@ -1061,13 +1061,13 @@ def get_job_details(job_id: UUID, project_id: Optional[UUID] = Query(None)):
     """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
-    if not job or job.project_id != pid:
+    if not job or str(job.project_id) != pid:
         raise HTTPException(status_code=404, detail="Job not found for project")
     return job
 
 
 @app.get("/clusters/{cluster_id}/jobs")
-def get_cluster_jobs(cluster_id: str, project_id: Optional[UUID] = Query(None)):
+def get_cluster_jobs(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
     Return the AgentJob records for the given cluster that belong to the specified project.
     
@@ -1078,4 +1078,4 @@ def get_cluster_jobs(cluster_id: str, project_id: Optional[UUID] = Query(None)):
     """
     pid = _require_project_id(project_id)
     cluster_jobs = get_jobs_by_cluster(cluster_id)
-    return [job for job in cluster_jobs if job.project_id == pid]
+    return [job for job in cluster_jobs if str(job.project_id) == pid]

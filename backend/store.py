@@ -365,7 +365,7 @@ class InMemoryStore:
             self.issue_clusters.clear()
 
     # Config (Reddit)
-    def set_reddit_subreddits(self, subreddits: List[str], project_id: UUID) -> List[str]:
+    def set_reddit_subreddits(self, subreddits: List[str], project_id: ProjectId) -> List[str]:
         """
         Set the list of Reddit subreddits for a project.
         
@@ -379,19 +379,33 @@ class InMemoryStore:
         Raises:
             KeyError: If no project exists with the given `project_id`.
         """
-        if project_id not in self.projects:
+        pid_str = str(project_id)
+        target_key = None
+        for key in self.projects:
+            if str(key) == pid_str:
+                target_key = key
+                break
+        if target_key is None:
             raise KeyError("project not found")
-        self.reddit_subreddits[project_id] = subreddits
+        self.reddit_subreddits[target_key] = subreddits
         return subreddits
 
-    def get_reddit_subreddits(self, project_id: UUID) -> Optional[List[str]]:
+    def get_reddit_subreddits(self, project_id: ProjectId) -> Optional[List[str]]:
         """
         Retrieve the configured Reddit subreddit names for a project.
         
         Returns:
             List[str]: The subreddit names for the project, or `None` if no configuration exists.
         """
-        return self.reddit_subreddits.get(project_id)
+        pid_str = str(project_id)
+        # Direct lookup
+        if project_id in self.reddit_subreddits:
+            return self.reddit_subreddits.get(project_id)
+        # Fallback by string match
+        for key, value in self.reddit_subreddits.items():
+            if str(key) == pid_str:
+                return value
+        return None
 
     def clear_config(self):
         """
@@ -1489,7 +1503,7 @@ def get_project(project_id: UUID) -> Optional[Project]:
 
 
 # Project-scoped config API
-def set_reddit_subreddits_for_project(subreddits: List[str], project_id: UUID) -> List[str]:
+def set_reddit_subreddits_for_project(subreddits: List[str], project_id: ProjectId) -> List[str]:
     """
     Set the subreddit list for a specific project.
     
@@ -1503,7 +1517,7 @@ def set_reddit_subreddits_for_project(subreddits: List[str], project_id: UUID) -
     return _STORE.set_reddit_subreddits(subreddits, project_id)
 
 
-def get_reddit_subreddits_for_project(project_id: UUID) -> Optional[List[str]]:
+def get_reddit_subreddits_for_project(project_id: ProjectId) -> Optional[List[str]]:
     """
     Retrieve the configured Reddit subreddit names for a specific project.
     
