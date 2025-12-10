@@ -119,7 +119,7 @@ def fetch_repo_issues(
     return issues
 
 
-def issue_to_feedback_item(issue: Dict[str, Any], repo_full_name: str, project_id: UUID) -> FeedbackItem:
+def issue_to_feedback_item(issue: Dict[str, Any], repo_full_name: str, project_id: str) -> FeedbackItem:
     """
     Convert a GitHub issue payload to a FeedbackItem.
 

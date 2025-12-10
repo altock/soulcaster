@@ -1,7 +1,7 @@
 """Domain models for FeedbackAgent data ingestion layer."""
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -13,7 +13,7 @@ class AgentJob(BaseModel):
     """
 
     id: UUID
-    project_id: UUID
+    project_id: str  # Supports both UUID and CUID formats from dashboard
     cluster_id: str
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
@@ -31,7 +31,7 @@ class FeedbackItem(BaseModel):
 
     Attributes:
         id: Unique identifier for this feedback item
-        project_id: Project this feedback belongs to (multi-tenant boundary)
+        project_id: Project this feedback belongs to (multi-tenant boundary, supports UUID/CUID)
         source: The origin of the feedback (reddit, sentry, manual, or github)
         external_id: ID from the original source system (e.g., Reddit post ID)
         title: Short summary or title (max 80 chars for manual entries)
@@ -41,7 +41,7 @@ class FeedbackItem(BaseModel):
     """
 
     id: UUID
-    project_id: UUID
+    project_id: str  # Supports both UUID and CUID formats from dashboard
     source: Literal["reddit", "sentry", "manual", "github"]
     external_id: Optional[str] = None
     title: str
@@ -70,7 +70,7 @@ class IssueCluster(BaseModel):
     """Represents a cluster of related feedback items."""
 
     id: str
-    project_id: UUID
+    project_id: str  # Supports both UUID and CUID formats from dashboard
     title: str
     summary: str
     feedback_ids: List[str]
@@ -90,7 +90,7 @@ class IssueCluster(BaseModel):
 class User(BaseModel):
     """Represents an authenticated user."""
 
-    id: UUID
+    id: str  # Supports both UUID and CUID formats from dashboard
     email: Optional[str] = None
     github_id: Optional[str] = None
     created_at: datetime
@@ -99,7 +99,7 @@ class User(BaseModel):
 class Project(BaseModel):
     """Represents a project/workspace owned by a user."""
 
-    id: UUID
-    user_id: UUID
+    id: str  # Supports both UUID and CUID formats from dashboard
+    user_id: str
     name: str
     created_at: datetime

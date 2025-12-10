@@ -7,8 +7,11 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 from uuid import UUID
+
+# Project ID can be UUID or CUID string from the dashboard
+ProjectId = Union[UUID, str]
 
 import requests
 
@@ -461,27 +464,21 @@ class RedisStore:
                 raise RuntimeError("RedisStore requires REDIS_URL/UPSTASH_REDIS_URL or UPSTASH_REDIS_REST_URL/_TOKEN")
             self.client = rest_client
 
-    # Key helpers
+    # Key helpers - MUST match dashboard/lib/redis.ts patterns!
     @staticmethod
-    def _feedback_key(item_id: UUID) -> str:
-        return f"feedback:{item_id}"
+    def _feedback_key(project_id: str, item_id: Union[UUID, str]) -> str:
+        """Match dashboard: feedback:${projectId}:${id}"""
+        return f"feedback:{project_id}:{item_id}"
 
     @staticmethod
-    def _feedback_created_key() -> str:
-        return "feedback:created"
+    def _feedback_created_key(project_id: str) -> str:
+        """Match dashboard: feedback:created:${projectId}"""
+        return f"feedback:created:{project_id}"
 
     @staticmethod
-    def _feedback_source_key(source: str) -> str:
-        """
-        Construct the Redis key for a given feedback source.
-        
-        Parameters:
-            source (str): Identifier of the feedback source (for example, 'reddit' or 'github').
-        
-        Returns:
-            str: The Redis key in the form "feedback:source:{source}".
-        """
-        return f"feedback:source:{source}"
+    def _feedback_source_key(project_id: str, source: str) -> str:
+        """Match dashboard: feedback:source:${projectId}:${source}"""
+        return f"feedback:source:{project_id}:{source}"
 
     @staticmethod
     def _feedback_external_key(project_id: str, source: str, external_id: str) -> str:
@@ -500,43 +497,23 @@ class RedisStore:
 
     @staticmethod
     def _feedback_unclustered_key(project_id: str) -> str:
-        """
-        Return the Redis key for the project's set of unclustered feedback item IDs.
-        
-        Parameters:
-            project_id (str): Project identifier (UUID string).
-        
-        Returns:
-            key (str): Redis key in the form "feedback:unclustered:{project_id}".
-        """
+        """Match dashboard: feedback:unclustered:${projectId}"""
         return f"feedback:unclustered:{project_id}"
 
     @staticmethod
-    def _cluster_key(cluster_id: str) -> str:
-        """
-        Constructs the Redis key for a cluster using its identifier.
-        
-        Parameters:
-            cluster_id (str): The cluster identifier (typically a UUID string).
-        
-        Returns:
-            str: Redis key in the form `cluster:<cluster_id>`.
-        """
-        return f"cluster:{cluster_id}"
+    def _cluster_key(project_id: str, cluster_id: str) -> str:
+        """Match dashboard: cluster:${projectId}:${id}"""
+        return f"cluster:{project_id}:{cluster_id}"
 
     @staticmethod
-    def _cluster_items_key(cluster_id: str) -> str:
-        return f"cluster:items:{cluster_id}"
+    def _cluster_items_key(project_id: str, cluster_id: str) -> str:
+        """Match dashboard: cluster:${projectId}:${clusterId}:items"""
+        return f"cluster:{project_id}:{cluster_id}:items"
 
     @staticmethod
-    def _cluster_all_key() -> str:
-        """
-        Redis key for the set that indexes all cluster IDs.
-        
-        Returns:
-            The Redis key string used to store the set of all cluster IDs.
-        """
-        return "clusters:all"
+    def _cluster_all_key(project_id: str) -> str:
+        """Match dashboard: clusters:${projectId}:all"""
+        return f"clusters:{project_id}:all"
 
     @staticmethod
     def _reddit_subreddits_key(project_id: UUID) -> str:
@@ -629,12 +606,13 @@ class RedisStore:
         # Convert all values to strings for HSET
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
         
-        key = self._feedback_key(item.id)
+        project_id = str(item.project_id)
+        key = self._feedback_key(project_id, item.id)
         self._hset(key, hash_payload)
 
         ts = item.created_at.timestamp() if isinstance(item.created_at, datetime) else time.time()
-        self._zadd(self._feedback_created_key(), ts, str(item.id))
-        self._zadd(self._feedback_source_key(item.source), ts, str(item.id))
+        self._zadd(self._feedback_created_key(project_id), ts, str(item.id))
+        self._zadd(self._feedback_source_key(project_id, item.source), ts, str(item.id))
         
         # Add to unclustered set (Phase 1: ingestion moat)
         self._sadd(self._feedback_unclustered_key(str(item.project_id)), str(item.id))
@@ -643,17 +621,17 @@ class RedisStore:
             self._set(self._feedback_external_key(str(item.project_id), item.source, item.external_id), str(item.id))
         return item
 
-    def get_feedback_item(self, item_id: UUID) -> Optional[FeedbackItem]:
+    def get_feedback_item(self, project_id: str, item_id: UUID) -> Optional[FeedbackItem]:
         # Try HGETALL first (new format)
         """
-        Retrieve a FeedbackItem by its UUID, handling both current hash storage and legacy JSON string formats.
+        Retrieve a FeedbackItem by its UUID within a project.
         
         If a stored hash is present, parse and convert fields into the FeedbackItem model (converts ISO datetimes and parses JSON metadata). If legacy JSON is present, attempt to decode it into the model. Returns None when no record exists or when stored data cannot be decoded into a valid FeedbackItem.
         
         Returns:
             FeedbackItem or None: `FeedbackItem` if found and successfully parsed, `None` otherwise.
         """
-        key = self._feedback_key(item_id)
+        key = self._feedback_key(project_id, item_id)
         data = self._hgetall(key)
         
         if not data:
@@ -683,28 +661,28 @@ class RedisStore:
 
         return FeedbackItem(**data)
 
-    def get_all_feedback_items(self) -> List[FeedbackItem]:
+    def get_all_feedback_items(self, project_id: str) -> List[FeedbackItem]:
         """
-        Retrieve all stored FeedbackItem objects ordered by their creation time.
+        Retrieve all stored FeedbackItem objects for a project ordered by their creation time.
         
         Skips entries whose stored IDs are not valid UUIDs or whose referenced items cannot be loaded.
         
         Returns:
             List[FeedbackItem]: Feedback items present in storage, ordered by creation timestamp.
         """
-        ids = self._zrange(self._feedback_created_key(), 0, -1)
+        ids = self._zrange(self._feedback_created_key(project_id), 0, -1)
         items: List[FeedbackItem] = []
         for item_id in ids:
             try:
                 # ids are stored as strings in redis, convert to UUID
-                item = self.get_feedback_item(UUID(item_id))
+                item = self.get_feedback_item(project_id, UUID(item_id))
                 if item:
                     items.append(item)
             except ValueError:
                 continue
         return items
 
-    def get_unclustered_feedback(self, project_id: UUID) -> List[FeedbackItem]:
+    def get_unclustered_feedback(self, project_id: str) -> List[FeedbackItem]:
         """
         Return all feedback items for a project that have not yet been assigned to a cluster.
         
@@ -713,11 +691,11 @@ class RedisStore:
         Returns:
         	List[FeedbackItem]: List of unclustered FeedbackItem objects for the specified project.
         """
-        unclustered_ids = self._smembers(self._feedback_unclustered_key(str(project_id)))
+        unclustered_ids = self._smembers(self._feedback_unclustered_key(project_id))
         items: List[FeedbackItem] = []
         for item_id in unclustered_ids:
             try:
-                item = self.get_feedback_item(UUID(item_id))
+                item = self.get_feedback_item(project_id, UUID(item_id))
                 if item:
                     items.append(item)
             except ValueError:
@@ -736,29 +714,37 @@ class RedisStore:
                 self._feedback_unclustered_key(str(project_id)), str(feedback_id)
             )
 
-    def clear_feedback_items(self):
+    def clear_feedback_items(self, project_id: Optional[str] = None):
         # Remove keys matching feedback:* and related sorted sets
         """
-        Delete all stored feedback data and related Redis keys.
+        Delete stored feedback data for a project (or all projects if project_id is None).
         
-        Removes keys for individual feedback items, per-source indexes, external-id mappings, the (legacy) unclustered set, and the feedback created-time index.
+        Removes keys for individual feedback items, per-source indexes, external-id mappings, the unclustered set, and the feedback created-time index.
         """
-        feedback_keys = list(self._scan_iter("feedback:*"))
+        if project_id:
+            pattern = f"feedback:{project_id}:*"
+        else:
+            pattern = "feedback:*"
+        feedback_keys = list(self._scan_iter(pattern))
         if feedback_keys:
             self._delete(*feedback_keys)
-        # Legacy global key cleanup (pre-project-scoped unclustered set)
+        # Legacy global key cleanup
         self._delete("feedback:unclustered")
-        self._delete(self._feedback_created_key())
-        # Source sets: optional to scan
+        # Source sets
         source_keys = list(self._scan_iter("feedback:source:*"))
         if source_keys:
             self._delete(*source_keys)
+        # Created sets
+        created_keys = list(self._scan_iter("feedback:created:*"))
+        if created_keys:
+            self._delete(*created_keys)
         external_keys = list(self._scan_iter("feedback:external:*"))
         if external_keys:
             self._delete(*external_keys)
 
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
+        project_id = str(cluster.project_id)
         payload = cluster.model_dump()
         for field in ("created_at", "updated_at"):
             if isinstance(payload.get(field), datetime):
@@ -774,20 +760,20 @@ class RedisStore:
 
         # Use HSET (Hash)
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
-        key = self._cluster_key(cluster.id)
+        key = self._cluster_key(project_id, cluster.id)
         self._hset(key, hash_payload)
         
-        self._sadd(self._cluster_all_key(), str(cluster.id))
+        self._sadd(self._cluster_all_key(project_id), str(cluster.id))
         
         # store cluster items set
-        items_key = self._cluster_items_key(cluster.id)
+        items_key = self._cluster_items_key(project_id, cluster.id)
         if cluster.feedback_ids:
             for fid in cluster.feedback_ids:
                 self._sadd(items_key, str(fid))
         return cluster
 
-    def get_cluster(self, cluster_id: str) -> Optional[IssueCluster]:
-        key = self._cluster_key(cluster_id)
+    def get_cluster(self, project_id: str, cluster_id: str) -> Optional[IssueCluster]:
+        key = self._cluster_key(project_id, cluster_id)
         # Try HGETALL first
         data = self._hgetall(key)
         
@@ -816,36 +802,34 @@ class RedisStore:
         
         # Fetch feedback_ids from set if not present (Hash doesn't have it, JSON does)
         if "feedback_ids" not in data or not data["feedback_ids"]:
-            items_key = self._cluster_items_key(cluster_id)
+            items_key = self._cluster_items_key(project_id, cluster_id)
             ids = self._smembers(items_key)
             data["feedback_ids"] = ids
 
         return IssueCluster(**data)
 
-    def get_all_clusters(self) -> List[IssueCluster]:
-        ids = self._smembers(self._cluster_all_key())
+    def get_all_clusters(self, project_id: str) -> List[IssueCluster]:
+        ids = self._smembers(self._cluster_all_key(project_id))
         clusters: List[IssueCluster] = []
         for cid in ids:
             # ids are stored as strings in redis (can be UUID or custom format)
-            cluster = self.get_cluster(cid)
+            cluster = self.get_cluster(project_id, cid)
             if cluster:
                 clusters.append(cluster)
         return clusters
 
-    def update_cluster(self, cluster_id: str, **updates) -> IssueCluster:
-        cluster = self.get_cluster(cluster_id)
+    def update_cluster(self, project_id: str, cluster_id: str, **updates) -> IssueCluster:
+        cluster = self.get_cluster(project_id, cluster_id)
         if not cluster:
             raise KeyError(f"Cluster {cluster_id} not found")
         updated = cluster.model_copy(update=updates)
         return self.add_cluster(updated)
 
-    def clear_clusters(self):
+    def clear_clusters(self, project_id: str):
         """
-        Remove all cluster records and the global clusters index from the store.
-        
-        This deletes every stored cluster entry and the cluster "all" index key so that no cluster data remains in the backend.
+        Remove all cluster records for a project from the store.
         """
-        cluster_keys = list(self._scan_iter("cluster:*")) + [self._cluster_all_key()]
+        cluster_keys = list(self._scan_iter(f"cluster:{project_id}:*")) + [self._cluster_all_key(project_id)]
         if cluster_keys:
             self._delete(*cluster_keys)
 
@@ -1171,26 +1155,26 @@ def add_feedback_item(item: FeedbackItem) -> FeedbackItem:
     return _STORE.add_feedback_item(item)
 
 
-def get_feedback_item(item_id: UUID) -> Optional[FeedbackItem]:
-    return _STORE.get_feedback_item(item_id)
+def get_feedback_item(project_id: str, item_id: UUID) -> Optional[FeedbackItem]:
+    return _STORE.get_feedback_item(project_id, item_id)
 
 
-def get_all_feedback_items() -> List[FeedbackItem]:
+def get_all_feedback_items(project_id: str) -> List[FeedbackItem]:
     """
-    Retrieve all stored feedback items.
+    Retrieve all stored feedback items for a project.
     
     Returns:
         A list of FeedbackItem objects, one entry per stored feedback item.
     """
-    return _STORE.get_all_feedback_items()
+    return _STORE.get_all_feedback_items(project_id)
 
 
-def get_feedback_by_external_id(project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
+def get_feedback_by_external_id(project_id: str, source: str, external_id: str) -> Optional[FeedbackItem]:
     """
     Lookup a feedback item for a given project by its source and external identifier.
     
     Parameters:
-        project_id (UUID): ID of the project that owns the feedback item.
+        project_id (str): ID of the project that owns the feedback item.
         source (str): Source system or provider name associated with the external identifier.
         external_id (str): External identifier assigned by the source; if empty, the lookup returns `None`.
     
@@ -1202,34 +1186,34 @@ def get_feedback_by_external_id(project_id: UUID, source: str, external_id: str)
     if hasattr(_STORE, "get_feedback_by_external_id"):
         return _STORE.get_feedback_by_external_id(project_id, source, external_id)
     # Fallback: linear scan (should rarely happen)
-    for item in _STORE.get_all_feedback_items():
+    for item in _STORE.get_all_feedback_items(project_id):
         if item.project_id == project_id and item.source == source and item.external_id == external_id:
             return item
     return None
 
 
-def clear_feedback_items():
-    _STORE.clear_feedback_items()
+def clear_feedback_items(project_id: Optional[str] = None):
+    _STORE.clear_feedback_items(project_id)
 
 
 def add_cluster(cluster: IssueCluster) -> IssueCluster:
     return _STORE.add_cluster(cluster)
 
 
-def get_cluster(cluster_id: str) -> Optional[IssueCluster]:
-    return _STORE.get_cluster(cluster_id)
+def get_cluster(project_id: str, cluster_id: str) -> Optional[IssueCluster]:
+    return _STORE.get_cluster(project_id, cluster_id)
 
 
-def get_all_clusters() -> List[IssueCluster]:
-    return _STORE.get_all_clusters()
+def get_all_clusters(project_id: str) -> List[IssueCluster]:
+    return _STORE.get_all_clusters(project_id)
 
 
-def update_cluster(cluster_id: str, **updates) -> IssueCluster:
-    return _STORE.update_cluster(cluster_id, **updates)
+def update_cluster(project_id: str, cluster_id: str, **updates) -> IssueCluster:
+    return _STORE.update_cluster(project_id, cluster_id, **updates)
 
 
-def clear_clusters():
-    _STORE.clear_clusters()
+def clear_clusters(project_id: str):
+    _STORE.clear_clusters(project_id)
 
 
 def set_reddit_subreddits(subreddits: List[str]) -> List[str]:
@@ -1293,12 +1277,12 @@ def clear_jobs():
         _STORE.clear_jobs()
 
 
-def get_unclustered_feedback(project_id: UUID) -> List[FeedbackItem]:
+def get_unclustered_feedback(project_id: str) -> List[FeedbackItem]:
     """
     Retrieve feedback items that are currently unclustered for the given project.
     
     Parameters:
-        project_id (UUID): ID of the project whose unclustered feedback should be returned.
+        project_id (str): ID of the project whose unclustered feedback should be returned.
     
     Returns:
         List[FeedbackItem]: Feedback items contained in the project's unclustered set.
@@ -1306,13 +1290,13 @@ def get_unclustered_feedback(project_id: UUID) -> List[FeedbackItem]:
     return _STORE.get_unclustered_feedback(project_id)
 
 
-def remove_from_unclustered(feedback_id: UUID, project_id: UUID):
+def remove_from_unclustered(feedback_id: UUID, project_id: str):
     """
     Remove a feedback item from the project's unclustered set.
     
     Parameters:
     	feedback_id (UUID): ID of the feedback item to remove.
-    	project_id (UUID): ID of the project that owns the unclustered set.
+    	project_id (str): ID of the project that owns the unclustered set.
     """
     return _STORE.remove_from_unclustered(feedback_id, project_id)
 

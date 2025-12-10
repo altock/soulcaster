@@ -6,6 +6,7 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 - Manual text submissions
 """
 
+import logging
 import os
 import sys
 from dotenv import load_dotenv
@@ -16,9 +17,16 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Path, Query
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Support running as a script from ./backend (adds this dir to sys.path)
 if __package__ is None:
@@ -56,6 +64,13 @@ app = FastAPI(
     description="API for ingesting user feedback from multiple sources",
     version="0.1.0",
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Log all unhandled exceptions with full details."""
+    logger.exception(f"Unhandled exception for {request.method} {request.url}: {exc}")
+    raise exc
 
 # Track GitHub sync metadata in-memory (per process). If persistence is needed,
 # promote this to Redis-backed storage.
@@ -288,8 +303,9 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[UUID] = Que
 
 @app.post("/ingest/github/sync/{repo_name:path}")
 async def ingest_github_sync(
+    request: Request,
     repo_name: str = Path(..., description="GitHub repo in the form owner/repo"),
-    project_id: Optional[UUID] = Query(None),
+    project_id: Optional[str] = Query(None),
     x_github_token: Optional[str] = Header(None, alias="X-GitHub-Token"),
 ):
     """
@@ -299,20 +315,35 @@ async def ingest_github_sync(
         - Pull requests are ignored.
         - Uses in-memory state for `last_synced`; promote to Redis if persistence is required.
         - Accepts X-GitHub-Token header for user OAuth authentication.
+        - Accepts project_id as string (supports both UUID and CUID formats).
     """
-    pid = _require_project_id(project_id)
+    logger.info("=== GitHub Sync Request ===")
+    logger.info(f"repo_name: {repo_name}")
+    logger.info(f"project_id: {project_id}")
+    logger.info(f"x_github_token present: {bool(x_github_token)}")
+    logger.info(f"x_github_token prefix: {x_github_token[:20] + '...' if x_github_token else 'None'}")
+    logger.debug(f"All headers: {dict(request.headers)}")
+    
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    logger.info(f"Validated project_id: {project_id}")
 
     if "/" not in repo_name:
+        logger.error(f"Invalid repo_name format: {repo_name}")
         raise HTTPException(status_code=400, detail="repo_name must be in the form owner/repo")
 
     owner, repo = repo_name.split("/", 1)
     repo_full_name = f"{owner}/{repo}"
-    state_key = (pid, repo_full_name)
+    state_key = (project_id, repo_full_name)
     since = GITHUB_SYNC_STATE.get(state_key, {}).get("last_synced")
+    logger.info(f"Syncing {repo_full_name}, since={since}")
 
     try:
+        logger.info(f"Fetching issues from GitHub API for {owner}/{repo}...")
         issues = fetch_repo_issues(owner, repo, since=since, token=x_github_token)
+        logger.info(f"Fetched {len(issues)} issues from GitHub")
     except Exception as exc:
+        logger.exception(f"GitHub sync failed for {repo_full_name}: {exc}")
         raise HTTPException(status_code=502, detail=f"GitHub sync failed: {exc}")
 
     new_count = 0
@@ -322,23 +353,23 @@ async def ingest_github_sync(
 
     for issue in issues:
         external_id = str(issue.get("id"))
-        existing = get_feedback_by_external_id(pid, "github", external_id)
+        existing = get_feedback_by_external_id(project_id, "github", external_id)
 
         if existing:
             # Refresh fields while preserving the stored UUID
-            refreshed = issue_to_feedback_item(issue, repo_full_name, pid).model_copy(
+            refreshed = issue_to_feedback_item(issue, repo_full_name, project_id).model_copy(
                 update={"id": existing.id}
             )
             feedback_item = refreshed
             updated_count += 1
         else:
-            feedback_item = issue_to_feedback_item(issue, repo_full_name, pid)
+            feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id)
             new_count += 1
 
         add_feedback_item(feedback_item)
 
         if issue.get("state") == "closed":
-            remove_from_unclustered(feedback_item.id, pid)
+            remove_from_unclustered(feedback_item.id, project_id)
             closed_count += 1
         else:
             _auto_cluster_feedback(feedback_item)
@@ -351,6 +382,8 @@ async def ingest_github_sync(
         "issue_count": str(len(issues)),
     }
 
+    logger.info(f"Sync complete: {new_count} new, {updated_count} updated, {closed_count} closed")
+    
     return {
         "success": True,
         "repo": repo_full_name,
@@ -359,7 +392,7 @@ async def ingest_github_sync(
         "closed_issues": closed_count,
         "total_issues": len(issues),
         "last_synced": now_iso,
-        "project_id": str(pid),
+        "project_id": project_id,
         "synced_ids": synced_ids,
     }
 
@@ -526,9 +559,10 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
         cluster_summary = "User-submitted manual feedback"
 
     # Try to find an existing cluster with the same title
+    project_id = str(item.project_id)
     existing = None
-    for cluster in get_all_clusters():
-        if cluster.project_id == item.project_id and cluster.title == cluster_title:
+    for cluster in get_all_clusters(project_id):
+        if cluster.title == cluster_title:
             existing = cluster
             break
 
@@ -536,6 +570,7 @@ def _auto_cluster_feedback(item: FeedbackItem) -> IssueCluster:
         if str(item.id) not in existing.feedback_ids:
             updated_ids = existing.feedback_ids + [str(item.id)]
             return update_cluster(
+                project_id,
                 existing.id,
                 feedback_ids=updated_ids,
                 updated_at=now,
@@ -593,7 +628,7 @@ def get_feedback(
         }
     """
     pid = _require_project_id(project_id)
-    all_items = [item for item in get_all_feedback_items() if item.project_id == pid]
+    all_items = get_all_feedback_items(str(pid))
 
     # Filter by source if specified
     if source:
@@ -629,13 +664,11 @@ def get_feedback_by_id(item_id: UUID, project_id: Optional[UUID] = Query(None)):
         HTTPException: 404 if the item does not exist or does not belong to the specified project.
     """
     pid = _require_project_id(project_id)
-    item = get_feedback_item(item_id)
+    item = get_feedback_item(str(pid), item_id)
     if item is None:
         raise HTTPException(
             status_code=404, detail=f"Feedback item {item_id} not found"
         )
-    if item.project_id != pid:
-        raise HTTPException(status_code=404, detail="Feedback item not found for project")
     return item
 
 
@@ -652,7 +685,8 @@ def get_stats(project_id: Optional[UUID] = Query(None)):
         - project_id (str): The project's UUID as a string.
     """
     pid = _require_project_id(project_id)
-    all_items = [item for item in get_all_feedback_items() if item.project_id == pid]
+    pid_str = str(pid)
+    all_items = get_all_feedback_items(pid_str)
     total = len(all_items)
 
     # Count by source
@@ -661,7 +695,7 @@ def get_stats(project_id: Optional[UUID] = Query(None)):
         if item.source in by_source:
             by_source[item.source] += 1
 
-    total_clusters = len([c for c in get_all_clusters() if c.project_id == pid])
+    total_clusters = len(get_all_clusters(pid_str))
 
     return {
         "total_feedback": total,
@@ -695,13 +729,14 @@ def list_clusters(project_id: Optional[UUID] = Query(None)):
     """
 
     pid = _require_project_id(project_id)
-    clusters = [c for c in get_all_clusters() if c.project_id == pid]
+    pid_str = str(pid)
+    clusters = get_all_clusters(pid_str)
     results = []
     for cluster in clusters:
         feedback_items = []
         for fid in cluster.feedback_ids:
             try:
-                item = get_feedback_item(UUID(fid))
+                item = get_feedback_item(pid_str, UUID(fid))
                 if item:
                     feedback_items.append(item)
             except (ValueError, AttributeError):
@@ -720,7 +755,7 @@ def list_clusters(project_id: Optional[UUID] = Query(None)):
                 "issue_title": cluster.issue_title,
                 "issue_description": cluster.issue_description,
                 "github_repo_url": cluster.github_repo_url,
-                "project_id": str(pid),
+                "project_id": pid_str,
             }
         )
     return results
@@ -747,17 +782,16 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[UUID] = Query(None)
     """
 
     pid = _require_project_id(project_id)
-    cluster = get_cluster(cluster_id)
+    pid_str = str(pid)
+    cluster = get_cluster(pid_str, cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
-    if cluster.project_id != pid:
-        raise HTTPException(status_code=404, detail="Cluster not found for project")
 
     feedback_items = []
     for fid in cluster.feedback_ids:
         try:
             # feedback_ids are stored as strings, but get_feedback_item expects UUID
-            item = get_feedback_item(UUID(fid))
+            item = get_feedback_item(pid_str, UUID(fid))
             if item:
                 feedback_items.append(item)
         except (ValueError, AttributeError):
@@ -787,18 +821,17 @@ def start_cluster_fix(cluster_id: str, project_id: Optional[UUID] = Query(None))
     """
 
     pid = _require_project_id(project_id)
-    cluster = get_cluster(cluster_id)
+    pid_str = str(pid)
+    cluster = get_cluster(pid_str, cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
-    if cluster.project_id != pid:
-        raise HTTPException(status_code=404, detail="Cluster not found for project")
 
-    updated_cluster = update_cluster(cluster_id, status="fixing")
+    updated_cluster = update_cluster(pid_str, cluster_id, status="fixing")
     return {
         "status": "ok",
         "message": "Fix generation started",
         "cluster_id": updated_cluster.id,
-        "project_id": str(pid),
+        "project_id": pid_str,
     }
 
 
@@ -815,11 +848,12 @@ def seed_mock_data():
     """
 
     now = datetime.now(timezone.utc)
-    pid = uuid4()
+    user_id = str(uuid4())
+    pid = str(uuid4())
     
     # Create a user and project so feedback validation passes
-    user = User(id=uuid4(), email="test@example.com", created_at=now)
-    project = Project(id=pid, user_id=user.id, name="Mock Project", created_at=now)
+    user = User(id=user_id, email="test@example.com", created_at=now)
+    project = Project(id=pid, user_id=user_id, name="Mock Project", created_at=now)
     create_user_with_default_project(user, project)
 
     feedback_one = FeedbackItem(
@@ -913,13 +947,14 @@ def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(Non
         HTTPException: 404 if the cluster does not exist or does not belong to the given project.
     """
     pid = _require_project_id(project_id)
-    cluster = get_cluster(payload.cluster_id)
-    if not cluster or cluster.project_id != pid:
+    pid_str = str(pid)
+    cluster = get_cluster(pid_str, payload.cluster_id)
+    if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found for project")
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
-        project_id=pid,
+        project_id=pid_str,
         cluster_id=payload.cluster_id,
         status="pending",
         logs=None,
@@ -927,7 +962,7 @@ def create_job(payload: CreateJobRequest, project_id: Optional[UUID] = Query(Non
         updated_at=now,
     )
     add_job(job)
-    return {"status": "ok", "job_id": str(job.id), "project_id": str(pid)}
+    return {"status": "ok", "job_id": str(job.id), "project_id": pid_str}
 
 
 @app.patch("/jobs/{job_id}")
