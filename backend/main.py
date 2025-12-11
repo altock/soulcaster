@@ -85,6 +85,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GitHub sync state tracking: (project_id, repo_name) -> sync metadata
+# Note: project_id is stored as string to match endpoint usage
+GITHUB_SYNC_STATE: Dict[Tuple[str, str], Dict[str, str]] = {}
+
 
 @app.get("/")
 def read_root():

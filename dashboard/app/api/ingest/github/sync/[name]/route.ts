@@ -39,11 +39,28 @@ export async function POST(
         'Content-Type': 'application/json',
         'X-GitHub-Token': githubToken,
       },
+      signal: AbortSignal.timeout(10000),
     });
+
+    if (!response.ok) {
+      console.error(`Backend returned ${response.status} for GitHub sync ${repoName}`);
+      const status = response.status >= 500 ? 502 : response.status;
+      return NextResponse.json({ error: 'Sync failed' }, { status });
+    }
 
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Sync failed',
+          detail: 'Backend request timed out',
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       {
         success: false,

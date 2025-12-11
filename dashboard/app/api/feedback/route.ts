@@ -45,12 +45,22 @@ export async function GET(request: NextRequest) {
     if (source) params.set('source', source);
     if (repo) params.set('repo', repo);
 
-    const response = await fetch(`${backendUrl}/feedback?${params.toString()}`);
+    const response = await fetch(`${backendUrl}/feedback?${params.toString()}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) {
+      console.error(`Backend returned ${response.status} for feedback list`);
+      const status = response.status >= 500 ? 502 : response.status;
+      return NextResponse.json({ error: 'Failed to fetch feedback' }, { status });
+    }
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error: any) {
     if (error?.message === 'project_id is required') {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
+    if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
+      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
     }
     console.error('Error fetching feedback from backend:', error);
     return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: 500 });
@@ -79,12 +89,21 @@ export async function PUT(request: NextRequest) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      signal: AbortSignal.timeout(10000),
     });
+    if (!response.ok) {
+      console.error(`Backend returned ${response.status} for feedback update ${id}`);
+      const status = response.status >= 500 ? 502 : response.status;
+      return NextResponse.json({ error: 'Failed to update feedback' }, { status });
+    }
     const respJson = await response.json();
     return NextResponse.json(respJson, { status: response.status });
   } catch (error: any) {
     if (error?.message === 'project_id is required') {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
+    if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
+      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
     }
     console.error('Error updating feedback:', error);
     return NextResponse.json({ error: 'Failed to update feedback' }, { status: 500 });

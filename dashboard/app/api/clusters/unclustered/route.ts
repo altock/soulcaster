@@ -2,9 +2,21 @@ import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { requireProjectId } from '@/lib/project';
 
+// Validate Redis environment variables before creating client
+const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+if (!redisUrl) {
+  throw new Error('UPSTASH_REDIS_REST_URL environment variable is required but not set');
+}
+
+if (!redisToken) {
+  throw new Error('UPSTASH_REDIS_REST_TOKEN environment variable is required but not set');
+}
+
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+  url: redisUrl,
+  token: redisToken,
 });
 
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
