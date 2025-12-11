@@ -20,7 +20,7 @@ export async function GET() {
       user: session?.user?.email,
       tokenLength: session?.accessToken?.length || 0,
     });
-  } catch (error) {
+  } catch (_error) {
     return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
   }
 }

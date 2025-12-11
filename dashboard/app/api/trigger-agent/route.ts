@@ -43,7 +43,7 @@ export async function POST(request: Request) {
                 // Parse URL: https://github.com/owner/repo/issues/123
                 const match = issue_url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
                 if (match) {
-                    const [_, owner, repo, issue_number] = match;
+                    const [, owner, repo, issue_number] = match;
                     const octokit = new Octokit({ auth: githubToken });
                     await octokit.rest.issues.get({
                         owner,

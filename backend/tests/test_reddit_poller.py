@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from backend.reddit_poller import RedditPoller, fetch_reddit_posts
+from reddit_poller import RedditPoller, fetch_reddit_posts
 
 
 def make_response(json_payload=None, status=200, headers=None):
@@ -72,7 +72,7 @@ class TestRedditPoller(unittest.TestCase):
         assert session.get.call_count == 2  # retried after 429
         assert sleep.call_count >= 1
 
-    @patch("backend.reddit_poller.requests.post")
+    @patch("reddit_poller.requests.post")
     def test_poll_once_posts_sent_to_backend(self, mock_post):
         session = MagicMock()
         payload = {
@@ -111,7 +111,7 @@ class TestRedditPoller(unittest.TestCase):
 
 
 class TestModuleHelpers(unittest.TestCase):
-    @patch("backend.reddit_poller.requests.Session.get")
+    @patch("reddit_poller.requests.Session.get")
     def test_fetch_reddit_posts_helper_uses_defaults(self, mock_get):
         mock_get.return_value = make_response({"data": {"children": []}})
         posts = fetch_reddit_posts(["nosub"])

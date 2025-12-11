@@ -1,11 +1,13 @@
 import { getServerSession } from 'next-auth';
 import GitHub from 'next-auth/providers/github';
+import { Prisma } from '@prisma/client';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from '@/lib/prisma';
 import type { NextAuthOptions } from 'next-auth';
 import type { Adapter } from 'next-auth/adapters';
 
-type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+// Explicit type for the transaction client to satisfy $transaction callback
+type TransactionClient = Prisma.TransactionClient;
 
 /**
  * Ensure the specified user has a default project; create and assign one if missing.

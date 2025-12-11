@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
-import { getUnclusteredFeedbackIds, getFeedbackItem } from '@/lib/redis';
 import {
   VectorStore,
   generateFeedbackEmbedding,
@@ -22,6 +21,43 @@ const clusterItemsKey = (projectId: string, clusterId: string) =>
 const clusterAllKey = (projectId: string) => `clusters:${projectId}:all`;
 const feedbackKey = (projectId: string, feedbackId: string) => `feedback:${projectId}:${feedbackId}`;
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
+
+async function getUnclusteredFeedbackIds(projectId: string): Promise<string[]> {
+  const ids = await redis.smembers(feedbackUnclusteredKey(projectId));
+  return (ids as string[]) || [];
+}
+
+async function getFeedbackItemById(projectId: string, id: string): Promise<FeedbackItem | null> {
+  const data = await redis.hgetall(feedbackKey(projectId, id));
+  if (!data || Object.keys(data).length === 0) return null;
+
+  let metadata: any = data.metadata;
+  if (typeof metadata === 'string') {
+    try {
+      metadata = JSON.parse(metadata);
+    } catch {
+      metadata = {};
+    }
+  }
+
+  const github_issue_number =
+    typeof data.github_issue_number === 'string' ? parseInt(data.github_issue_number, 10) : undefined;
+
+  return {
+    id,
+    source: (data.source as FeedbackItem['source']) || 'manual',
+    external_id: data.external_id as string | null | undefined,
+    title: (data.title as string) || '',
+    body: (data.body as string) || '',
+    repo: data.repo as string | undefined,
+    github_repo_url: data.github_repo_url as string | undefined,
+    github_issue_number: isNaN(github_issue_number || NaN) ? undefined : github_issue_number,
+    github_issue_url: data.github_issue_url as string | undefined,
+    status: data.status as FeedbackItem['status'],
+    metadata: metadata || {},
+    created_at: (data.created_at as string) || new Date().toISOString(),
+  };
+}
 
 // Similarity threshold - see /docs/DESIGN_DECISIONS.md for rationale
 const SIMILARITY_THRESHOLD = 0.72;
@@ -102,7 +138,7 @@ export async function POST(request: Request) {
 
     // Fetch feedback items in batches to avoid connection overload
     console.log(`[Vector Clustering] Fetching ${unclusteredIds.length} feedback items in batches of ${BATCH_SIZE}...`);
-    const feedbackItems = await batchProcess(unclusteredIds, (id) => getFeedbackItem(projectId, id));
+    const feedbackItems = await batchProcess(unclusteredIds, (id) => getFeedbackItemById(projectId, id));
     const validFeedback: FeedbackItem[] = [];
     const missingFeedbackIds: Set<string> = new Set();
 
@@ -193,7 +229,7 @@ export async function POST(request: Request) {
       if (feedbackIds.length === 0) continue;
 
       // Fetch feedback items for summary
-      const items = await Promise.all(feedbackIds.map((id) => getFeedbackItem(projectId, id)));
+      const items = await Promise.all(feedbackIds.map((id) => getFeedbackItemById(projectId, id)));
       const validItems = items.filter((item): item is FeedbackItem => item !== null);
 
       if (validItems.length > 0) {

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { randomUUID } from 'crypto';
-import { getUnclusteredFeedbackIds, getFeedbackItem, getClusterIds } from '@/lib/redis';
 import {
   clusterFeedbackBatchOptimized,
   generateClusterSummary,
@@ -22,6 +21,48 @@ const clusterItemsKey = (projectId: string, clusterId: string) =>
 const clusterAllKey = (projectId: string) => `clusters:${projectId}:all`;
 const feedbackKey = (projectId: string, feedbackId: string) => `feedback:${projectId}:${feedbackId}`;
 const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
+
+async function getUnclusteredFeedbackIds(projectId: string): Promise<string[]> {
+  const ids = await redis.smembers(feedbackUnclusteredKey(projectId));
+  return (ids as string[]) || [];
+}
+
+async function getFeedbackItemById(projectId: string, id: string): Promise<FeedbackItem | null> {
+  const data = await redis.hgetall(feedbackKey(projectId, id));
+  if (!data || Object.keys(data).length === 0) return null;
+
+  let metadata: any = data.metadata;
+  if (typeof metadata === 'string') {
+    try {
+      metadata = JSON.parse(metadata);
+    } catch {
+      metadata = {};
+    }
+  }
+
+  const github_issue_number =
+    typeof data.github_issue_number === 'string' ? parseInt(data.github_issue_number, 10) : undefined;
+
+  return {
+    id,
+    source: (data.source as FeedbackItem['source']) || 'manual',
+    external_id: data.external_id as string | null | undefined,
+    title: (data.title as string) || '',
+    body: (data.body as string) || '',
+    repo: data.repo as string | undefined,
+    github_repo_url: data.github_repo_url as string | undefined,
+    github_issue_number: isNaN(github_issue_number || NaN) ? undefined : github_issue_number,
+    github_issue_url: data.github_issue_url as string | undefined,
+    status: data.status as FeedbackItem['status'],
+    metadata: metadata || {},
+    created_at: (data.created_at as string) || new Date().toISOString(),
+  };
+}
+
+async function getClusterIds(projectId: string): Promise<string[]> {
+  const ids = await redis.smembers(clusterAllKey(projectId));
+  return (ids as string[]) || [];
+}
 
 /**
  * Apply all cluster and feedback updates to Redis in a single pipelined batch.
@@ -219,7 +260,7 @@ export async function POST(request: Request) {
     }
 
     // Fetch unclustered feedback items and track which IDs are missing
-    const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItem(projectId, id)));
+    const feedbackItems = await Promise.all(unclusteredIds.map((id) => getFeedbackItemById(projectId, id)));
     const validFeedback: FeedbackItem[] = [];
     const missingFeedbackIds: Set<string> = new Set();
 
@@ -316,7 +357,7 @@ export async function POST(request: Request) {
         let allFeedback = [...found];
         if (missing.length > 0) {
           const fetchedItems = await Promise.all(
-            missing.map((id) => getFeedbackItem(projectId, id))
+            missing.map((id) => getFeedbackItemById(projectId, id))
           );
           const validFetched = fetchedItems.filter((item): item is FeedbackItem => item !== null);
           allFeedback = [...allFeedback, ...validFetched];

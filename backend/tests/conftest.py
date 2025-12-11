@@ -3,8 +3,8 @@ from uuid import UUID
 
 import pytest
 
-from backend.models import Project, User
-from backend.store import (
+from models import Project, User
+from store import (
     InMemoryStore,
     clear_clusters,
     clear_feedback_items,
@@ -24,7 +24,7 @@ def mock_store():
     """
     memory_store = InMemoryStore()
     # Replace global store
-    import backend.store as store_module
+    import store as store_module
 
     store_module._STORE = memory_store
     yield memory_store

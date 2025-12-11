@@ -3,9 +3,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from backend.main import app
-from backend.models import FeedbackItem, IssueCluster
-from backend.store import (
+from main import app
+from models import FeedbackItem, IssueCluster
+from store import (
     add_cluster,
     add_feedback_item,
     clear_clusters,
@@ -124,7 +124,7 @@ def test_start_fix_updates_cluster_status(project_context):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    updated_cluster = get_cluster(cluster.id)
+    updated_cluster = get_cluster(pid, cluster.id)
     assert updated_cluster.status == "fixing"
 
 

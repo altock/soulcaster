@@ -49,7 +49,6 @@ jest.mock('@google/genai', () => ({
 import {
   VectorStore,
   FeedbackVector,
-  SimilarFeedback,
   ClusterAssignment,
 } from '@/lib/vector';
 

@@ -281,14 +281,14 @@ export default function SourceConfig() {
                 type="button"
                 onClick={async () => {
                   try {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/admin/trigger-poll`, {
+                    const res = await fetch('/api/admin/trigger-poll', {
                       method: 'POST',
                     });
                     const data = await res.json();
                     if (res.ok) {
                       alert(`Poll triggered: ${data.message}`);
                     } else {
-                      alert(`Failed to trigger poll: ${data.detail || 'Unknown error'}`);
+                      alert(`Failed to trigger poll: ${data.detail || data.error || 'Unknown error'}`);
                     }
                   } catch (err) {
                     alert('Failed to connect to backend poller');

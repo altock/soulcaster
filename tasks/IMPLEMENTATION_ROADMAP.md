@@ -13,6 +13,7 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 ## Phase 1: Stabilize Ingestion + feedback:unclustered Semantics
 **Worktree:** `worktrees/system-readiness`  
 **Reference:** `documentation/ingestion_polling_architecture_plan.md` Phase 1
+**Note:** Detailed day-by-day tasks from `tasks/PHASE1_CHECKLIST.md` have been consolidated here.
 
 ### Backend Tasks
 - [x] **File: `backend/store.py`**
@@ -24,22 +25,22 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
   - [x] Add helper: `get_unclustered_feedback()` → returns all items in `feedback:unclustered`
   - [x] Add helper: `remove_from_unclustered(feedback_id)` → removes from set when clustered
 
-- [ ] **File: `backend/models.py`**
-  - [ ] Verify `FeedbackItem` has all required fields: `id`, `source`, `created_at`, `raw_text`, `embedding`
-  - [ ] Add validation to ensure consistent shape across all sources
+- [x] **File: `backend/models.py`**
+  - [x] Verify `FeedbackItem` has all required fields: `id`, `source`, `created_at`, `raw_text`, `embedding`
+  - [x] Add validation to ensure consistent shape across all sources
 
 - [ ] **File: `backend/main.py`**
   - [ ] Review all ingest endpoints:
     - `/ingest/reddit` ✓
     - `/ingest/sentry` ✓
     - `/ingest/manual` (via `/feedback` POST)
-    - `/ingest/github/sync/{name}` ✓
+    - `/ingest/github/sync/{name}` ✓ (moved ingestion to backend; frontend now proxies)
   - [ ] Ensure each normalizes to `FeedbackItem` before calling `store.add_feedback_item()`
   - [ ] Add consistent logging: `logger.info(f"Ingested {source} feedback: {feedback_id}")`
 
 ### Testing
 - [ ] **File: `backend/tests/test_ingestion.py`**
-  - [ ] Test `add_feedback_item()` writes to all 4 Redis keys
+  - [x] Test `add_feedback_item()` writes to all 4 Redis keys
   - [x] Test `feedback:unclustered` contains new items
   - [ ] Test each ingest endpoint produces consistent `FeedbackItem` shape
   - [x] Test duplicate detection (if implemented)
@@ -49,6 +50,9 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 - ✅ All ingest sources produce identical data shape
 - ✅ Tests cover happy path + edge cases
 - ✅ Redis key patterns documented in `documentation/db_design.md`
+- ✅ Ingest endpoints emit logging for `feedback_id` and `source`
+- 🎯 Tests target >80% coverage on store/ingestion paths
+- ℹ️ Current deployment supports GitHub ingestion only; Reddit/Sentry are deferred to Phase 2.
 
 ---
 
@@ -99,11 +103,12 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 **Reference:** `documentation/api_workers_architecture_plan.md` Phase 1
 
 ### Backend API (Read/Write)
-- [ ] **File: `backend/main.py`**
-  - [ ] Ensure these endpoints exist and work:
+- [x] **File: `backend/main.py`**
+  - [x] Ensure these endpoints exist and work:
     - `GET /feedback` → list all feedback
     - `GET /feedback/{id}` → single item
     - `POST /feedback` → manual ingestion
+    - `PUT /feedback/{id}` → update feedback
     - `GET /clusters` → list clusters
     - `GET /clusters/{id}` → single cluster
     - `POST /clusters/{id}/start_fix` → trigger agent (backend owns this)
@@ -118,11 +123,10 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
   - [ ] Add `update_cluster_pr_url(cluster_id, pr_url)` if missing
 
 ### Dashboard API (Proxy Only)
-- [ ] **Files: `dashboard/app/api/**/route.ts`**
-  - [ ] Review all route handlers
-  - [ ] Identify which ones write directly to Redis (anti-pattern)
-  - [ ] Plan migration: these should call backend endpoints instead
-  - [ ] Document current state in comments: `// TODO: Should proxy to backend POST /feedback`
+- [x] **Files: `dashboard/app/api/**/route.ts`**
+  - [x] Review all route handlers
+  - [x] Identify which ones write directly to Redis (anti-pattern)
+  - [x] Migrate: proxy feedback/clusters/stats/Reddit config to backend endpoints
 
 ### Acceptance Criteria
 - ✅ Backend owns all writes to Redis
@@ -134,6 +138,7 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 ## Phase 4: Build Clustering Worker
 **Worktree:** `worktrees/system-readiness`  
 **Reference:** `documentation/clustering_worker_architecture_plan.md`
+**Current state:** Clustering runs in dashboard today (`dashboard/lib/clustering.ts`, `dashboard/lib/vector.ts`, `/api/clusters/run`). This phase migrates that logic into a backend worker.
 
 ### Step 1: Extract Pure Clustering Module
 - [ ] **File: `backend/clustering.py`** (NEW)

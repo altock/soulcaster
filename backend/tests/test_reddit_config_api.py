@@ -2,8 +2,8 @@ import os
 
 from fastapi.testclient import TestClient
 
-from backend.main import app
-from backend.store import clear_config
+from main import app
+from store import clear_config
 
 client = TestClient(app)
 
