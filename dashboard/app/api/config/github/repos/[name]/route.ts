@@ -1,10 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
+import { requireProjectId } from '@/lib/project';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
+
+const projectReposKey = (projectId: string) => `github:repos:${projectId}`;
+const projectRepoKey = (projectId: string, fullName: string) => `github:repo:${projectId}:${fullName}`;
+const legacyReposKey = 'github:repos';
+const legacyRepoKey = (fullName: string) => `github:repo:${fullName}`;
 
 /**
  * DELETE /api/config/github/repos/[name]
@@ -12,10 +18,11 @@ const redis = new Redis({
  * Name should be URL-encoded "owner/repo" (e.g., "anthropics%2Fclaude-code")
  */
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
+    const projectId = await requireProjectId(request);
     const { name } = await params;
 
     // Decode URL-encoded repo name (e.g., "anthropics%2Fclaude-code" -> "anthropics/claude-code")
@@ -23,20 +30,24 @@ export async function DELETE(
 
     console.log(`[GitHub] Removing repo: ${repoName}`);
 
-    // Check if repo exists
-    const repoData = await redis.hgetall(`github:repo:${repoName}`);
-    if (!repoData || Object.keys(repoData).length === 0) {
+    // Check if repo exists in project scope or legacy scope
+    const [projectData, legacyData] = await Promise.all([
+      redis.hgetall(projectRepoKey(projectId, repoName)),
+      redis.hgetall(legacyRepoKey(repoName)),
+    ]);
+
+    if ((!projectData || Object.keys(projectData).length === 0) && (!legacyData || Object.keys(legacyData).length === 0)) {
       return NextResponse.json(
         { error: 'Repository not found' },
         { status: 404 }
       );
     }
 
-    // Remove repo configuration
-    await redis.del(`github:repo:${repoName}`);
-
-    // Remove from repos set
-    await redis.srem('github:repos', repoName);
+    // Remove repo configuration (both project-scoped and legacy to avoid re-migration)
+    await redis.del(projectRepoKey(projectId, repoName));
+    await redis.srem(projectReposKey(projectId), repoName);
+    await redis.del(legacyRepoKey(repoName));
+    await redis.srem(legacyReposKey, repoName);
 
     // Optionally: Remove associated feedback items (or keep them for history)
     // For now, we'll keep the feedback items but they won't be updated

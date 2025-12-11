@@ -1,20 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
-import { fetchRepoIssues, issueToFeedbackItem, logRateLimit } from '@/lib/github';
+import { getGitHubToken } from '@/lib/auth';
 import { getProjectId } from '@/lib/project';
-import type { GitHubRepo, FeedbackItem } from '@/types';
+import type { GitHubRepo } from '@/types';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
+const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+
 // Project-scoped Redis key helpers (matching lib/redis.ts patterns)
-const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${id}`;
-const feedbackCreatedKey = (projectId: string) => `feedback:created:${projectId}`;
-const feedbackSourceKey = (projectId: string, source: string) => `feedback:source:${projectId}:${source}`;
-const feedbackUnclusteredKey = (projectId: string) => `feedback:unclustered:${projectId}`;
 const repoKey = (projectId: string, repoName: string) => `github:repo:${projectId}:${repoName}`;
+const projectReposKey = (projectId: string) => `github:repos:${projectId}`;
+const legacyReposKey = 'github:repos';
+const legacyRepoKey = (repoName: string) => `github:repo:${repoName}`;
+
+async function migrateLegacyReposToProject(projectId: string, existing: string[] = []): Promise<string[]> {
+  const legacyNames = (await redis.smembers(legacyReposKey)) as string[];
+  if (!legacyNames || legacyNames.length === 0) return [];
+
+  const existingSet = new Set(existing);
+  const migrated: string[] = [];
+  for (const name of legacyNames) {
+    if (existingSet.has(name)) continue;
+    const legacyData = await redis.hgetall(legacyRepoKey(name));
+    if (legacyData && Object.keys(legacyData).length > 0) {
+      await redis.hset(repoKey(projectId, name), {
+        ...legacyData,
+        enabled: legacyData.enabled ?? 'true',
+      });
+      migrated.push(name);
+    }
+  }
+
+  if (migrated.length > 0) {
+    const pipeline = redis.pipeline();
+    migrated.forEach((name) => pipeline.sadd(projectReposKey(projectId), name));
+    await pipeline.exec();
+  }
+
+  return migrated;
+}
 
 /**
  * Synchronizes all enabled GitHub repositories stored in Redis and ingests their issues as feedback items.
@@ -35,14 +63,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    const githubToken = await getGitHubToken();
+    if (!githubToken) {
+      return NextResponse.json(
+        { error: 'GitHub authentication required. Please sign in with GitHub.' },
+        { status: 401 }
+      );
+    }
+
     console.log(`[GitHub Sync] Starting sync for all repos (project: ${projectId})`);
 
-    // Log initial rate limit
-    await logRateLimit();
-
     // Get all configured repos
-    const repoNames = (await redis.smembers('github:repos')) as string[];
-    console.log(`[GitHub Sync] Found ${repoNames.length} configured repos`);
+    let repoNames = (await redis.smembers(projectReposKey(projectId))) as string[];
+    const migrated = await migrateLegacyReposToProject(projectId, repoNames);
+    if (migrated.length > 0) {
+      const deduped = new Set<string>([...repoNames, ...migrated]);
+      repoNames = Array.from(deduped);
+    }
+    console.log(`[GitHub Sync] Found ${repoNames.length} configured repos for project ${projectId}`);
 
     if (repoNames.length === 0) {
       return NextResponse.json({
@@ -57,11 +95,27 @@ export async function POST(request: NextRequest) {
     for (const repoName of repoNames) {
       repoConfigPipeline.hgetall(repoKey(projectId, repoName));
     }
-    const repoConfigResults = await repoConfigPipeline.exec();
+    const repoConfigResults = (await repoConfigPipeline.exec()) as Array<Record<string, string> | null>;
 
     const repos: GitHubRepo[] = [];
     for (let i = 0; i < repoNames.length; i++) {
-      const repoData = repoConfigResults[i] as Record<string, string> | null;
+      const raw = repoConfigResults[i];
+      let repoData: Record<string, string> | null =
+        raw && Object.keys(raw).length > 0 ? (raw as Record<string, string>) : null;
+
+      // Fallback to legacy repo hash if project-scoped hash is missing
+      if (!repoData || Object.keys(repoData).length === 0) {
+        const legacyData = (await redis.hgetall(legacyRepoKey(repoNames[i]))) as Record<string, string>;
+        if (legacyData && Object.keys(legacyData).length > 0) {
+          repoData = legacyData;
+          // Persist into project scope for future runs
+          await redis.hset(repoKey(projectId, repoNames[i]), {
+            ...legacyData,
+            enabled: legacyData.enabled ?? 'true',
+          });
+        }
+      }
+
       if (repoData && repoData.enabled === 'true') {
         repos.push({
           owner: repoData.owner as string,
@@ -84,114 +138,47 @@ export async function POST(request: NextRequest) {
     // Sync each repo
     for (const repo of repos) {
       try {
-        console.log(`[GitHub Sync] Syncing ${repo.full_name}...`);
+        const url = `${backendUrl}/ingest/github/sync/${encodeURIComponent(
+          repo.full_name
+        )}?project_id=${projectId}`;
 
-        // Fetch issues (incremental if last_synced exists)
-        const { issues, prCount } = await fetchRepoIssues(repo.owner, repo.repo, repo.last_synced);
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-GitHub-Token': githubToken,
+          },
+          signal: AbortSignal.timeout(60000), // allow large repos
+        });
 
-        if (issues.length === 0) {
+        if (!response.ok) {
+          console.error(`[GitHub Sync] Backend returned ${response.status} for ${repo.full_name}`);
           results.push({
             repo: repo.full_name,
-            new: 0,
-            updated: 0,
-            closed: 0,
-            total: 0,
-            ignored_prs: prCount,
+            error: 'Sync failed',
           });
           continue;
         }
 
-        // Convert issues to feedback items
-        const feedbackItems: FeedbackItem[] = issues.map((issue) =>
-          issueToFeedbackItem(issue, repo.full_name)
-        );
-
-        // OPTIMIZATION: Batch check for existing issues in a single pipeline
-        const existsCheckPipeline = redis.pipeline();
-        for (const item of feedbackItems) {
-          existsCheckPipeline.hget(feedbackKey(projectId, item.id), 'clustered');
-        }
-        const existsResults = await existsCheckPipeline.exec();
-
-        // Prepare batch write pipeline
-        const writePipeline = redis.pipeline();
-        let newCount = 0;
-        let updatedCount = 0;
-        let closedCount = 0;
-
-        for (let i = 0; i < feedbackItems.length; i++) {
-          const feedbackItem = feedbackItems[i];
-          const existingClusteredValue = existsResults[i] as string | null;
-          const exists = existingClusteredValue !== null;
-
-          // Store feedback item
-          writePipeline.hset(feedbackKey(projectId, feedbackItem.id), {
-            id: feedbackItem.id,
-            project_id: projectId,
-            source: feedbackItem.source,
-            external_id: feedbackItem.external_id || '',
-            title: feedbackItem.title,
-            body: feedbackItem.body,
-            repo: feedbackItem.repo || '',
-            github_issue_number: feedbackItem.github_issue_number?.toString() || '',
-            github_issue_url: feedbackItem.github_issue_url || '',
-            status: feedbackItem.status || 'open',
-            metadata: JSON.stringify(feedbackItem.metadata),
-            created_at: feedbackItem.created_at,
-            clustered: exists ? existingClusteredValue : 'false', // Preserve clustering state
-          });
-
-          // Add to created sorted set (by timestamp)
-          const timestamp = new Date(feedbackItem.created_at).getTime();
-          writePipeline.zadd(feedbackCreatedKey(projectId), { score: timestamp, member: feedbackItem.id });
-
-          // Add to source-specific sorted set for filtering
-          writePipeline.zadd(feedbackSourceKey(projectId, 'github'), {
-            score: timestamp,
-            member: feedbackItem.id,
-          });
-
-          // Manage unclustered set based on issue status
-          if (feedbackItem.status === 'closed') {
-            // Remove closed issues from unclustered set
-            writePipeline.srem(feedbackUnclusteredKey(projectId), feedbackItem.id);
-            closedCount++;
-          } else if (!exists) {
-            // New open issue - add to unclustered
-            writePipeline.sadd(feedbackUnclusteredKey(projectId), feedbackItem.id);
-            newCount++;
-          } else {
-            // Existing open issue - updated
-            updatedCount++;
-          }
-        }
-
-        // Update repo metadata
-        const now = new Date().toISOString();
-        writePipeline.hset(repoKey(projectId, repo.full_name), {
-          last_synced: now,
-          issue_count: (repo.issue_count || 0) + newCount,
-        });
-
-        // Execute all writes in a single batch
-        await writePipeline.exec();
+        const data = await response.json();
+        const newCount = data.new_issues ?? 0;
+        const updatedCount = data.updated_issues ?? 0;
+        const closedCount = data.closed_issues ?? 0;
+        const ignoredPrs = data.ignored_prs ?? 0;
+        const totalIssues = data.total_issues ?? 0;
 
         results.push({
           repo: repo.full_name,
           new: newCount,
           updated: updatedCount,
           closed: closedCount,
-          total: issues.length,
-          ignored_prs: prCount,
+          total: totalIssues,
+          ignored_prs: ignoredPrs,
         });
 
         totalNew += newCount;
         totalUpdated += updatedCount;
         totalClosed += closedCount;
-
-        console.log(
-          `[GitHub Sync] ${repo.full_name}: ${newCount} new, ${updatedCount} updated, ${closedCount} closed`
-        );
       } catch (error) {
         console.error(`[GitHub Sync] Error syncing ${repo.full_name}:`, error);
         results.push({
@@ -200,9 +187,6 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-
-    // Log final rate limit
-    await logRateLimit();
 
     console.log('[GitHub Sync] Sync complete');
 
