@@ -170,6 +170,27 @@ def test_sync_github_repo_dedup_and_update_counts(project_context, monkeypatch):
     assert len(items) == 1
 
 
+class _FakeRedisPipeline:
+    """
+    Fake pipeline for _FakeRedis to support batched operations in tests.
+    """
+
+    def __init__(self, fake_redis):
+        self._fake = fake_redis
+        self._commands = []
+
+    def hgetall(self, key):
+        self._commands.append(("hgetall", key))
+        return self
+
+    def execute(self):
+        results = []
+        for cmd, key in self._commands:
+            if cmd == "hgetall":
+                results.append(self._fake.hgetall(key))
+        return results
+
+
 class _FakeRedis:
     """
     Minimal Redis-compatible stub for RedisStore tests (no external services).
@@ -180,6 +201,9 @@ class _FakeRedis:
         self._strings = {}
         self._sets = {}
         self._zsets = {}
+
+    def pipeline(self):
+        return _FakeRedisPipeline(self)
 
     # String ops
     def set(self, key, value):

@@ -67,6 +67,53 @@ class UpstashRESTClient:
         data = resp.json()
         return data.get("result")
 
+    def pipeline_exec(self, commands: List[List[str]]) -> List[Any]:
+        """
+        Execute multiple Redis commands in a single HTTP request using Upstash pipelining.
+        
+        Parameters:
+            commands: List of commands, each command is a list of strings
+                      e.g. [["HGETALL", "key1"], ["HGETALL", "key2"]]
+        
+        Returns:
+            List of results, one per command. Each result contains {"result": ...} or {"error": ...}
+        """
+        if not commands:
+            return []
+        resp = self.session.post(
+            f"{self.base_url}/pipeline",
+            headers={"Authorization": f"Bearer {self.token}"},
+            json=commands,
+            timeout=30,  # Longer timeout for batch operations
+        )
+        resp.raise_for_status()
+        results = resp.json()
+        # Results are in format [{"result": ...}, {"result": ...}, ...]
+        return [r.get("result") for r in results]
+
+    def hgetall_batch(self, keys: List[str]) -> List[Dict[str, str]]:
+        """
+        Batch fetch multiple hashes in a single pipeline request.
+        
+        Parameters:
+            keys: List of Redis hash keys to fetch
+        
+        Returns:
+            List of dicts, one per key. Empty dict if key doesn't exist.
+        """
+        if not keys:
+            return []
+        commands = [["HGETALL", key] for key in keys]
+        results = self.pipeline_exec(commands)
+        parsed = []
+        for result in results:
+            if not result:
+                parsed.append({})
+            else:
+                # Convert list to dict: ["field1", "value1", ...] -> {"field1": "value1", ...}
+                parsed.append(dict(zip(result[0::2], result[1::2])))
+        return parsed
+
     def set(self, key: str, value: str):
         return self._cmd("SET", key, value)
 
@@ -716,6 +763,7 @@ class RedisStore:
         """
         Retrieve all stored FeedbackItem objects for a project ordered by their creation time.
         
+        Uses batched fetching for better performance when using Upstash REST.
         Skips entries whose stored IDs are not valid UUIDs or whose referenced items cannot be loaded.
         
         Returns:
@@ -726,14 +774,32 @@ class RedisStore:
             return self._get_all_feedback_items_global()
 
         ids = self._zrange(self._feedback_created_key(project_id), 0, -1)
+        if not ids:
+            return []
+        
+        # OPTIMIZATION: Batch fetch all feedback items in one request
+        keys = [self._feedback_key(project_id, item_id) for item_id in ids]
+        batch_results = self._hgetall_batch(keys)
+        
         items: List[FeedbackItem] = []
-        for item_id in ids:
+        for i, data in enumerate(batch_results):
+            if not data:
+                continue
             try:
-                # ids are stored as strings in redis, convert to UUID
-                item = self.get_feedback_item(project_id, UUID(item_id))
-                if item:
-                    items.append(item)
-            except ValueError:
+                # Parse fields
+                if isinstance(data.get("created_at"), str):
+                    data["created_at"] = _iso_to_dt(data["created_at"])
+                
+                # Parse metadata from JSON string if it's a string
+                if isinstance(data.get("metadata"), str):
+                    try:
+                        data["metadata"] = json.loads(data["metadata"])
+                    except json.JSONDecodeError:
+                        data["metadata"] = {}
+                
+                items.append(FeedbackItem(**data))
+            except (ValueError, TypeError) as e:
+                logger.debug("Failed to parse FeedbackItem at index %d: %s", i, e)
                 continue
         return items
 
@@ -741,6 +807,7 @@ class RedisStore:
         """
         Return all feedback items for a project that have not yet been assigned to a cluster.
         
+        Uses batched fetching for better performance when using Upstash REST.
         Invalid or missing feedback IDs encountered in the store are ignored and not included in the result.
         
         Returns:
@@ -748,13 +815,32 @@ class RedisStore:
         """
         unclustered_key = self._feedback_unclustered_key(project_id)
         unclustered_ids = self._smembers(unclustered_key)
+        if not unclustered_ids:
+            return []
+        
+        # OPTIMIZATION: Batch fetch all feedback items in one request
+        keys = [self._feedback_key(project_id, item_id) for item_id in unclustered_ids]
+        batch_results = self._hgetall_batch(keys)
+        
         items: List[FeedbackItem] = []
-        for item_id in unclustered_ids:
+        for data in batch_results:
+            if not data:
+                continue
             try:
-                item = self.get_feedback_item(project_id, UUID(item_id))
-                if item:
-                    items.append(item)
-            except ValueError:
+                # Parse fields
+                if isinstance(data.get("created_at"), str):
+                    data["created_at"] = _iso_to_dt(data["created_at"])
+                
+                # Parse metadata from JSON string if it's a string
+                if isinstance(data.get("metadata"), str):
+                    try:
+                        data["metadata"] = json.loads(data["metadata"])
+                    except json.JSONDecodeError:
+                        data["metadata"] = {}
+                
+                items.append(FeedbackItem(**data))
+            except (ValueError, TypeError) as e:
+                logger.debug("Failed to parse unclustered FeedbackItem: %s", e)
                 continue
         return items
 
@@ -1264,6 +1350,28 @@ class RedisStore:
             return self.client.hgetall(key)
         else:
             return self.client.hgetall(key)
+
+    def _hgetall_batch(self, keys: List[str]) -> List[Dict[str, str]]:
+        """
+        Batch fetch multiple hashes in a single request for better performance.
+        
+        Parameters:
+            keys: List of Redis hash keys to fetch
+        
+        Returns:
+            List of dicts, one per key. Empty dict if key doesn't exist.
+        """
+        if not keys:
+            return []
+        if self.mode == "redis":
+            # Use redis-py pipeline for batch fetching
+            pipe = self.client.pipeline()
+            for key in keys:
+                pipe.hgetall(key)
+            return pipe.execute()
+        else:
+            # Use REST client's batch method
+            return self.client.hgetall_batch(keys)
 
 
 # ---------- Store selector ----------
