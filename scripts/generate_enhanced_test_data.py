@@ -982,9 +982,13 @@ def create_issues(repo_owner: str, repo_name: str, token: str, cluster_types: Op
                     created_count += 1
                     break
                 elif response.status_code in [403, 429]:
-                    print(f"  ⚠️  Rate limited, waiting {RATE_LIMIT_WAIT}s...")
-                    time.sleep(RATE_LIMIT_WAIT)
                     retry_count += 1
+                    if retry_count >= MAX_RETRIES:
+                        print(f"  ❌ Rate limited after {MAX_RETRIES} attempts")
+                        failed_count += 1
+                        break
+                    print(f"  ⚠️  Rate limited, waiting {RATE_LIMIT_WAIT}s... ({retry_count}/{MAX_RETRIES})")
+                    time.sleep(RATE_LIMIT_WAIT)
                 else:
                     print(f"  ❌ Failed: {response.status_code} - {response.text[:100]}")
                     failed_count += 1
