@@ -319,7 +319,8 @@ async def ingest_github_sync(
     logger.info(f"repo_name: {repo_name}")
     logger.info(f"project_id: {project_id}")
     logger.info(f"x_github_token present: {bool(x_github_token)}")
-    logger.info(f"x_github_token prefix: {x_github_token[:20] + '...' if x_github_token else 'None'}")
+    if x_github_token:
+        logger.info(f"x_github_token length: {len(x_github_token)}")
     logger.debug(f"All headers: {dict(request.headers)}")
     
     if not project_id:
