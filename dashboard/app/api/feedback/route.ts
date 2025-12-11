@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     if (repo) params.set('repo', repo);
 
     const response = await fetch(`${backendUrl}/feedback?${params.toString()}`, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000), // Increased timeout to 30s
     });
     if (!response.ok) {
       console.error(`Backend returned ${response.status} for feedback list`);
@@ -89,7 +89,7 @@ export async function PUT(request: NextRequest) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000), // Increased timeout to 30s
     });
     if (!response.ok) {
       console.error(`Backend returned ${response.status} for feedback update ${id}`);

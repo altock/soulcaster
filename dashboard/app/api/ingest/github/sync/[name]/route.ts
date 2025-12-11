@@ -39,7 +39,7 @@ export async function POST(
         'Content-Type': 'application/json',
         'X-GitHub-Token': githubToken,
       },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(60000), // Increased timeout to 60s for large repos
     });
 
     if (!response.ok) {

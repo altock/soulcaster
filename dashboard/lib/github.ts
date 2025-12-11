@@ -76,17 +76,19 @@ export function parseRepoString(repoString: string): { owner: string; repo: stri
  * the provided timestamp.
  *
  * @param since - Optional ISO 8601 timestamp; when provided, only issues updated since this time are returned
+ * @param maxIssues - Maximum number of issues to fetch (default: 200). Set to prevent timeouts on large repos.
  * @returns An object containing `issues` — an array of issue objects with pull requests removed, and `prCount` — the number of pull requests filtered out
  */
 export async function fetchRepoIssues(
   owner: string,
   repo: string,
-  since?: string
+  since?: string,
+  maxIssues: number = 200
 ): Promise<{ issues: any[]; prCount: number }> {
   const octokit = await getOctokit();
   const token = await getGitHubToken();
 
-  console.log(`[GitHub] Fetching issues for ${owner}/${repo}${since ? ` since ${since}` : ''}`);
+  console.log(`[GitHub] Fetching issues for ${owner}/${repo}${since ? ` since ${since}` : ''} (max: ${maxIssues})`);
   console.log(`[GitHub] Using token: ${token ? 'Yes' : 'No'}`);
 
   try {
@@ -104,19 +106,38 @@ export async function fetchRepoIssues(
       options.since = since;
     }
 
-    const issues = await octokit.paginate(
+    // Use paginate with a custom iterator to limit total issues fetched
+    // This prevents timeouts on large repositories
+    const issues: any[] = [];
+    let prCount = 0;
+    let limitReached = false;
+
+    for await (const response of octokit.paginate.iterator(
       octokit.rest.issues.listForRepo,
       options
-    );
+    )) {
+      for (const issue of response.data) {
+        if (issue.pull_request) {
+          prCount++;
+        } else {
+          issues.push(issue);
+          // Stop if we've hit the issue limit
+          if (issues.length >= maxIssues) {
+            console.log(`[GitHub] Reached max issues limit (${maxIssues}), stopping pagination`);
+            limitReached = true;
+            break;
+          }
+        }
+      }
+      
+      if (limitReached) {
+        break;
+      }
+    }
 
-    // Filter out pull requests
-    const issuesOnly = issues.filter((issue: any) => !issue.pull_request);
+    console.log(`[GitHub] Fetched ${issues.length} issues (filtered ${prCount} PRs)`);
 
-    const prCount = issues.length - issuesOnly.length;
-    console.log(`[GitHub] Raw issues fetched: ${issues.length}`);
-    console.log(`[GitHub] Fetched ${issuesOnly.length} issues (filtered ${prCount} PRs)`);
-
-    return { issues: issuesOnly, prCount };
+    return { issues, prCount };
   } catch (error: any) {
     console.error(`[GitHub] Error fetching issues for ${owner}/${repo}:`, error.message);
     throw new Error(`Failed to fetch issues: ${error.message}`);

@@ -7,7 +7,14 @@ import main as backend_main
 from github_client import issue_to_feedback_item
 from main import app
 from models import FeedbackItem
-from store import get_all_feedback_items, get_unclustered_feedback, RedisStore
+from store import (
+    get_all_feedback_items,
+    get_unclustered_feedback,
+    add_feedback_items_batch,
+    get_feedback_by_external_ids_batch,
+    remove_from_unclustered_batch,
+    RedisStore,
+)
 
 client = TestClient(app)
 
@@ -170,6 +177,70 @@ def test_sync_github_repo_dedup_and_update_counts(project_context, monkeypatch):
     assert len(items) == 1
 
 
+class _FakeRedisPipeline:
+    """
+    Fake pipeline for _FakeRedis to support batched operations in tests.
+    """
+
+    def __init__(self, fake_redis):
+        self._fake = fake_redis
+        self._commands = []
+
+    def hgetall(self, key):
+        self._commands.append(("hgetall", key))
+        return self
+
+    def hset(self, key, mapping=None, **kwargs):
+        self._commands.append(("hset", key, mapping or kwargs))
+        return self
+
+    def zadd(self, key, mapping):
+        self._commands.append(("zadd", key, mapping))
+        return self
+
+    def sadd(self, key, member):
+        self._commands.append(("sadd", key, member))
+        return self
+
+    def srem(self, key, member):
+        self._commands.append(("srem", key, member))
+        return self
+
+    def set(self, key, value):
+        self._commands.append(("set", key, value))
+        return self
+
+    def get(self, key):
+        self._commands.append(("get", key))
+        return self
+
+    def execute(self):
+        results = []
+        for cmd, *args in self._commands:
+            if cmd == "hgetall":
+                results.append(self._fake.hgetall(args[0]))
+            elif cmd == "hset":
+                self._fake.hset(args[0], mapping=args[1])
+                results.append(True)
+            elif cmd == "zadd":
+                self._fake.zadd(args[0], args[1])
+                results.append(True)
+            elif cmd == "sadd":
+                self._fake.sadd(args[0], args[1])
+                results.append(True)
+            elif cmd == "srem":
+                self._fake.srem(args[0], args[1])
+                results.append(True)
+            elif cmd == "set":
+                self._fake.set(args[0], args[1])
+                results.append(True)
+            elif cmd == "get":
+                results.append(self._fake.get(args[0]))
+            else:
+                raise NotImplementedError(f"_FakeRedisPipeline does not support command: {cmd}")
+        return results
+
+
 class _FakeRedis:
     """
     Minimal Redis-compatible stub for RedisStore tests (no external services).
@@ -180,6 +251,9 @@ class _FakeRedis:
         self._strings = {}
         self._sets = {}
         self._zsets = {}
+
+    def pipeline(self):
+        return _FakeRedisPipeline(self)
 
     # String ops
     def set(self, key, value):
@@ -305,3 +379,150 @@ def test_auto_cluster_feedback_github_titles(project_context):
 
     cluster = backend_main._auto_cluster_feedback(item)
     assert cluster.title == "GitHub: org/repo"
+
+
+def test_add_feedback_items_batch(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr("store._redis_client_from_env", lambda: fake)
+    monkeypatch.setattr("store._upstash_rest_client_from_env", lambda: None)
+    redis_store = RedisStore()
+
+    project_id = uuid4()
+    items = [
+        FeedbackItem(
+            id=uuid4(),
+            project_id=project_id,
+            source="github",
+            external_id="ext-1",
+            title="Item 1",
+            body="",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        ),
+        FeedbackItem(
+            id=uuid4(),
+            project_id=project_id,
+            source="github",
+            external_id="ext-2",
+            title="Item 2",
+            body="",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        ),
+    ]
+
+    redis_store.add_feedback_items_batch(items)
+    unclustered = redis_store.get_unclustered_feedback(str(project_id))
+    assert len(unclustered) == 2
+
+
+def test_get_feedback_by_external_ids_batch(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr("store._redis_client_from_env", lambda: fake)
+    monkeypatch.setattr("store._upstash_rest_client_from_env", lambda: None)
+    redis_store = RedisStore()
+
+    project_id = uuid4()
+    item = FeedbackItem(
+        id=uuid4(),
+        project_id=project_id,
+        source="github",
+        external_id="ext-batch",
+        title="Batch lookup",
+        body="",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+    redis_store.add_feedback_item(item)
+
+    found = redis_store.get_feedback_by_external_ids_batch(project_id, "github", ["ext-batch", "missing"])
+    assert "ext-batch" in found
+    assert found["ext-batch"].id == item.id
+    assert "missing" not in found
+
+
+def test_remove_from_unclustered_batch(monkeypatch):
+    fake = _FakeRedis()
+    monkeypatch.setattr("store._redis_client_from_env", lambda: fake)
+    monkeypatch.setattr("store._upstash_rest_client_from_env", lambda: None)
+    redis_store = RedisStore()
+
+    project_id = uuid4()
+    item1 = FeedbackItem(
+        id=uuid4(),
+        project_id=project_id,
+        source="github",
+        external_id="ext-remove-1",
+        title="Remove 1",
+        body="",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+    item2 = FeedbackItem(
+        id=uuid4(),
+        project_id=project_id,
+        source="github",
+        external_id="ext-remove-2",
+        title="Remove 2",
+        body="",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    redis_store.add_feedback_items_batch([item1, item2])
+    redis_store.remove_from_unclustered_batch([(item1.id, str(project_id)), (item2.id, str(project_id))])
+
+    unclustered = redis_store.get_unclustered_feedback(str(project_id))
+    assert len(unclustered) == 0
+
+
+def test_sync_github_repo_uses_batch_operations(project_context, monkeypatch):
+    pid = project_context["project_id"]
+    backend_main.GITHUB_SYNC_STATE.clear()
+
+    issue_open = {
+        "id": 200,
+        "number": 20,
+        "title": "Batch issue",
+        "body": "Body",
+        "state": "open",
+        "html_url": "https://github.com/org/repo/issues/20",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-02T00:00:00Z",
+        "labels": [],
+        "user": {"login": "alice"},
+        "assignees": [],
+    }
+
+    calls = {"lookup": 0, "add": 0, "remove": 0}
+
+    monkeypatch.setattr(
+        "main.fetch_repo_issues", lambda owner, repo, since=None, **kwargs: [issue_open]
+    )
+
+    orig_lookup = backend_main.get_feedback_by_external_ids_batch
+    orig_add = backend_main.add_feedback_items_batch
+    orig_remove = backend_main.remove_from_unclustered_batch
+
+    def track_lookup(project_id, source, external_ids):
+        calls["lookup"] += 1
+        return orig_lookup(project_id, source, external_ids)
+
+    def track_add(items):
+        calls["add"] += 1
+        return orig_add(items)
+
+    def track_remove(pairs):
+        calls["remove"] += 1
+        return orig_remove(pairs)
+
+    monkeypatch.setattr("main.get_feedback_by_external_ids_batch", track_lookup)
+    monkeypatch.setattr("main.add_feedback_items_batch", track_add)
+    monkeypatch.setattr("main.remove_from_unclustered_batch", track_remove)
+
+    resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert resp.status_code == 200
+    assert calls["lookup"] == 1
+    assert calls["add"] == 1
+    # No closed issues in this case, so remove may be 0
+    assert calls["remove"] in (0, 1)

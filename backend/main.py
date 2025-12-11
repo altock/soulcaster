@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from datetime import datetime, timezone
+import time
 from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
@@ -33,13 +34,16 @@ from models import FeedbackItem, IssueCluster, AgentJob, User, Project
 from store import (
     add_cluster,
     add_feedback_item,
+    add_feedback_items_batch,
     get_all_clusters,
     get_all_feedback_items,
     get_cluster,
     get_feedback_item,
     get_feedback_by_external_id,
+    get_feedback_by_external_ids_batch,
     update_feedback_item,
     remove_from_unclustered,
+    remove_from_unclustered_batch,
     clear_clusters,
     set_reddit_subreddits_for_project,
     get_reddit_subreddits_for_project,
@@ -342,7 +346,10 @@ async def ingest_github_sync(
     since = GITHUB_SYNC_STATE.get(state_key, {}).get("last_synced")
     logger.info(f"Syncing {repo_full_name}, since={since}")
 
+    overall_start = time.monotonic()
+
     try:
+        fetch_start = time.monotonic()
         logger.info(f"Fetching issues from GitHub API for {owner}/{repo}...")
         fetch_kwargs = {
             "since": since,
@@ -352,40 +359,90 @@ async def ingest_github_sync(
         if x_github_token:
             fetch_kwargs["token"] = x_github_token
         issues = fetch_repo_issues(owner, repo, **fetch_kwargs)
-        logger.info(f"Fetched {len(issues)} issues from GitHub")
+        logger.info(
+            "Fetched %d issues from GitHub (%.2fs)",
+            len(issues),
+            time.monotonic() - fetch_start,
+        )
     except Exception as exc:
         logger.exception(f"GitHub sync failed for {repo_full_name}")
         raise HTTPException(status_code=502, detail=f"GitHub sync failed: {exc}") from exc
+    if not issues:
+        return {
+            "success": True,
+            "repo": repo_full_name,
+            "new_issues": 0,
+            "updated_issues": 0,
+            "closed_issues": 0,
+            "total_issues": 0,
+            "last_synced": datetime.now(timezone.utc).isoformat(),
+            "project_id": project_id,
+            "synced_ids": [],
+        }
 
     new_count = 0
     updated_count = 0
     closed_count = 0
     synced_ids: List[str] = []
 
+    external_ids = [str(issue.get("id")) for issue in issues if issue.get("id") is not None]
+    existing_feedback_map = get_feedback_by_external_ids_batch(project_id, "github", external_ids)
+
+    feedback_items: List[FeedbackItem] = []
+    closed_pairs: List[Tuple[UUID, str]] = []
+    to_cluster: List[FeedbackItem] = []
+
     for issue in issues:
         external_id = str(issue.get("id"))
-        existing = get_feedback_by_external_id(project_id, "github", external_id)
+        existing = existing_feedback_map.get(external_id)
 
         if existing:
             # Refresh fields while preserving the stored UUID
-            refreshed = issue_to_feedback_item(issue, repo_full_name, project_id).model_copy(
+            feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id).model_copy(
                 update={"id": existing.id}
             )
-            feedback_item = refreshed
             updated_count += 1
         else:
             feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id)
             new_count += 1
 
-        add_feedback_item(feedback_item)
+        feedback_items.append(feedback_item)
 
         if issue.get("state") == "closed":
-            remove_from_unclustered(feedback_item.id, project_id)
+            closed_pairs.append((feedback_item.id, project_id))
             closed_count += 1
         else:
-            _auto_cluster_feedback(feedback_item)
+            to_cluster.append(feedback_item)
 
         synced_ids.append(str(feedback_item.id))
+
+    # Batch write all feedback items
+    write_start = time.monotonic()
+    add_feedback_items_batch(feedback_items)
+    logger.info(
+        "Wrote %d feedback items (%.2fs)",
+        len(feedback_items),
+        time.monotonic() - write_start,
+    )
+
+    # Batch remove closed items from unclustered
+    if closed_pairs:
+        prune_start = time.monotonic()
+        remove_from_unclustered_batch(closed_pairs)
+        logger.info(
+            "Removed %d closed items from unclustered (%.2fs)",
+            len(closed_pairs),
+            time.monotonic() - prune_start,
+        )
+
+    # Cluster open items
+    cluster_start = time.monotonic()
+    for item in to_cluster:
+        _auto_cluster_feedback(item)
+    if to_cluster:
+        logger.info(
+            "Clustered %d items (%.2fs)", len(to_cluster), time.monotonic() - cluster_start
+        )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     GITHUB_SYNC_STATE[state_key] = {
@@ -393,7 +450,13 @@ async def ingest_github_sync(
         "issue_count": str(len(issues)),
     }
 
-    logger.info(f"Sync complete: {new_count} new, {updated_count} updated, {closed_count} closed")
+    logger.info(
+        "Sync complete: %d new, %d updated, %d closed in %.2fs",
+        new_count,
+        updated_count,
+        closed_count,
+        time.monotonic() - overall_start,
+    )
     
     return {
         "success": True,
