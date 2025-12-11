@@ -4,8 +4,8 @@ This document provides a cost analysis for the Soulcaster architecture based on 
 
 ## 1. Executive Summary
 
-**Estimated Monthly Cost (MVP / Low Volume):** ~$100 - $150 / month
-**Estimated Monthly Cost (Growth / Medium Volume):** ~$300 - $500 / month
+**Estimated Monthly Cost (MVP / Low Volume):** ~$115 - $150 / month
+**Estimated Monthly Cost (Growth / Medium Volume):** ~$500 - $600 / month
 
 **Key Cost Drivers:**
 1.  **LLM Usage (Variable):** The "Generate Fix" feature is the most expensive per-unit operation due to large context windows (reading repo files) and complex reasoning.
@@ -78,24 +78,24 @@ This document provides a cost analysis for the Soulcaster architecture based on 
 
 ### E. AI & LLM Costs (The Variable Beast)
 **Provider:** Google Gemini (Vertex AI / AI Studio) + alternatives
-**Primary models:** Gemini 3.0 Pro (coding/reasoning), Gemini 2.5 Flash (clustering/summarization). No 3.0 Flash exists; 1.5 Flash/Pro are deprecated for new usage.
+**Primary models:** Gemini 3 Pro (coding/reasoning), Gemini 2.5 Flash (clustering/summarization). No 3.0 Flash exists; 1.5 Flash/Pro are deprecated for new usage.
 
 #### 1. Clustering & Summarization (Cheap)
 *   **Volume:** 100 feedback items/day.
 *   **Model:** Gemini 2.5 Flash (fast/cheap).
-*   **Official pricing (text, per-1k-char billing converted to tokens @~4 chars/token):** Input **~$0.10 / 1M tokens eq.**, Output **~$0.40 / 1M tokens eq.**
-*   **Estimate:** **<$3.00 / month** at this volume (embedding/summarization only).
+*   **Official pricing (text, per-1k-char billing converted to tokens @~4 chars/token):** Input **~$0.30 / 1M tokens eq.**, Output **~$2.50 / 1M tokens eq.**
+*   **Estimate:** **~$1.50 - $2.00 / month** for ~100 feedback items/day (assumes ~100k input + ~10k output tokens/day); still comfortably <$3.00 at this volume.
 
 #### 2. Coding Agent "Generate Fix" (Expensive)
 *   **Volume:** 5 fixes / day.
 *   **Context:** The agent reads code files. A small repo might be 50k tokens. A large one 200k+.
-*   **Model:** Gemini 3.0 Pro (billed per 1k characters; shown here as per-1M-token equivalents using ~4 chars/token).
-*   **Pricing (Approx):** Input **~$1.25 / 1M tokens eq.** (=$0.0003125 per 1k chars), Output **~$5.00 / 1M tokens eq.** (=$0.00125 per 1k chars).
-*   **Per Run Cost (example):**
-    *   Input: 100k tokens * $1.25/1M = **$0.125**
-    *   Output: 2k tokens * $5.00/1M = **$0.010**
-    *   **Total:** **~$0.14 per fix**
-*   **Monthly Cost (example):** 5 fixes/day * 30 days * ~$0.14 = **~$21.00**.
+*   **Model:** Gemini 3 Pro (billed per 1k characters; shown here as per-1M-token equivalents using ~4 chars/token).
+*   **Pricing (Vertex AI, ≤200k context):** Input **~$2.00 / 1M tokens eq.** (=$0.0005 per 1k chars), Output **~$12.00 / 1M tokens eq.** (=$0.003 per 1k chars). **Contexts >200k tokens are priced higher (~$4.00 in / ~$18.00 out per 1M).**
+*   **Per Run Cost (example, ≤200k ctx):**
+    *   Input: 100k tokens * $2.00/1M = **$0.20**
+    *   Output: 2k tokens * $12.00/1M = **$0.024**
+    *   **Total:** **~$0.22 per fix** (large repos >200k ctx can be ~$0.80+ per run with the higher tier).
+*   **Monthly Cost (example):** 5 fixes/day * 30 days * ~$0.22 = **~$33.00** (assumes ≤200k ctx; heavy repos will be higher).
 
 ---
 
@@ -142,9 +142,9 @@ If AWS Fargate feels too heavy or you want faster startup times:
     *   **Verdict:** Sonnet for complex agents; Haiku for cheap/fast summaries.
 
 3.  **Google Gemini (Current line):**
-    *   **Gemini 3.0 Pro:** Billed per 1k chars; ≈ **$1.25 / 1M tokens eq. input**, **$5.00 / 1M tokens eq. output**.
-    *   **Gemini 2.5 Flash:** **~$0.10 / 1M input**, **~$0.40 / 1M output** (per-token equivalent; billed per 1k chars).
-    *   **Verdict:** Use 2.5 Flash for clustering/summaries; 3.0 Pro for coding.
+*   **Gemini 3 Pro:** Billed per 1k chars; ≈ **$2.00 / 1M tokens eq. input**, **$12.00 / 1M tokens eq. output** (contexts >200k tokens price at ~$4.00 / ~$18.00 respectively).
+*   **Gemini 2.5 Flash:** **~$0.30 / 1M input**, **~$2.50 / 1M output** (per-token equivalent; billed per 1k chars).
+*   **Verdict:** Use 2.5 Flash for clustering/summaries; 3 Pro for coding.
 
 4.  **OpenAI GPT (Flagship + Mini):**
     *   **GPT-5.1:** **$1.25 / 1M input**, **$10.00 / 1M output**.
@@ -200,7 +200,7 @@ Since the official Reddit API is expensive and restricted:
     *   **Cons:** Reliability depends on the individual maintainer.
 
 ### F. Pricing Sources (checked Dec 2025)
-* Google Vertex/AI Studio pricing pages (Gemini 3.0 Pro per-1k-char billing; Gemini 2.5 Flash per-1k-char billing; token equivalents assume ~4 chars/token).
+* Google Vertex/AI Studio pricing pages (Gemini 3 Pro per-1k-char billing; Gemini 2.5 Flash per-1k-char billing; token equivalents assume ~4 chars/token).
 * OpenAI pricing (GPT-5.1, GPT-5.1 mini / GPT-5 mini).
 * Anthropic pricing (Claude Sonnet, Claude Haiku).
 * DeepSeek API pricing (cache miss/hit rates; off-peak discounts).
@@ -216,8 +216,8 @@ Since the official Reddit API is expensive and restricted:
 | **Backend (Sevalla)** | $35 | $70 (Scale up containers) |
 | **Data (MongoDB)** | **$0** (Credits) | $60 (Post-credits) |
 | **Compute (AWS)** | $5 | $30 (More fixes + NAT Gateway) |
-| **AI / LLM** | ~$25 (5 fixes/day) | ~$210 (50 fixes/day) |
-| **TOTAL** | **~$105 / month** | **~$410 / month** |
+| **AI / LLM** | ~$35 (5 fixes/day, ≤200k ctx) | ~$330 (50 fixes/day, ≤200k ctx) |
+| **TOTAL** | **~$115 / month** | **~$530 / month** |
 
 *Note: Using MongoDB credits saves ~$20/mo initially compared to Upstash, but the long-term run rate for a production Atlas cluster (~$60/mo) is higher than serverless Redis (~$20/mo) for low volumes.*
 
@@ -227,7 +227,7 @@ Since the official Reddit API is expensive and restricted:
 
 1.  **Networking (AWS):** Ensure your Fargate tasks run in **Public Subnets** with "Auto-assign Public IP" enabled. This avoids the need for a NAT Gateway (~$30/mo) or VPC Endpoints.
 2.  **LLM Selection:**
-    *   Use **Gemini 2.5 Flash** for the initial "Analysis" phase of the coding agent when possible. Switch to **Gemini 3.0 Pro** (or another flagship) for final code generation.
+    *   Use **Gemini 2.5 Flash** for the initial "Analysis" phase of the coding agent when possible. Switch to **Gemini 3 Pro** (or another flagship) for final code generation.
     *   Cache repo context if the provider supports context caching (Gemini does) to reduce input token costs on repeated runs for the same repo.
 3.  **Sevalla Consolidation:** Run the Reddit Poller as a background thread within the main Backend container to save the $10/mo worker container cost.
 4.  **Upstash Free Tier:** Utilize the free tier for development/staging environments.
