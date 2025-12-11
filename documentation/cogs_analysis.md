@@ -77,25 +77,25 @@ This document provides a cost analysis for the Soulcaster architecture based on 
 | **Total** | | **$5.00 - $35.00** | Depends heavily on VPC networking choice. |
 
 ### E. AI & LLM Costs (The Variable Beast)
-**Provider:** Google Gemini (via Vertex AI or AI Studio) / Minimax
-**Models:** Gemini 1.5 Pro (Coding), Gemini 1.5 Flash (Clustering/Summarization)
+**Provider:** Google Gemini (Vertex AI / AI Studio) + alternatives
+**Primary models:** Gemini 3.0 Pro (coding/reasoning), Gemini 2.5 Flash (clustering/summarization). No 3.0 Flash exists; 1.5 Flash/Pro are deprecated for new usage.
 
 #### 1. Clustering & Summarization (Cheap)
 *   **Volume:** 100 feedback items/day.
-*   **Model:** Gemini 1.5 Flash (High speed, low cost).
-*   **Cost:** ~$0.35 / 1M tokens.
-*   **Estimate:** **<$5.00 / month**.
+*   **Model:** Gemini 2.5 Flash (fast/cheap).
+*   **Official pricing (text, per-1k-char billing converted to tokens @~4 chars/token):** Input **~$0.10 / 1M tokens eq.**, Output **~$0.40 / 1M tokens eq.**
+*   **Estimate:** **<$3.00 / month** at this volume (embedding/summarization only).
 
 #### 2. Coding Agent "Generate Fix" (Expensive)
 *   **Volume:** 5 fixes / day.
 *   **Context:** The agent reads code files. A small repo might be 50k tokens. A large one 200k+.
-*   **Model:** Gemini 1.5 Pro (Required for reasoning/coding capability).
-*   **Pricing (Approx):** Input: $3.50 / 1M tokens. Output: $10.50 / 1M tokens.
-*   **Per Run Cost:**
-    *   Input: 100k tokens * $3.50/1M = $0.35
-    *   Output: 2k tokens * $10.50/1M = $0.02
-    *   Total: ~$0.37 per fix.
-*   **Monthly Cost:** 5 fixes/day * 30 days * $0.37 = **$55.50**.
+*   **Model:** Gemini 3.0 Pro (billed per 1k characters; shown here as per-1M-token equivalents using ~4 chars/token).
+*   **Pricing (Approx):** Input **~$1.25 / 1M tokens eq.** (=$0.0003125 per 1k chars), Output **~$5.00 / 1M tokens eq.** (=$0.00125 per 1k chars).
+*   **Per Run Cost (example):**
+    *   Input: 100k tokens * $1.25/1M = **$0.125**
+    *   Output: 2k tokens * $5.00/1M = **$0.010**
+    *   **Total:** **~$0.14 per fix**
+*   **Monthly Cost (example):** 5 fixes/day * 30 days * ~$0.14 = **~$21.00**.
 
 ---
 
@@ -130,29 +130,26 @@ If AWS Fargate feels too heavy or you want faster startup times:
 
 ### B. LLM Alternatives (Coding & Reasoning - 2025 Frontier)
 
-*Pricing sourced from OpenRouter and official provider docs (Late 2024/2025).*
+*Pricing sourced from official provider/broker docs (checked Dec 2025).*
 
-1.  **DeepSeek V3.2 Family (The Budget Revolution):**
-    *   **DeepSeek V3.2 Speciale:** Pushes open-source reasoning to the limit, achieving performance comparable to top proprietary models on competitive benchmarks. Highly effective for agentic tasks requiring multi-step planning and formal logic.
-    *   **DeepSeek V3.2 Standard:** An efficient, general-purpose model suitable for everyday tasks (chat, content creation).
-    *   **DeepSeek-Coder-V2:** A specialized Mixture-of-Experts (MoE) model with performance comparable to models like GPT-4 Turbo in code-specific tasks, supporting over 300 programming languages.
-    *   **Cost:** **$0.27 / 1M Input**, **$1.10 / 1M Output**.
-    *   **Verdict:** **~10x cheaper** than Claude 4.5 Sonnet. The clear winner for high-volume loops or self-correcting agents.
+1.  **DeepSeek V3 (The Budget Workhorse):**
+    *   **DeepSeek V3 (chat/coder):** Cache miss **$0.27 / 1M input**, cache hit **$0.07 / 1M input**, output **$1.10 / 1M**. Off-peak discounts may apply.
+    *   **Verdict:** Extremely cheap for high-volume loops; plan around cache-hit vs. miss.
 
-2.  **Anthropic Claude 4.5 Sonnet (The Premium Standard):**
-    *   **Performance:** The flagship for complex agents and coding reliability.
-    *   **Cost:** **$3.00 / 1M Input**, **$15.00 / 1M Output**.
-    *   **Verdict:** Use this when you need the absolute highest reliability and reasoning capability.
+2.  **Anthropic Claude (Reliability):**
+    *   **Claude Sonnet (current gen):** **$3.00 / 1M input**, **$15.00 / 1M output** (higher for very large prompts).
+    *   **Claude Haiku (lightweight):** **$1.00 / 1M input**, **$5.00 / 1M output**.
+    *   **Verdict:** Sonnet for complex agents; Haiku for cheap/fast summaries.
 
-3.  **Google Gemini 3 Pro:**
-    *   **Performance:** Strong multimodal reasoning (text, image, video, audio) with a massive 1M+ context window.
-    *   **Cost:** **$2.00 / 1M Input**, **$12.00 / 1M Output**.
-    *   **Verdict:** Excellent value for large-context tasks (e.g., analyzing entire repos at once).
+3.  **Google Gemini (Current line):**
+    *   **Gemini 3.0 Pro:** Billed per 1k chars; ≈ **$1.25 / 1M tokens eq. input**, **$5.00 / 1M tokens eq. output**.
+    *   **Gemini 2.5 Flash:** **~$0.10 / 1M input**, **~$0.40 / 1M output** (per-token equivalent; billed per 1k chars).
+    *   **Verdict:** Use 2.5 Flash for clustering/summaries; 3.0 Pro for coding.
 
-4.  **OpenAI GPT-5.1:**
-    *   **Performance:** Top-tier model for coding and agentic tasks.
-    *   **Cost:** **$1.25 / 1M Input**, **$10.00 / 1M Output**.
-    *   **Verdict:** Surprisingly competitive pricing for a flagship model, undercutting Claude 4.5 Sonnet on input costs.
+4.  **OpenAI GPT (Flagship + Mini):**
+    *   **GPT-5.1:** **$1.25 / 1M input**, **$10.00 / 1M output**.
+    *   **GPT-5.1 mini (or GPT-5 mini):** **$0.25 / 1M input**, **$2.00 / 1M output**.
+    *   **Verdict:** Mini for cheap loops; 5.1 for hardest coding tasks.
 
 ### C. OpenAI GPT-OSS Models (Open Weights)
 
@@ -160,23 +157,26 @@ If AWS Fargate feels too heavy or you want faster startup times:
 
 | Provider | Model | Input / 1M | Output / 1M | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **OpenRouter** | gpt-oss-120b | **$0.039** | **$0.19** | **Cheapest Option.** Aggressive pricing for high volume. |
-| **DeepInfra** | gpt-oss-120b | $0.05 | $0.45 | Reliable infrastructure, good middle ground. |
-| **Groq** | gpt-oss-120b | $0.15 | $0.75 | Premium for extreme speed (LPU inference). |
-| **Bedrock** | gpt-oss-120b | $0.15 | $0.60 | Enterprise-grade SLA via AWS. |
-| **DeepInfra** | gpt-oss-20b | **$0.04** | **$0.15** | Extremely cheap for simpler tasks. |
+| **OpenRouter** | gpt-oss-120b | **$0.07** | **$0.28** | Low cost, broad routing. |
+| **DeepInfra** | gpt-oss-120b | **$0.04** | **$0.16** | Often the cheapest for 120B. |
+| **Groq** | gpt-oss-120b | $0.15 | $0.75 | Pay more for ultra-low latency. |
+| **Bedrock** | gpt-oss-120b | $0.15 | $0.60 | Enterprise SLA via AWS. |
+| **Cerebras** | gpt-oss-120b | $0.35 | $0.75 | High throughput OSS inference. |
+| **DeepInfra** | gpt-oss-20b | **$0.04** | **$0.15** | Cheap mid-tier option. |
 | **Groq** | gpt-oss-20b | $0.10 | $0.50 | Fast inference for mid-tier tasks. |
 
-**Verdict:** Use **OpenRouter** for bulk processing of `gpt-oss-120b` to get the absolute lowest price ($0.039/1M input). Use **Groq** if latency is critical.
+**Verdict:** Use **DeepInfra/OpenRouter** for lowest cost; **Groq/Cerebras** when latency/throughput matters; **Bedrock** for AWS-native SLA.
 
 ### D. LLM Alternatives (Ingestion & Real-Time)
 
-1.  **Meta Llama 4 Maverick (via Groq/Cerebras):**
-    *   **Performance:** The latest major release (April 2025). When run on **Cerebras CS-3** or **Groq LPUs**, achieves inference speeds >1000 tokens/sec.
-    *   **Verdict:** The only choice for real-time, user-facing ingestion pipelines where latency must be sub-100ms.
+1.  **Meta Llama (brokered OSS, low-latency options):**
+    *   **OpenRouter (examples):** Llama 3.2 90B Vision Instruct ~**$0.37 in / $0.42 out per 1M**; Llama 3.2 3B Instruct ~**$0.021 in/out per 1M**.
+    *   **Groq:** Ultra-low latency; pricing varies by model (often higher than OpenRouter).
+    *   **Cerebras:** Offers OSS inference; pricing varies by model (e.g., GPT-OSS 120B ~**$0.35 in / $0.75 out per 1M** on Cerebras hardware).
+    *   **Verdict:** Use OpenRouter for lowest cost; Groq/Cerebras when you need speed.
 
-2.  **Gemini 2.0 Flash:**
-    *   **Pros:** Designed specifically for the agentic era with fast responses and strong performance.
+2.  **Gemini 2.5 Flash:**
+    *   **Pros:** Fast responses, low cost; good for ingestion and light reasoning.
     *   **Verdict:** Excellent middle ground for ingestion that requires some reasoning capability.
 
 ### E. Reddit Data Alternatives
@@ -199,6 +199,13 @@ Since the official Reddit API is expensive and restricted:
     *   **Pros:** Simple REST API.
     *   **Cons:** Reliability depends on the individual maintainer.
 
+### F. Pricing Sources (checked Dec 2025)
+* Google Vertex/AI Studio pricing pages (Gemini 3.0 Pro per-1k-char billing; Gemini 2.5 Flash per-1k-char billing; token equivalents assume ~4 chars/token).
+* OpenAI pricing (GPT-5.1, GPT-5.1 mini / GPT-5 mini).
+* Anthropic pricing (Claude Sonnet, Claude Haiku).
+* DeepSeek API pricing (cache miss/hit rates; off-peak discounts).
+* OpenRouter broker tables; DeepInfra/Groq/Bedrock/Cerebras where applicable for OSS (gpt-oss-120b/20b) and Meta Llama 3.2 family.
+
 ---
 
 ## 4. Total Cost Projection (With MongoDB Credits)
@@ -209,8 +216,8 @@ Since the official Reddit API is expensive and restricted:
 | **Backend (Sevalla)** | $35 | $70 (Scale up containers) |
 | **Data (MongoDB)** | **$0** (Credits) | $60 (Post-credits) |
 | **Compute (AWS)** | $5 | $30 (More fixes + NAT Gateway) |
-| **AI / LLM** | $60 | $300 (50 fixes/day) |
-| **TOTAL** | **~$140 / month** | **~$500 / month** |
+| **AI / LLM** | ~$25 (5 fixes/day) | ~$210 (50 fixes/day) |
+| **TOTAL** | **~$105 / month** | **~$410 / month** |
 
 *Note: Using MongoDB credits saves ~$20/mo initially compared to Upstash, but the long-term run rate for a production Atlas cluster (~$60/mo) is higher than serverless Redis (~$20/mo) for low volumes.*
 
@@ -220,7 +227,7 @@ Since the official Reddit API is expensive and restricted:
 
 1.  **Networking (AWS):** Ensure your Fargate tasks run in **Public Subnets** with "Auto-assign Public IP" enabled. This avoids the need for a NAT Gateway (~$30/mo) or VPC Endpoints.
 2.  **LLM Selection:**
-    *   Use **Gemini 1.5 Flash** for the initial "Analysis" phase of the coding agent if possible. Only switch to Pro for the final code generation.
+    *   Use **Gemini 2.5 Flash** for the initial "Analysis" phase of the coding agent when possible. Switch to **Gemini 3.0 Pro** (or another flagship) for final code generation.
     *   Cache repo context if the provider supports context caching (Gemini does) to reduce input token costs on repeated runs for the same repo.
 3.  **Sevalla Consolidation:** Run the Reddit Poller as a background thread within the main Backend container to save the $10/mo worker container cost.
 4.  **Upstash Free Tier:** Utilize the free tier for development/staging environments.

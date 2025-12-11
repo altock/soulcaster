@@ -803,8 +803,6 @@ def create_local_files(target_dir: str = ".", module_set: str = "all"):
         target_dir (str): Filesystem path where the project will be created. If the path exists it will be removed and recreated.
         module_set (str): Which module set to generate. "basic" creates only the core modules; "all" (default) includes additional advanced modules.
     """
-def create_local_files(target_dir: str = ".", module_set: str = "all"):
-    """..."""
     # Safety check: prevent deletion of dangerous paths
     dangerous_paths = {".", "..", "/", os.path.expanduser("~")}
     abs_target = os.path.abspath(target_dir)

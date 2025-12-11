@@ -112,8 +112,12 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       // Send properties to the client
-      session.accessToken = token.accessToken as string;
-      session.projectId = token.projectId as string;
+      if (typeof token.accessToken === 'string') {
+        session.accessToken = token.accessToken;
+      }
+      if (typeof token.projectId === 'string') {
+        session.projectId = token.projectId;
+      }
       if (session.user && token.sub) {
         session.user.id = token.sub;
       }

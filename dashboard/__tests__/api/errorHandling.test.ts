@@ -34,8 +34,6 @@ const githubToken = 'gho_test';
 
 type BackendBehavior = (url: any, init?: any) => Promise<any>;
 
-const instrumentationUrl = 'http://127.0.0.1:7242/ingest/74eaca46-c446-486d-8f34-4bfda796b26c';
-
 const okResponse = (body: any, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
@@ -44,12 +42,7 @@ const okResponse = (body: any, status = 200) => ({
 });
 
 const makeFetchMock = (behavior: BackendBehavior) =>
-  jest.fn((url, init) => {
-    if (typeof url === 'string' && url.startsWith(instrumentationUrl)) {
-      return Promise.resolve(okResponse({ logged: true }, 200));
-    }
-    return behavior(url, init);
-  });
+  jest.fn((url, init) => behavior(url, init));
 
 const simulateAbortError = () => {
   const err: any = new Error('The operation was aborted.');

@@ -53,6 +53,7 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 - ✅ Ingest endpoints emit logging for `feedback_id` and `source`
 - 🎯 Tests target >80% coverage on store/ingestion paths
 - ℹ️ Current deployment supports GitHub ingestion only; Reddit/Sentry are deferred to Phase 2.
+- 🚧 Phases 2+ are post-MVP; no automated Reddit/Sentry polling in MVP.
 
 ---
 
@@ -399,7 +400,7 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 
 ## Implementation Order Summary
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │ Phase 1-3: Ingestion Stability              │
 │ Worktree: system-readiness                  │

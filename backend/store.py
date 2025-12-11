@@ -273,12 +273,15 @@ class InMemoryStore:
 
     def get_feedback_item(self, project_id: str, item_id: UUID) -> Optional[FeedbackItem]:
         """
-        Retrieve a feedback item by its UUID.
+        Retrieve a feedback item by its UUID within a project scope.
         
         Returns:
-            `FeedbackItem` if an item with the given `item_id` exists, `None` otherwise.
+            `FeedbackItem` if an item with the given `item_id` exists and belongs to the project, `None` otherwise.
         """
-        return self.feedback_items.get(item_id)
+        item = self.feedback_items.get(item_id)
+        if item and str(item.project_id) == str(project_id):
+            return item
+        return None
 
     def get_all_feedback_items(self, project_id: Optional[str] = None) -> List[FeedbackItem]:
         """

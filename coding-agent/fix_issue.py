@@ -574,10 +574,10 @@ def main():
     
     try:
         pr_url = _run_agent_logic(args.issue_url)
-        update_job(args.job_id, "success", "\n".join(LOG_BUFFER), pr_url=pr_url)
+        update_job(job_id, "success", "\n".join(LOG_BUFFER), pr_url=pr_url)
     except Exception as e:
         log(f"CRITICAL FAILURE: {e}")
-        update_job(args.job_id, "failed", "\n".join(LOG_BUFFER))
+        update_job(job_id, "failed", "\n".join(LOG_BUFFER))
         sys.exit(1)
 
 if __name__ == "__main__":

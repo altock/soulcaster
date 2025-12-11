@@ -39,7 +39,6 @@
  
 
 ### Coding Agent (External AWS Service)
-### Coding Agent (External AWS Service)
 - [~] Obtain AWS Agent API endpoint and credentials @Sam @Backend  
   _Partially done – ECS task definition, AWS creds, and trigger route exist; this is wired for the current Fargate-based coding agent but not yet generalized as a reusable “Agent API”._
 - [~] Implement AgentClient wrapper (send prompt -> receive PR URL) @Sam @Backend  
