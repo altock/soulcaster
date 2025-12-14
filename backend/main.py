@@ -80,10 +80,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.exception(f"Unhandled exception for {request.method} {request.url}: {exc}")
     raise
 
-# Track GitHub sync metadata in-memory (per process). If persistence is needed,
-# promote this to Redis-backed storage.
-GITHUB_SYNC_STATE: Dict[Tuple[UUID, str], Dict[str, str]] = {}
-
 # Configure CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
