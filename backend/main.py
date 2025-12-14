@@ -30,6 +30,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob
 from store import (
@@ -136,7 +137,9 @@ def _kickoff_clustering(project_id: str):
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(maybe_start_clustering(project_id))
+        task = loop.create_task(maybe_start_clustering(project_id))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
     except RuntimeError:
         # No running loop (e.g., during pytest/TestClient); run clustering inline so tests see clusters.
         logger.warning("No running event loop; clustering not started for project %s", project_id)
@@ -148,11 +151,12 @@ def _kickoff_clustering(project_id: str):
                 This coroutine starts a clustering job for the surrounding `project_id` and runs that job to completion within the current async context.
                 """
                 job = await maybe_start_clustering(project_id)
-                await run_clustering_job(project_id, job.id)
+                if job.status == "pending":
+                    await run_clustering_job(project_id, job.id)
 
             asyncio.run(_inline())
-        except Exception as exc:
-            logger.exception("Inline clustering failed for project %s: %s", project_id, exc)
+        except Exception:
+            logger.exception("Inline clustering failed for project %s", project_id)
 
 
 # ============================================================
@@ -1031,9 +1035,9 @@ def clustering_status(project_id: Optional[str] = Query(None)):
     """
     pid = _require_project_id(project_id)
     pending = len(get_unclustered_feedback(pid))
-    recent = list_cluster_jobs(pid, limit=1)
+    recent = list_cluster_jobs(pid, limit=10)
     last_job = recent[0] if recent else None
-    is_clustering = bool(last_job and last_job.status == "running")
+    is_clustering = any(job.status == "running" for job in recent)
     return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
 
 

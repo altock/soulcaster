@@ -34,6 +34,20 @@ def test_centroid_smoke():
     assert labels[2] != labels[0]
 
 
+def test_centroid_normalizes_centroids():
+    embeddings = np.asarray(
+        [
+            [1.0, 0.0],
+            [0.8, 0.6],
+            [0.6, 0.8],
+        ],
+        dtype=np.float32,
+    )
+    labels = clustering.cluster_centroid(embeddings, sim_threshold=0.8)
+    assert len(labels) == 3
+    assert labels[0] == labels[1] == labels[2]
+
+
 def test_vector_like_smoke():
     embeddings = np.asarray(
         [

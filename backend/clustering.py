@@ -143,6 +143,22 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))
 
 
+def _normalize_vector(vec: np.ndarray) -> np.ndarray:
+    """
+    Return a copy of the vector scaled to unit length when possible.
+    
+    Parameters:
+        vec (np.ndarray): Vector to normalize.
+    
+    Returns:
+        np.ndarray: L2-normalized vector (or the original vector when norm == 0).
+    """
+    norm = np.linalg.norm(vec)
+    if norm == 0:
+        return vec
+    return vec / norm
+
+
 # ---------------------------------------------------------------------------
 # Clustering strategies
 # ---------------------------------------------------------------------------
@@ -191,18 +207,19 @@ def cluster_centroid(embeddings: np.ndarray, sim_threshold: float = DEFAULT_SIM_
     for emb in embeddings:
         if not centroids:
             labels.append(0)
-            centroids.append(emb.copy())
+            centroids.append(_normalize_vector(emb.copy()))
             continue
         sims = [cosine(emb, c) for c in centroids]
         best_idx = int(np.argmax(sims))
         if sims[best_idx] >= sim_threshold:
             k = best_idx
             count_k = labels.count(k)
-            centroids[k] = (centroids[k] * count_k + emb) / (count_k + 1)
+            updated = (centroids[k] * count_k + emb) / (count_k + 1)
+            centroids[k] = _normalize_vector(updated)
             labels.append(k)
         else:
             labels.append(len(centroids))
-            centroids.append(emb.copy())
+            centroids.append(_normalize_vector(emb.copy()))
     return np.asarray(labels, dtype=int)
 
 
