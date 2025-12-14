@@ -18,7 +18,7 @@
 - Install: `npm install --prefix dashboard`.
 - Dev server: `npm run dev --prefix dashboard`.
 - Lint/tests: `npm run lint --prefix dashboard`; `npm run test --prefix dashboard -- --runInBand`.
-- Relies on Upstash Redis (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`) and Gemini for embeddings (`GEMINI_API_KEY`/`GOOGLE_GENERATIVE_AI_API_KEY`); cluster runs via `/api/clusters/run` using the vector + Redis helpers.
+- Relies on Upstash Redis (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`) for data and surfaces backend-owned clustering state via `/cluster-jobs*` + `/clustering/status`. Dashboard-triggered clustering routes now return 410s unless `ENABLE_DASHBOARD_CLUSTERING=true` is explicitly set for local testing.
 - GitHub OAuth via NextAuth: set `GITHUB_ID`, `GITHUB_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`; uses optional `GITHUB_TOKEN` for higher API limits when syncing issues.
 
 ## Coding Agent (CLI + AWS task)
