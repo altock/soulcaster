@@ -6,6 +6,8 @@ This document focuses on a single question:
 
 **Note:** This file originally proposed a separate “clustering worker” (ECS/Fargate task). That approach is now explicitly **deferred to a future scaling phase** (see §6). The near-term plan is **backend-owned, in-process async clustering**.
 
+**Status:** ✅ **IMPLEMENTED** (Phase 4 complete). Backend in-process async clustering is now live. All clustering runs asynchronously in the backend process, with Redis locks preventing concurrent runs. Dashboard is status-only (no inline clustering). See `tasks/IMPLEMENTATION_ROADMAP.md` Phase 4 for completion checklist.
+
 It builds on:
 
 - `documentation/current_architecture.md` – snapshot of how things work today.
@@ -141,7 +143,18 @@ Suggested fields:
 - `stats`: clustered count, new/updated clusters, embedding failures, missing feedback, duration
 - `error?`
 
-### 3.4 Clustering strategies (backend implementation)
+### 3.4 Manual retry (dashboard-proxied)
+
+Automatic kicks should cover 99% of cases, but operators still need a deterministic way to re-run clustering if they open the Clusters tab and see unclustered drift. The plan:
+
+1. **Backend contract** — keep `POST /cluster-jobs?project_id=...` and `GET /cluster-jobs` as the single control plane for retries. If a job is already running the POST returns the existing job metadata so the UI can simply display status.
+2. **Dashboard proxy** — add `/app/api/clusters/jobs` (POST + GET) that forward to the backend exactly like `/api/clusters` or the GitHub sync route. This avoids leaking backend credentials to the browser and keeps CORS simple.
+3. **UI behavior** — when `unclusteredCount > 0`, show a “Retry clustering” button that calls the proxy POST. Disable it while a job is running and surface the last job’s timestamps + counters. The same proxy GET endpoint lets the UI poll job status (or fetch the latest job on page load).
+4. **Empty-state messaging** — the Clusters page already shows “Clustering runs automatically after ingestion.” Extend that to include the retry affordance so operators know they can press the button only if something looks stuck.
+
+This approach mirrors the new GitHub “Sync sources” UX: the dashboard never calls backend private routes directly from the browser, all actions are proxied through Next.js API handlers, and the backend stays the single owner of clustering orchestration.
+
+### 3.5 Clustering strategies (backend implementation)
 
 **Reference implementation (inlined):** The snippets below are copied from the local experiment notebook so this repo remains self-contained (no machine-specific paths).
 

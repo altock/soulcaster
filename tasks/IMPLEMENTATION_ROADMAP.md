@@ -136,78 +136,78 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 
 ---
 
-## Phase 4: Backend Async Clustering (In-Process, No Separate Service)
+## Phase 4: Backend Async Clustering (In-Process, No Separate Service) ✅ COMPLETE
 **Reference:** `documentation/clustering_worker_architecture_plan.md` (updated: in-process runner + future external worker)
-**Current state:** Clustering runs in the dashboard today (`dashboard/lib/clustering.ts`, `dashboard/lib/vector.ts`, `/api/clusters/run*`) and GitHub ingestion still uses `_auto_cluster_feedback` (nonsense heuristic clustering).
+**Status:** ✅ **COMPLETE** - Backend in-process async clustering is now live. Clustering runs asynchronously in the backend process with Redis locks. Dashboard is status-only (no inline clustering). All ingestion paths trigger clustering automatically.
 **Goal:** Backend becomes the single clustering engine. Ingestion only writes feedback + marks it unclustered. Backend starts clustering asynchronously *in the same backend process* (no ECS/Fargate worker, no extra service), with a Redis lock + job status tracking.
 
 ### Step 1: Clustering Core Module (Backend) — Implement 3 Strategies, Default Best
-- [ ] **File: `backend/clustering.py`** (NEW)
-  - [ ] **Goal:** Implement all 3 clustering algorithms from the local experiment notebook behind a single strategy interface.
-  - [ ] **Reference (canonical):** `documentation/clustering_worker_architecture_plan.md` (see “Reference code snippets (Python)”)
-  - [ ] **Planned API surface:**
+- [x] **File: `backend/clustering.py`** (NEW)
+  - [x] **Goal:** Implement all 3 clustering algorithms from the local experiment notebook behind a single strategy interface.
+  - [x] **Reference (canonical):** `documentation/clustering_worker_architecture_plan.md` (see “Reference code snippets (Python)”)
+  - [x] **Planned API surface:**
     - `prepare_issue_texts(issues, truncate_body_chars=1500) -> list[str]`
     - `embed_texts_gemini(texts, model="gemini-embedding-001", output_dimensionality=768) -> list[list[float]]`
     - `cluster_agglomerative(embeddings, sim_threshold=0.72, min_cluster_size=2) -> labels`
     - `cluster_centroid(embeddings, sim_threshold=0.72) -> labels`
     - `cluster_vector_like(embeddings, sim_threshold=0.72) -> labels`
     - `cluster_issues(issues, method, sim_threshold, min_cluster_size, truncate_body_chars) -> {labels, clusters, singletons, texts}`
-  - [ ] **Default in production (ship only the best):**
+  - [x] **Default in production (ship only the best):**
     - `CLUSTERING_METHOD=agglomerative`
     - `CLUSTERING_SIM_THRESHOLD=0.72`
     - `CLUSTERING_MIN_CLUSTER_SIZE=2`
     - `CLUSTERING_TRUNCATE_BODY_CHARS=1500`
-  - [ ] **Docstrings must include:**
+  - [x] **Docstrings must include:**
     - Reference to the notebook path above
     - Time complexity notes for each method
-  - [ ] **Time complexity notes (must document):**
+  - [x] **Time complexity notes (must document):**
     - `agglomerative`: ~O(n^2) memory-ish, ~O(n^2)–O(n^3) time (n = items)
     - `centroid`: O(n·k·d) (k clusters; d=768)
     - `vector_like`: O(n^2·d) (baseline; compares each item to all prior items; not ANN/vector DB)
-  - [ ] Use Gemini API (same as dashboard currently uses)
-  - [ ] Make it pure/testable (no Redis access in core logic)
+  - [x] Use Gemini API (same as dashboard currently uses)
+  - [x] Make it pure/testable (no Redis access in core logic)
 
 ### Step 1.1: Dependencies (Backend)
-- [ ] **File: `backend/requirements.txt`**
-  - [ ] Add: `numpy`, `scikit-learn`, `packaging`, `google-genai`
-  - [ ] (Optional/deferred) Add `sentence-transformers` only if we want HF fallback in production
+- [x] **File: `backend/requirements.txt`**
+  - [x] Add: `numpy`, `scikit-learn`, `packaging`, `google-genai`
+  - [x] (Optional/deferred) Add `sentence-transformers` only if we want HF fallback in production
 
 ### Step 1.2: Tests (Clustering Strategies + Quality)
-- [ ] **File: `backend/tests/test_clustering_strategies.py`** (NEW)
-  - [ ] Ensure all 3 strategies run and return labels (smoke test)
-- [ ] **File: `backend/tests/test_clustering_quality.py`** (NEW)
-  - [ ] Use a small labeled fixture derived from the notebook CSV workflow to regress quality for the default method
-  - [ ] CI should not call Gemini: use saved embeddings fixture or mock embedding function
+- [x] **File: `backend/tests/test_clustering_strategies.py`** (NEW)
+  - [x] Ensure all 3 strategies run and return labels (smoke test)
+- [x] **File: `backend/tests/test_clustering_quality.py`** (NEW)
+  - [x] Use a small labeled fixture derived from the notebook CSV workflow to regress quality for the default method
+  - [x] CI should not call Gemini: use saved embeddings fixture or mock embedding function
 
 ### Step 2: Backend In-Process Clustering Runner (Async Task)
-- [ ] **File: `backend/clustering_runner.py`** (NEW)
-  - [ ] Implement `maybe_start_clustering(project_id)`:
+- [x] **File: `backend/clustering_runner.py`** (NEW)
+  - [x] Implement `maybe_start_clustering(project_id)`:
     - Acquire per-project Redis lock (prevents duplicate runs across workers/replicas)
     - Create `ClusterJob` record (status=pending/running)
     - Start background task inside FastAPI process (`asyncio.create_task(...)`)
     - Return `job_id` immediately
-  - [ ] Implement `run_clustering_job(project_id, job_id)`:
+  - [x] Implement `run_clustering_job(project_id, job_id)`:
     - Read `feedback:unclustered:{project_id}`
     - Embed + assign clusters + summarize
     - Write `cluster:{project_id}:{id}`, `cluster:{project_id}:{id}:items`, `clusters:{project_id}:all`
     - Remove successfully processed IDs from `feedback:unclustered:{project_id}`
     - Update `ClusterJob` (stats + status succeeded/failed)
-  - [ ] Handle restarts safely:
+  - [x] Handle restarts safely:
     - Lock TTL + optional heartbeat timestamp
     - Treat stale "running" as failed/retryable
 
 **Note:** The runner should call the clustering core via the strategy interface, but production defaults to the best-performing method (agglomerative @ 0.72). Other strategies remain switchable by env for later evaluation.
 
 ### Step 3: Backend Cluster Job API (Status + Optional Manual Trigger)
-- [ ] **File: `backend/main.py`**
-  - [ ] Add endpoints:
+- [x] **File: `backend/main.py`**
+  - [x] Add endpoints:
     - `POST /cluster-jobs` → create new cluster job and start in-process async task (optional; UI may not expose a button)
     - `GET /cluster-jobs/{id}` → get job status
     - `GET /cluster-jobs` → list recent jobs for a project (optional)
     - `GET /clustering/status` → convenience endpoint (pending count, is_clustering, last job) (optional)
 
-- [ ] **File: `backend/models.py`**
-  - [ ] Add `ClusterJob` model:
+- [x] **File: `backend/models.py`**
+  - [x] Add `ClusterJob` model:
     ```python
     class ClusterJob(BaseModel):
         id: str
@@ -221,36 +221,35 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
     ```
 
 ### Step 4: Remove Frontend-Driven Clustering (Status-Only UI)
-- [ ] **File: `dashboard/app/(pages)/clusters/*` (or relevant UI)**
-  - [ ] Remove "Run clustering" button (clustering is automatic on ingest)
-  - [ ] Keep status display (pending count / last job status)
-- [ ] **Files: `dashboard/app/api/clusters/run*/route.ts`**
-  - [ ] Deprecate/remove inline clustering routes in production (keep behind a dev-only flag if needed)
-  - [ ] If a manual trigger is still desired, call backend `POST /cluster-jobs` (no heavy work in Next.js)
-- [ ] **File: `dashboard/lib/clustering.ts`**
-  - [ ] Mark as deprecated for production use (backend is canonical)
-  - [ ] Keep temporarily for local debugging / tests if needed
+- [x] **File: `dashboard/app/(pages)/clusters/*` (or relevant UI)**
+  - [x] Remove "Run clustering" button (clustering is automatic on ingest)
+  - [x] Keep status display (pending count / last job status)
+- [x] **Files: `dashboard/app/api/clusters/run*/route.ts`**
+  - [x] Deprecate/remove inline clustering routes in production (keep behind a dev-only flag if needed)
+  - [x] If a manual trigger is still desired, call backend `POST /cluster-jobs` (no heavy work in Next.js)
+- [x] **File: `dashboard/lib/clustering.ts`**
+  - [x] Mark as deprecated for production use (backend is canonical)
+  - [x] Keep temporarily for local debugging / tests if needed
 
 ### Step 5: Disable Heuristic Auto-Clustering in Backend Ingest
-- [ ] **File: `backend/main.py`**
-  - [ ] Remove `_auto_cluster_feedback()` calls from all ingest paths (GitHub sync, manual, reddit, sentry)
-  - [ ] Ingest should only mark feedback as unclustered; clustering happens via the in-process runner
-  - [ ] (Optional) Gate legacy behavior behind `AUTO_CLUSTER_ENABLED=true` for a safe rollout, default `false`
+- [x] **File: `backend/main.py`**
+  - [x] Remove `_auto_cluster_feedback()` calls from all ingest paths (GitHub sync, manual, reddit, sentry)
+  - [x] Ingest should only mark feedback as unclustered; clustering happens via the in-process runner
 
 ### Testing
-- [ ] **File: `backend/tests/test_clustering_runner.py`** (NEW)
-  - [ ] Test runner reads unclustered feedback
-  - [ ] Test runner writes cluster keys + removes from unclustered
-  - [ ] Test lock prevents concurrent runs
-  - [ ] Test job status transitions + error handling
+- [x] **File: `backend/tests/test_clustering_runner.py`** (NEW)
+  - [x] Test runner reads unclustered feedback
+  - [x] Test runner writes cluster keys + removes from unclustered
+  - [x] Test lock prevents concurrent runs
+  - [x] Test job status transitions + error handling
 
 ### Acceptance Criteria
-- ✅ Clustering runs asynchronously inside the backend process (non-blocking)
-- ✅ Ingestion never clusters; it only marks feedback unclustered
-- ✅ Redis lock prevents concurrent clustering per project
-- ✅ Dashboard is status-only (no inline clustering in Next.js in production)
-- ✅ Separate clustering service (ECS/Fargate worker) is deferred to a future phase if scaling requires it
-- ✅ All 3 strategies exist in the clustering core, but only the best is enabled by default (others are behind config for later testing)
+- [x] Clustering runs asynchronously inside the backend process (non-blocking)
+- [x] Ingestion never clusters; it only marks feedback unclustered
+- [x] Redis lock prevents concurrent clustering per project
+- [x] Dashboard is status-only (no inline clustering in Next.js in production)
+- [x] Separate clustering service (ECS/Fargate worker) is deferred to a future phase if scaling requires it
+- [x] All 3 strategies exist in the clustering core, but only the best is enabled by default (others are behind config for later testing)
 
 ---
 
