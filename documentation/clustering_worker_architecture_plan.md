@@ -149,6 +149,7 @@ Automatic kicks should cover 99% of cases, but operators still need a determinis
 
 1. **Backend contract** — keep `POST /cluster-jobs?project_id=...` and `GET /cluster-jobs` as the single control plane for retries. If a job is already running the POST returns the existing job metadata so the UI can simply display status.
 2. **Dashboard proxy** — add `/app/api/clusters/jobs` (POST + GET) that forward to the backend exactly like `/api/clusters` or the GitHub sync route. This avoids leaking backend credentials to the browser and keeps CORS simple.
+   - `GET /cluster-jobs` responds with an envelope (`{"jobs": [...], "project_id": "<uuid>"}`) so we can tack on metadata later. The proxy simply forwards that body and the Clusters UI always reads from `.jobs` when showing the latest run.
 3. **UI behavior** — when `unclusteredCount > 0`, show a “Retry clustering” button that calls the proxy POST. Disable it while a job is running and surface the last job’s timestamps + counters. The same proxy GET endpoint lets the UI poll job status (or fetch the latest job on page load).
 4. **Empty-state messaging** — the Clusters page already shows “Clustering runs automatically after ingestion.” Extend that to include the retry affordance so operators know they can press the button only if something looks stuck.
 

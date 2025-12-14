@@ -34,6 +34,19 @@ export default function ClustersListPage() {
   const [jobActionError, setJobActionError] = useState<string | null>(null);
   const [jobActionLoading, setJobActionLoading] = useState(false);
 
+  const extractJobsFromPayload = (payload: unknown): ClusterJobStatus[] => {
+    if (!payload) {
+      return [];
+    }
+    if (Array.isArray(payload)) {
+      return payload as ClusterJobStatus[];
+    }
+    if (typeof payload === 'object' && Array.isArray((payload as { jobs?: ClusterJobStatus[] }).jobs)) {
+      return ((payload as { jobs?: ClusterJobStatus[] }).jobs ?? []).filter(Boolean) as ClusterJobStatus[];
+    }
+    return [];
+  };
+
   const jobIsRunning = latestJob?.status === 'running';
   const isClustering = unclusteredCount > 0 || jobIsRunning;
 
@@ -84,12 +97,10 @@ export default function ClustersListPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setLatestJob(data[0]);
-          return data[0];
-        }
-        setLatestJob(null);
-        return null;
+        const jobs = extractJobsFromPayload(data);
+        const newest = jobs.length > 0 ? jobs[0] : null;
+        setLatestJob(newest);
+        return newest;
       }
       console.error('Failed to fetch cluster jobs status');
     } catch (err) {
