@@ -8,10 +8,9 @@ import SourceConfig from '@/components/SourceConfig';
 /**
  * Display the Issue Clusters page and manage its loading, error, empty, and populated states.
  *
- * On mount the component loads cluster data and the count of unclustered items, automatically
- * triggering a silent clustering run when unclustered items exist. The UI lets users manually
- * run clustering, toggle source configuration, and browse clusters in a table that shows title,
- * summary, repositories, status, feedback count, and a link to cluster details.
+ * On mount the component loads cluster data and the count of unclustered items so it can display
+ * whether backend-owned clustering is still chewing through new feedback. The UI lets users browse
+ * clusters, toggle source configuration, and link to details for deeper triage.
  *
  * @returns The React element for the Issue Clusters page
  */
@@ -20,24 +19,16 @@ export default function ClustersListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [unclusteredCount, setUnclusteredCount] = useState(0);
-  const [isClustering, setIsClustering] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const isClustering = unclusteredCount > 0;
 
   useEffect(() => {
     loadClustersAndAutoCluster();
   }, []);
 
   const loadClustersAndAutoCluster = async () => {
-    // First fetch existing clusters
     await fetchClusters();
-
-    // Check if there are unclustered items
-    const count = await fetchUnclusteredCount();
-
-    // Auto-run clustering if there are unclustered items (silent mode)
-    if (count > 0) {
-      await runClustering(true);
-    }
+    await fetchUnclusteredCount();
   };
 
   const fetchClusters = async () => {
@@ -71,48 +62,9 @@ export default function ClustersListPage() {
     return 0;
   };
 
-  const runClustering = async (silent: boolean = false) => {
-    try {
-      setIsClustering(true);
-      const response = await fetch('/api/clusters/run', {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to run clustering');
-      }
-
-      const result = await response.json();
-
-      // Refresh clusters and unclustered count
-      await fetchClusters();
-      await fetchUnclusteredCount();
-
-      // Show success message only if not silent (manual trigger)
-      if (!silent) {
-        alert(
-          `Clustering complete!\n` +
-          `- Processed: ${result.clustered} items\n` +
-          `- New clusters: ${result.newClusters}\n` +
-          `- Updated clusters: ${result.updatedClusters || 0}`
-        );
-      }
-    } catch (err) {
-      if (!silent) {
-        alert(
-          'Failed to run clustering: ' + (err instanceof Error ? err.message : 'Unknown error')
-        );
-      } else {
-        console.error('Auto-clustering failed:', err);
-      }
-    } finally {
-      setIsClustering(false);
-    }
-  };
-
-  const triggerClustering = async () => {
-    await runClustering(false);
-  };
+  // Clustering is backend-owned and runs automatically after ingestion. The UI keeps a lightweight
+  // `isClustering` view state derived from unclustered item count so we can communicate when work
+  // is still happening in the background.
 
   if (loading) {
     return (
@@ -166,15 +118,12 @@ export default function ClustersListPage() {
               ? `${unclusteredCount} unclustered feedback item${unclusteredCount === 1 ? '' : 's'} ready to group.`
               : 'No unclustered feedback detected yet.'}
           </p>
+          <p className="mt-2 text-xs uppercase tracking-wide text-purple-600">
+            {isClustering
+              ? 'Clustering job running automatically...'
+              : 'Clustering runs automatically right after you sync sources.'}
+          </p>
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button
-              onClick={triggerClustering}
-              disabled={isClustering}
-              className={`w-full sm:w-auto px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${isClustering ? 'animate-pulse' : ''
-                }`}
-            >
-              {isClustering ? 'Running AI Clustering...' : 'Run Clustering'}
-            </button>
             <button
               onClick={() => setShowConfig(!showConfig)}
               className={`w-full sm:w-auto px-6 py-3 border border-purple-200 text-sm font-semibold rounded-full text-purple-900 bg-white hover:bg-purple-50 transition-all ${showConfig ? 'ring-2 ring-purple-200' : ''
@@ -209,14 +158,6 @@ export default function ClustersListPage() {
               className={`px-4 py-3 border border-white/10 text-sm font-medium rounded-full text-slate-300 hover:bg-white/5 transition-all ${showConfig ? 'bg-white/10 text-white' : ''}`}
             >
               {showConfig ? 'Hide Sources' : 'Configure Sources'}
-            </button>
-            <button
-              onClick={triggerClustering}
-              disabled={isClustering}
-              className={`px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${isClustering ? 'animate-pulse' : ''
-                }`}
-            >
-              {isClustering ? 'Running AI Clustering...' : 'Run Clustering'}
             </button>
           </div>
         </div>
@@ -253,24 +194,11 @@ export default function ClustersListPage() {
                   Active Clusters
                 </h2>
               </div>
-              <div className="flex gap-2">
-                <button className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-white/10">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-                    <path d="M3 3v5h5"></path>
-                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-                    <path d="M16 16h5v5"></path>
-                  </svg>
-                  Refresh
-                </button>
-                <button className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-xs font-medium text-black transition-colors hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12h14"></path>
-                    <path d="M12 5v14"></path>
-                  </svg>
-                  Add Cluster
-                </button>
-              </div>
+            <div className="flex gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-900/60 bg-emerald-900/20 px-4 py-2 text-xs font-medium text-emerald-200">
+                Clustering runs automatically after feedback ingestion
+              </span>
+            </div>
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-white/5 bg-black/40 backdrop-blur-sm">
@@ -288,7 +216,7 @@ export default function ClustersListPage() {
                   {clusters.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                        No clusters found. Run clustering to group feedback items.
+                        No clusters yet. They will appear once backend clustering completes after ingestion.
                       </td>
                     </tr>
                   ) : (

@@ -146,8 +146,8 @@ The dashboard implements its own API routes that interact directly with Redis an
 ### Clustering
 - `GET /api/clusters` - List all clusters
 - `GET /api/clusters/[id]` - Get cluster details
-- `POST /api/clusters/run` - Run clustering on new feedback
-- `POST /api/clusters/run-vector` - Run clustering with vector search
+- `POST /api/clusters/run` - Deprecated (backend owns clustering)
+- `POST /api/clusters/run-vector` - Deprecated (backend owns clustering)
 - `GET /api/clusters/unclustered` - List unclustered feedback
 - `POST /api/clusters/reset` - Reset all clusters (dev only)
 
@@ -179,6 +179,12 @@ The dashboard implements its own API routes that interact directly with Redis an
 5. Deploy
 
 The dashboard will automatically deploy on push to main.
+
+## Clustering ownership
+
+- Clustering runs automatically in the backend after ingestion.
+- The dashboard does not trigger clustering; manual run routes are deprecated.
+- For status or debugging, use backend endpoints (`POST /cluster-jobs`, `GET /cluster-jobs`, `GET /clustering/status`) via `BACKEND_URL`.
 
 ## Project Structure
 
