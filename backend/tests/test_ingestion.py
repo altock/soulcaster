@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from main import app
 from store import (
@@ -10,6 +11,15 @@ from store import (
 )
 
 client = TestClient(app)
+
+
+@pytest.fixture
+def disable_auto_clustering(monkeypatch):
+    """
+    Prevent the async clustering runner from draining the unclustered set so tests
+    can assert ingestion semantics before clustering runs.
+    """
+    monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
 
 def setup_function():
     """
@@ -173,7 +183,7 @@ def test_ingest_reddit_with_empty_body(project_context):
 
 # ========== Phase 1: Ingestion Moat - Unclustered Feedback Tests ==========
 
-def test_add_feedback_writes_to_unclustered(project_context):
+def test_add_feedback_writes_to_unclustered(project_context, disable_auto_clustering):
     """Phase 1: Verify feedback lands in unclustered set when ingested."""
     pid = project_context["project_id"]
     payload = {
@@ -203,7 +213,7 @@ def test_add_feedback_writes_to_unclustered(project_context):
     assert expected_id in unclustered_ids, f"Item {expected_id} not found in unclustered set. Found: {unclustered_ids}"
 
 
-def test_all_sources_add_to_unclustered(project_context):
+def test_all_sources_add_to_unclustered(project_context, disable_auto_clustering):
     """Phase 1: Verify all ingest sources add to unclustered set."""
     pid = project_context["project_id"]
     # Test Reddit
@@ -246,7 +256,7 @@ def test_all_sources_add_to_unclustered(project_context):
     assert "manual" in sources
 
 
-def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch):
+def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch, disable_auto_clustering):
     """GitHub ingestion should add open issues to the unclustered set."""
     pid = project_context["project_id"]
     issue_open = {
@@ -275,7 +285,7 @@ def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch):
     assert any(item.source == "github" for item in unclustered)
 
 
-def test_remove_from_unclustered(project_context):
+def test_remove_from_unclustered(project_context, disable_auto_clustering):
     """Phase 1: Verify items can be removed from unclustered set."""
     pid = project_context["project_id"]
     payload = {

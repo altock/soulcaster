@@ -53,6 +53,7 @@ def test_issue_to_feedback_item_shape(project_context):
 
 def test_sync_github_repo_first_sync(project_context, monkeypatch):
     pid = project_context["project_id"]
+    monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
 
     issue_open = {
         "id": 1,

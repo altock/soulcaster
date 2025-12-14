@@ -16,7 +16,7 @@ ProjectId = Union[UUID, str]
 
 import requests
 
-from models import FeedbackItem, IssueCluster, AgentJob, Project, User
+from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob
 
 try:
     import redis  # type: ignore
@@ -128,6 +128,12 @@ class UpstashRESTClient:
 
     def set(self, key: str, value: str):
         return self._cmd("SET", key, value)
+
+    def set_with_opts(self, key: str, value: str, *options: str):
+        """
+        Execute SET with additional options (e.g., NX/EX) supported by Upstash REST.
+        """
+        return self._cmd("SET", key, value, *options)
 
     def get(self, key: str) -> Optional[str]:
         return self._cmd("GET", key)
@@ -243,6 +249,10 @@ class InMemoryStore:
         self.external_index: Dict[Tuple[str, str, str], UUID] = {}
         # Track unclustered feedback per project (project_id -> set(feedback_ids))
         self.unclustered_feedback_ids: Dict[str, set[UUID]] = {}
+        # Cluster jobs and locks (in-memory)
+        self.cluster_jobs: Dict[str, ClusterJob] = {}
+        self.cluster_job_index: Dict[str, List[str]] = {}
+        self.cluster_locks: Dict[str, str] = {}
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
@@ -511,6 +521,48 @@ class InMemoryStore:
         """
         self.agent_jobs.clear()
 
+    # Cluster Jobs (clustering runner)
+    def add_cluster_job(self, job: ClusterJob) -> ClusterJob:
+        job_id = str(job.id)
+        pid = str(job.project_id)
+        self.cluster_jobs[job_id] = job
+        self.cluster_job_index.setdefault(pid, [])
+        # maintain most recent first
+        self.cluster_job_index[pid] = [job_id] + [
+            jid for jid in self.cluster_job_index[pid] if jid != job_id
+        ]
+        return job
+
+    def get_cluster_job(self, project_id: str, job_id: str) -> Optional[ClusterJob]:
+        job = self.cluster_jobs.get(job_id)
+        if job and str(job.project_id) == str(project_id):
+            return job
+        return None
+
+    def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
+        ids = self.cluster_job_index.get(str(project_id), [])
+        return [self.cluster_jobs[jid] for jid in ids[:limit] if jid in self.cluster_jobs]
+
+    def update_cluster_job(self, project_id: str, job_id: str, **updates) -> ClusterJob:
+        existing = self.get_cluster_job(project_id, job_id)
+        if not existing:
+            raise KeyError(f"ClusterJob {job_id} not found for project {project_id}")
+        updated = existing.model_copy(update=updates)
+        return self.add_cluster_job(updated)
+
+    def acquire_cluster_lock(self, project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+        key = str(project_id)
+        holder = self.cluster_locks.get(key)
+        if holder:
+            return False
+        self.cluster_locks[key] = job_id
+        return True
+
+    def release_cluster_lock(self, project_id: str, job_id: str):
+        key = str(project_id)
+        if self.cluster_locks.get(key) == job_id:
+            self.cluster_locks.pop(key, None)
+
     # Users / Projects
     def create_user_with_default_project(self, user: User, default_project: Project) -> Project:
         """
@@ -627,6 +679,21 @@ class RedisStore:
     def _cluster_all_key(project_id: str) -> str:
         """Match dashboard: clusters:${projectId}:all"""
         return f"clusters:{project_id}:all"
+
+    @staticmethod
+    def _cluster_job_key(project_id: str, job_id: str) -> str:
+        """Key for clustering jobs metadata."""
+        return f"cluster_job:{project_id}:{job_id}"
+
+    @staticmethod
+    def _cluster_jobs_recent_key(project_id: str) -> str:
+        """Sorted set of recent clustering jobs per project."""
+        return f"cluster_jobs:{project_id}:recent"
+
+    @staticmethod
+    def _cluster_lock_key(project_id: str) -> str:
+        """Lock key to prevent concurrent clustering per project."""
+        return f"cluster:lock:{project_id}"
 
     @staticmethod
     def _reddit_subreddits_key(project_id: UUID) -> str:
@@ -1224,6 +1291,70 @@ class RedisStore:
         if job_keys:
             self._delete(*job_keys)
 
+    # Cluster Jobs (clustering runner)
+    def add_cluster_job(self, job: ClusterJob) -> ClusterJob:
+        payload = job.model_dump()
+        for field in ("created_at", "started_at", "finished_at"):
+            if isinstance(payload.get(field), datetime):
+                payload[field] = _dt_to_iso(payload[field])
+        key = self._cluster_job_key(str(job.project_id), job.id)
+        hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        self._hset(key, hash_payload)
+        ts = job.created_at.timestamp()
+        self._zadd(self._cluster_jobs_recent_key(str(job.project_id)), ts, job.id)
+        return job
+
+    def get_cluster_job(self, project_id: str, job_id: str) -> Optional[ClusterJob]:
+        key = self._cluster_job_key(project_id, job_id)
+        data = self._hgetall(key)
+        if not data:
+            return None
+        for field in ("created_at", "started_at", "finished_at"):
+            if isinstance(data.get(field), str):
+                data[field] = _iso_to_dt(data[field])
+        # Parse stats JSON string into dict when stored as text
+        if isinstance(data.get("stats"), str):
+            try:
+                data["stats"] = json.loads(data["stats"])
+            except json.JSONDecodeError:
+                data["stats"] = {}
+        return ClusterJob(**data)
+
+    def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
+        ids = self._zrange(self._cluster_jobs_recent_key(project_id), -limit, -1, rev=True)
+        jobs: List[ClusterJob] = []
+        for jid in ids:
+            job = self.get_cluster_job(project_id, jid)
+            if job:
+                jobs.append(job)
+        return jobs
+
+    def update_cluster_job(self, project_id: str, job_id: str, **updates) -> ClusterJob:
+        existing = self.get_cluster_job(project_id, job_id)
+        if not existing:
+            raise KeyError(f"ClusterJob {job_id} not found for project {project_id}")
+        updated = existing.model_copy(update=updates)
+        return self.add_cluster_job(updated)
+
+    def acquire_cluster_lock(self, project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+        key = self._cluster_lock_key(project_id)
+        if self.mode == "redis":
+            return bool(self.client.set(key, job_id, nx=True, ex=ttl_seconds))
+        try:
+            result = self.client.set_with_opts(key, job_id, "NX", "EX", str(ttl_seconds))
+        except Exception:
+            return False
+        return bool(result)
+
+    def release_cluster_lock(self, project_id: str, job_id: str):
+        key = self._cluster_lock_key(project_id)
+        try:
+            current = self._get(key)
+            if current == job_id:
+                self._delete(key)
+        except Exception:
+            self._delete(key)
+
     def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
         """
         Resolve a feedback item by its external identifier within a project.
@@ -1749,6 +1880,34 @@ def clear_jobs():
     """
     if hasattr(_STORE, "clear_jobs"):
         _STORE.clear_jobs()
+
+
+# Cluster job API
+def add_cluster_job(job: ClusterJob) -> ClusterJob:
+    return _STORE.add_cluster_job(job)
+
+
+def get_cluster_job(project_id: str, job_id: str) -> Optional[ClusterJob]:
+    return _STORE.get_cluster_job(project_id, job_id)
+
+
+def list_cluster_jobs(project_id: str, limit: int = 20) -> List[ClusterJob]:
+    return _STORE.list_cluster_jobs(project_id, limit)
+
+
+def update_cluster_job(project_id: str, job_id: str, **updates) -> ClusterJob:
+    return _STORE.update_cluster_job(project_id, job_id, **updates)
+
+
+def acquire_cluster_lock(project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+    if hasattr(_STORE, "acquire_cluster_lock"):
+        return _STORE.acquire_cluster_lock(project_id, job_id, ttl_seconds)
+    return True
+
+
+def release_cluster_lock(project_id: str, job_id: str):
+    if hasattr(_STORE, "release_cluster_lock"):
+        _STORE.release_cluster_lock(project_id, job_id)
 
 
 def get_unclustered_feedback(project_id: str) -> List[FeedbackItem]:

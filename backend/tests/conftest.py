@@ -42,6 +42,11 @@ def clear_data(mock_store):
     clear_feedback_items()
 
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 @pytest.fixture()
 def project_context():
     """

@@ -6,6 +6,7 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 - Manual text submissions
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from models import FeedbackItem, IssueCluster, AgentJob, User, Project
+from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob
 from store import (
     add_cluster,
     add_feedback_item,
@@ -57,9 +58,13 @@ from store import (
     create_project,
     get_projects_for_user,
     get_project,
+    get_cluster_job,
+    list_cluster_jobs,
+    get_unclustered_feedback,
 )
 from github_client import fetch_repo_issues, issue_to_feedback_item
 from reddit_poller import poll_once
+from clustering_runner import maybe_start_clustering, run_clustering_job
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -119,6 +124,26 @@ def _require_project_id(project_id: Optional[UUID | str]) -> str:
     return str(project_id)
 
 
+def _kickoff_clustering(project_id: str):
+    """
+    Fire-and-forget clustering start for sync endpoints.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(maybe_start_clustering(project_id))
+    except RuntimeError:
+        # No running loop (e.g., during pytest/TestClient); run clustering inline so tests see clusters.
+        logger.warning("No running event loop; clustering not started for project %s", project_id)
+        try:
+            async def _inline():
+                job = await maybe_start_clustering(project_id)
+                await run_clustering_job(project_id, job.id)
+
+            asyncio.run(_inline())
+        except Exception as exc:
+            logger.exception("Inline clustering failed for project %s: %s", project_id, exc)
+
+
 # ============================================================
 # PHASE 2: REDDIT INTEGRATION (Currently deferred)
 # ============================================================
@@ -150,7 +175,7 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[str] = Query(None)):
         if existing:
             return {"status": "duplicate", "id": str(existing.id)}
     add_feedback_item(item)
-    _auto_cluster_feedback(item)
+    _kickoff_clustering(pid_str)
     return {"status": "ok", "id": str(item.id), "project_id": pid_str}
 
 
@@ -200,7 +225,7 @@ def ingest_sentry(payload: dict, project_id: Optional[str] = Query(None)):
             created_at=datetime.now(timezone.utc),
         )
         add_feedback_item(item)
-        _auto_cluster_feedback(item)
+        _kickoff_clustering(str(pid))
         return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
 
     except Exception as e:
@@ -304,7 +329,7 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[str] = Quer
         created_at=datetime.now(timezone.utc),
     )
     add_feedback_item(item)
-    _auto_cluster_feedback(item)
+    _kickoff_clustering(str(pid))
     return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
 
 
@@ -435,14 +460,8 @@ async def ingest_github_sync(
             time.monotonic() - prune_start,
         )
 
-    # Cluster open items
-    cluster_start = time.monotonic()
-    for item in to_cluster:
-        _auto_cluster_feedback(item)
     if to_cluster:
-        logger.info(
-            "Clustered %d items (%.2fs)", len(to_cluster), time.monotonic() - cluster_start
-        )
+        _kickoff_clustering(project_id)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     GITHUB_SYNC_STATE[state_key] = {
@@ -589,7 +608,7 @@ async def trigger_poll(project_id: Optional[str] = Query(None)):
             payload["project_id"] = pid
             item = FeedbackItem(**payload)
             add_feedback_item(item)
-            _auto_cluster_feedback(item)
+            _kickoff_clustering(str(pid))
         except Exception as e:
             print(f"Error in direct ingest: {e}")
             raise e
@@ -914,6 +933,45 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[str] = Query(None))
     response["feedback_items"] = feedback_items
     response["project_id"] = str(pid)
     return response
+
+
+@app.post("/cluster-jobs")
+async def create_cluster_job(project_id: Optional[str] = Query(None)):
+    """Create and start a clustering job for the project (non-blocking)."""
+    pid = _require_project_id(project_id)
+    job = await maybe_start_clustering(pid)
+    return {"job_id": job.id, "status": job.status, "project_id": pid}
+
+
+@app.get("/cluster-jobs/{job_id}")
+def get_cluster_job_status(job_id: str, project_id: Optional[str] = Query(None)):
+    """Return status for a specific clustering job."""
+    pid = _require_project_id(project_id)
+    job = get_cluster_job(pid, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Cluster job not found")
+    return job
+
+
+@app.get("/cluster-jobs")
+def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int = Query(20, ge=1, le=50)):
+    """List recent clustering jobs for a project."""
+    pid = _require_project_id(project_id)
+    jobs = list_cluster_jobs(pid, limit=limit)
+    return {"jobs": jobs, "project_id": pid}
+
+
+@app.get("/clustering/status")
+def clustering_status(project_id: Optional[str] = Query(None)):
+    """
+    Lightweight status endpoint: pending count, whether a job is running, last job details.
+    """
+    pid = _require_project_id(project_id)
+    pending = len(get_unclustered_feedback(pid))
+    recent = list_cluster_jobs(pid, limit=1)
+    last_job = recent[0] if recent else None
+    is_clustering = bool(last_job and last_job.status == "running")
+    return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
 
 
 @app.post("/clusters/{cluster_id}/start_fix")
