@@ -108,16 +108,16 @@ def read_root():
 
 def _require_project_id(project_id: Optional[UUID | str]) -> str:
     """
-    Ensure a project_id is provided; return it as a string (UUID or CUID).
+    Validate that a project_id is present and return it as a string.
     
     Parameters:
         project_id (Optional[UUID | str]): The project identifier to validate.
     
     Returns:
-        str: The provided `project_id` as a string when present.
+        str: The provided project_id converted to a string.
     
     Raises:
-        HTTPException: With status code 400 if `project_id` is missing.
+        HTTPException: With status code 400 if project_id is missing.
     """
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
@@ -126,7 +126,13 @@ def _require_project_id(project_id: Optional[UUID | str]) -> str:
 
 def _kickoff_clustering(project_id: str):
     """
-    Fire-and-forget clustering start for sync endpoints.
+    Trigger clustering for the given project, preferring asynchronous fire-and-forget execution.
+    
+    If an asyncio event loop is running, schedules a non-blocking clustering job for the project.
+    If no event loop is available (e.g., in test environments), runs clustering synchronously so callers can observe results. Any exceptions raised during inline execution are logged.
+    
+    Parameters:
+        project_id (str): Identifier of the project whose unclustered feedback should be clustered.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -136,6 +142,11 @@ def _kickoff_clustering(project_id: str):
         logger.warning("No running event loop; clustering not started for project %s", project_id)
         try:
             async def _inline():
+                """
+                Start and execute a clustering job for the current project_id inline.
+                
+                This coroutine starts a clustering job for the surrounding `project_id` and runs that job to completion within the current async context.
+                """
                 job = await maybe_start_clustering(project_id)
                 await run_clustering_job(project_id, job.id)
 
@@ -341,13 +352,30 @@ async def ingest_github_sync(
     x_github_token: Optional[str] = Header(None, alias="X-GitHub-Token"),
 ):
     """
-    Sync GitHub issues for a repository and store them as FeedbackItems.
+    Synchronize GitHub issues for a repository into project-scoped FeedbackItems.
     
-    Notes:
-        - Pull requests are ignored.
-        - Uses in-memory state for `last_synced`; promote to Redis if persistence is required.
-        - Accepts X-GitHub-Token header for user OAuth authentication.
-        - Accepts project_id as string (supports both UUID and CUID formats).
+    Fetches issues from the specified GitHub repository, creates or updates FeedbackItems in the target project using each issue's external ID, removes closed issues from the unclustered set, and triggers asynchronous clustering when there are items to cluster. Pull requests are ignored. The in-memory sync state for the (project, repo) pair is updated with `last_synced` and `issue_count`.
+    
+    Parameters:
+        request: FastAPI request object (headers inspected for debugging).
+        repo_name: GitHub repository in the form "owner/repo".
+        project_id: Project identifier; required.
+        x_github_token: Optional OAuth token supplied via the X-GitHub-Token header.
+    
+    Returns:
+        dict: Summary of the sync with keys:
+            - success (bool): True when sync completed.
+            - repo (str): repository full name ("owner/repo").
+            - new_issues (int): number of newly created feedback items.
+            - updated_issues (int): number of updated feedback items.
+            - closed_issues (int): number of issues marked closed and removed from unclustered.
+            - total_issues (int): total issues fetched from GitHub.
+            - last_synced (str): ISO 8601 UTC timestamp when the sync finished.
+            - project_id (str): the project_id used for the sync.
+            - synced_ids (List[str]): UUIDs of feedback items created or updated.
+    
+    Raises:
+        HTTPException: if project_id is missing, repo_name is invalid, or fetching issues from GitHub fails (returns 502).
     """
     logger.info("=== GitHub Sync Request ===")
     logger.info(f"repo_name: {repo_name}")
@@ -571,20 +599,16 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Quer
 @app.post("/admin/trigger-poll")
 async def trigger_poll(project_id: Optional[str] = Query(None)):
     """
-    Trigger a single Reddit polling cycle for the specified project and wait for completion.
-    
-    Polls the project's configured subreddits and ingests any found posts directly into the store, then runs automatic clustering for each ingested item. If no subreddits are configured for the project, the operation is skipped.
+    Run a single Reddit polling cycle for the given project and ingest any discovered posts into the store, then trigger clustering for ingested items.
     
     Parameters:
-        project_id (Optional[UUID]): Project identifier used to scope the poll; required and validated by the endpoint.
+        project_id (Optional[str]): Project identifier used to scope the poll; required by the endpoint and validated.
     
     Returns:
-        dict: A status payload. Examples:
-            - {"status": "ok", "message": "Polled N subreddits", "project_id": "<uuid>"} on success.
-            - {"status": "skipped", "message": "No subreddits configured", "project_id": "<uuid>"} if no subreddits are set.
+        dict: Status payload. On success: `{"status": "ok", "message": "Polled N subreddits", "project_id": "<uuid>"}`. If no subreddits are configured: `{"status": "skipped", "message": "No subreddits configured", "project_id": "<uuid>"}`.
     
     Raises:
-        HTTPException: With status 500 if the polling or ingest process fails.
+        HTTPException: With status 500 if polling or ingestion fails.
     """
     pid = _require_project_id(project_id)
     subreddits = get_reddit_subreddits_for_project(pid) or []
@@ -596,12 +620,12 @@ async def trigger_poll(project_id: Optional[str] = Query(None)):
     # Helper to ingest directly without HTTP request (avoids deadlock)
     def direct_ingest(payload: dict):
         """
-        Ingest a raw feedback payload into storage and trigger automatic clustering for its project.
+        Create and store a FeedbackItem from a raw payload and trigger clustering for its project.
         
-        The function constructs a FeedbackItem from the provided payload (after injecting the current project id), persists it, and runs the automatic clustering routine for the new item. Any exception raised during construction, persistence, or clustering is propagated.
+        Injects the current `project_id` into the payload, constructs and persists a FeedbackItem, and starts the non-blocking clustering process for that project.
         
         Parameters:
-            payload (dict): Raw mapping of fields acceptable to FeedbackItem; the function will inject the current `project_id` before creating the item.
+            payload (dict): Mapping of fields accepted by FeedbackItem; `project_id` will be set before item creation.
         """
         try:
             # Inject project_id so the ingested feedback stays scoped correctly
@@ -937,7 +961,15 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[str] = Query(None))
 
 @app.post("/cluster-jobs")
 async def create_cluster_job(project_id: Optional[str] = Query(None)):
-    """Create and start a clustering job for the project (non-blocking)."""
+    """
+    Create and start a clustering job for the specified project without waiting for completion.
+    
+    Returns:
+        dict: A summary containing:
+            - job_id (str): Identifier of the created clustering job.
+            - status (str): Initial status of the job.
+            - project_id (str): Normalized project identifier used to start the job.
+    """
     pid = _require_project_id(project_id)
     job = await maybe_start_clustering(pid)
     return {"job_id": job.id, "status": job.status, "project_id": pid}
@@ -945,7 +977,15 @@ async def create_cluster_job(project_id: Optional[str] = Query(None)):
 
 @app.get("/cluster-jobs/{job_id}")
 def get_cluster_job_status(job_id: str, project_id: Optional[str] = Query(None)):
-    """Return status for a specific clustering job."""
+    """
+    Retrieve a cluster job by ID scoped to the specified project.
+    
+    Raises:
+    	HTTPException: 404 if no cluster job with the given ID exists for the project.
+    
+    Returns:
+    	ClusterJob: The cluster job record.
+    """
     pid = _require_project_id(project_id)
     job = get_cluster_job(pid, job_id)
     if not job:
@@ -955,7 +995,16 @@ def get_cluster_job_status(job_id: str, project_id: Optional[str] = Query(None))
 
 @app.get("/cluster-jobs")
 def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int = Query(20, ge=1, le=50)):
-    """List recent clustering jobs for a project."""
+    """
+    Retrieve recent clustering jobs for the given project.
+    
+    Parameters:
+        project_id: Project identifier to scope the returned jobs.
+        limit: Maximum number of jobs to return (1–50).
+    
+    Returns:
+        dict: {"jobs": list of ClusterJob objects, "project_id": project id string}
+    """
     pid = _require_project_id(project_id)
     jobs = list_cluster_jobs(pid, limit=limit)
     return {"jobs": jobs, "project_id": pid}
@@ -964,7 +1013,21 @@ def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int 
 @app.get("/clustering/status")
 def clustering_status(project_id: Optional[str] = Query(None)):
     """
-    Lightweight status endpoint: pending count, whether a job is running, last job details.
+    Report clustering queue status for a project.
+    
+    Parameters:
+        project_id (Optional[str]): Project identifier; if omitted or invalid, a 400 HTTPException is raised.
+    
+    Returns:
+        dict: {
+            "pending_unclustered": int,   # number of feedback items awaiting clustering
+            "is_clustering": bool,        # `true` if a clustering job is currently running
+            "last_job": ClusterJob|None,  # the most recent cluster job record or `None`
+            "project_id": str             # normalized project id
+        }
+    
+    Raises:
+        HTTPException: If `project_id` is missing or invalid.
     """
     pid = _require_project_id(project_id)
     pending = len(get_unclustered_feedback(pid))

@@ -3,10 +3,29 @@ import { requireProjectId } from '@/lib/project';
 
 const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
 
+/**
+ * Normalize a backend HTTP status for proxy responses.
+ *
+ * @param status - The HTTP status code received from the backend
+ * @returns `502` if `status` is greater than or equal to 500, otherwise the original `status`
+ */
 function backendError(status: number) {
   return status >= 500 ? 502 : status;
 }
 
+/**
+ * Fetches cluster jobs for the currently selected project, applying an optional `limit` query parameter.
+ *
+ * The `limit` query parameter defaults to 20 and is clamped to the range 1–50. The handler forwards the request
+ * to the backend cluster-jobs endpoint and returns the backend's JSON response on success.
+ *
+ * @returns `NextResponse` containing the backend JSON data on success. On error, returns a JSON object `{ error: string }`
+ * with an HTTP status of:
+ * - 400 when the project_id is missing,
+ * - 503 when the backend request times out,
+ * - 502 for backend 5xx responses (or the backend's status for non-5xx errors),
+ * - 500 for other unexpected failures.
+ */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -39,6 +58,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Start a clustering job for the current project, forwarding an optional JSON payload to the backend.
+ *
+ * On success, returns the backend's response body parsed as JSON with the backend's HTTP status.
+ *
+ * @returns The backend response parsed as JSON on success; otherwise a JSON object `{ error: string }` with an appropriate HTTP status:
+ * - 400 when the required `project_id` is missing,
+ * - 503 when the backend request times out,
+ * - 500 for other failures,
+ * - or the backend's mapped status for backend error responses.
+ */
 export async function POST(request: NextRequest) {
   try {
     const projectId = await requireProjectId(request);

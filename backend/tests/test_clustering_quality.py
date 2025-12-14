@@ -27,6 +27,18 @@ def test_agglomerative_quality_grouping():
     )
 
     def fake_embed(texts):
+        """
+        Provide a predefined embedding array for the given input texts (used in tests).
+        
+        Parameters:
+            texts (Sequence[str]): Input texts whose length must match the number of rows in `mock_embeddings`.
+        
+        Returns:
+            numpy.ndarray: The predefined `mock_embeddings` array.
+        
+        Raises:
+            AssertionError: If `len(texts)` does not equal `len(mock_embeddings)`.
+        """
         assert len(texts) == len(mock_embeddings)
         return mock_embeddings
 

@@ -25,10 +25,26 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 def anyio_backend():
+    """
+    Specify the anyio backend to use for tests.
+    
+    Returns:
+        backend (str): The anyio backend identifier "asyncio".
+    """
     return "asyncio"
 
 
 def _make_feedback(project_id: str, title: str) -> FeedbackItem:
+    """
+    Create a FeedbackItem for tests using the given project ID and title.
+    
+    Parameters:
+        project_id (str): The project identifier to associate with the feedback item.
+        title (str): The title text for the feedback item.
+    
+    Returns:
+        FeedbackItem: A feedback item with a generated UUID `id`, `source` set to "manual", `title` set to the provided value, `body` set to "<title> body", empty `metadata`, and `created_at` set to the current UTC time.
+    """
     return FeedbackItem(
         id=uuid4(),
         project_id=project_id,
@@ -49,6 +65,19 @@ async def test_run_clustering_job_writes_clusters(monkeypatch):
     add_feedback_item(_make_feedback(project_id, "Export timeout"))
 
     def fake_cluster_issues(issues, **kwargs):
+        """
+        Create a deterministic fake clustering result from a list of issue-like dicts.
+        
+        Parameters:
+            issues (Iterable[Mapping]): Iterable of mappings representing issues; each mapping is expected to contain a "title" key.
+        
+        Returns:
+            dict: A clustering result with keys:
+                - "labels": numpy.ndarray of integer cluster labels (one label per input issue).
+                - "clusters": list of clusters, each cluster is a list of issue indices.
+                - "singletons": list of singleton issue indices.
+                - "texts": list of issue titles extracted from the input.
+        """
         return {
             "labels": np.array([0, 0]),
             "clusters": [[0, 1]],
@@ -82,6 +111,19 @@ async def test_maybe_start_clustering_respects_lock(monkeypatch):
     assert acquired is True
 
     def fake_cluster_issues(issues, **kwargs):
+        """
+        Produce an empty clustering result for the provided issues.
+        
+        Parameters:
+            issues (iterable): Input issues to cluster (not inspected by this fake implementation).
+        
+        Returns:
+            dict: A clustering result with keys:
+                - "labels": an empty numpy.ndarray of labels.
+                - "clusters": an empty list of clusters.
+                - "singletons": an empty list of singleton issue indices.
+                - "texts": an empty list of issue texts.
+        """
         return {"labels": np.array([]), "clusters": [], "singletons": [], "texts": []}
 
     monkeypatch.setattr(clustering_core, "cluster_issues", fake_cluster_issues)

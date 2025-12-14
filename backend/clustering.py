@@ -39,10 +39,20 @@ def prepare_issue_texts(
     issues: Iterable[dict], truncate_body_chars: int = DEFAULT_TRUNCATE_BODY_CHARS
 ) -> List[str]:
     """
-    Construct text snippets for embedding from issue/feedback dictionaries.
-
-    Each issue is expected to contain title/body/raw_text keys; body is
-    truncated to `truncate_body_chars` to bound embedding payload size.
+    Create text snippets from issue dictionaries for embedding.
+    
+    For each issue, uses the "title" and either "body" or "raw_text" to produce a single string:
+    - If both title and body/raw_text are present: "title\n\nbody"
+    - If only title is present: "title"
+    - If only body/raw_text is present: "body"
+    
+    Parameters:
+        issues (Iterable[dict]): Iterable of issue/feedback dictionaries.
+        truncate_body_chars (int): Maximum number of characters to keep from the body/raw_text;
+            a falsy value (e.g., 0 or None) disables truncation.
+    
+    Returns:
+        List[str]: Prepared text snippets, one per input issue.
     """
     texts: List[str] = []
     for issue in issues:
@@ -64,8 +74,14 @@ def prepare_issue_texts(
 # ---------------------------------------------------------------------------
 def _get_genai_client():
     """
-    Lazily construct a Gemini client. Separated for testability/mocking.
-    Prefers GEMINI_API_KEY, falls back to GOOGLE_API_KEY.
+    Constructs a Gemini client using the GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
+    
+    Returns:
+        genai.Client: Authenticated Gemini client.
+    
+    Raises:
+        RuntimeError: if neither GEMINI_API_KEY nor GOOGLE_API_KEY is set.
+        RuntimeError: if the `google-genai` library is not installed.
     """
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -81,10 +97,18 @@ def embed_texts_gemini(
     output_dimensionality: int = 768,
 ) -> np.ndarray:
     """
-    Embed a list of texts using Gemini embeddings (cosine-normalized).
-
-    Raises RuntimeError when the Google API key is missing or the client is
-    unavailable. Complexity: O(n) embedding calls; normalization O(n·d).
+    Compute L2-normalized Gemini embeddings for a sequence of texts.
+    
+    Parameters:
+        texts (Sequence[str]): Texts to embed.
+        model (str): Gemini embedding model name to use.
+        output_dimensionality (int): Desired dimensionality of each embedding.
+    
+    Returns:
+        np.ndarray: Float32 array of shape (n_texts, output_dimensionality) where each row is an L2-normalized embedding.
+    
+    Raises:
+        RuntimeError: If the Gemini/Google API key is not set or the Gemini client is unavailable.
     """
     if not texts:
         return np.empty((0, output_dimensionality), dtype=np.float32)
@@ -106,7 +130,16 @@ def embed_texts_gemini(
 # Similarity helpers
 # ---------------------------------------------------------------------------
 def cosine(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity for L2-normalized vectors."""
+    """
+    Compute cosine similarity between two L2-normalized vectors.
+    
+    Parameters:
+        a (np.ndarray): First L2-normalized vector.
+        b (np.ndarray): Second L2-normalized vector.
+    
+    Returns:
+        similarity (float): Cosine similarity (dot product) of `a` and `b`.
+    """
     return float(np.dot(a, b))
 
 
@@ -115,9 +148,14 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 def cluster_agglomerative(embeddings: np.ndarray, sim_threshold: float = DEFAULT_SIM_THRESHOLD) -> np.ndarray:
     """
-    Agglomerative clustering (average linkage, cosine distance threshold).
-
-    Time: ~O(n^2)–O(n^3); Memory: ~O(n^2); n = items.
+    Group embeddings into clusters using agglomerative clustering with average linkage and a cosine-similarity threshold.
+    
+    Parameters:
+        embeddings (np.ndarray): 2D array of L2-normalized embeddings with shape (n_samples, dim).
+        sim_threshold (float): Similarity cutoff in the range [-1.0, 1.0]; two items with cosine similarity >= this value may be merged.
+    
+    Returns:
+        np.ndarray: Integer label array of length n_samples assigning a cluster index to each embedding. Returns an empty integer array when `embeddings` is empty.
     """
     if embeddings.size == 0:
         return np.array([], dtype=int)
@@ -135,9 +173,15 @@ def cluster_agglomerative(embeddings: np.ndarray, sim_threshold: float = DEFAULT
 
 def cluster_centroid(embeddings: np.ndarray, sim_threshold: float = DEFAULT_SIM_THRESHOLD) -> np.ndarray:
     """
-    Greedy centroid assignment.
-
-    Time: O(n·k·d); n = items, k = clusters, d = embedding dim.
+    Assign embeddings to clusters using a greedy centroid-based strategy.
+    
+    Each embedding is compared to existing cluster centroids by cosine similarity; if the highest similarity is greater than or equal to `sim_threshold`, the embedding is assigned to that cluster and the centroid is updated as the cluster's incremental average. If no centroid meets the threshold, a new cluster is created. If `embeddings` is empty, an empty integer array is returned.
+    
+    Parameters:
+        sim_threshold (float): Cosine similarity threshold required to join an existing cluster.
+    
+    Returns:
+        labels (np.ndarray): Integer array of cluster indices for each input embedding.
     """
     if embeddings.size == 0:
         return np.array([], dtype=int)
@@ -164,9 +208,14 @@ def cluster_centroid(embeddings: np.ndarray, sim_threshold: float = DEFAULT_SIM_
 
 def cluster_vector_like(embeddings: np.ndarray, sim_threshold: float = DEFAULT_SIM_THRESHOLD) -> np.ndarray:
     """
-    Greedy nearest-prior baseline (vector-like).
-
-    Time: O(n^2·d); baseline for experiments, not ANN.
+    Assigns each embedding to the first earlier embedding whose cosine similarity meets the threshold, creating a new cluster when no prior match exists.
+    
+    Parameters:
+        embeddings (np.ndarray): L2-normalized embedding vectors with shape (n_samples, dim).
+        sim_threshold (float): Similarity cutoff in [−1, 1]; an embedding joins the first prior embedding with cosine similarity >= this value.
+    
+    Returns:
+        np.ndarray: Integer array of cluster labels with length equal to the number of input embeddings. An empty input yields an empty integer array.
     """
     if embeddings.size == 0:
         return np.array([], dtype=int)
@@ -196,13 +245,22 @@ def cluster_issues(
     embed_fn=embed_texts_gemini,
 ) -> dict:
     """
-    Cluster issues using the selected strategy.
-
-    Returns a dict containing:
-        - labels: np.ndarray of cluster labels per issue (singletons allowed)
-        - clusters: list[list[int]] index groups (filtered by min_cluster_size)
-        - singletons: list[int] of singleton indices
-        - texts: list[str] prepared text payloads
+    Cluster prepared issue texts into groups using the chosen clustering strategy.
+    
+    Parameters:
+        issues (Iterable[dict]): Iterable of issue/feedback mappings; each dict may contain title, body, or raw_text used to build the text payloads.
+        method (Literal["agglomerative","centroid","vector_like"]): Clustering strategy to apply.
+        sim_threshold (float): Similarity threshold in [0, 1] used to decide whether items belong to the same cluster.
+        min_cluster_size (int): Minimum number of items for a group to be returned as a cluster; groups smaller than this become singletons.
+        truncate_body_chars (int): Maximum number of characters to keep from each issue body when preparing texts (no truncation if None or 0).
+        embed_fn (Callable[[Sequence[str]], np.ndarray]): Function that converts prepared texts into L2-normalized embedding vectors of shape (n_items, dim).
+    
+    Returns:
+        dict: A mapping with the following keys:
+            - "labels" (np.ndarray): Integer cluster label for each input issue.
+            - "clusters" (List[List[int]]): Lists of indices for clusters whose size >= min_cluster_size.
+            - "singletons" (List[int]): Indices of items assigned to groups smaller than min_cluster_size.
+            - "texts" (List[str]): Prepared text payloads used as input to the embedding function.
     """
     texts = prepare_issue_texts(issues, truncate_body_chars=truncate_body_chars)
     embeddings = embed_fn(texts)

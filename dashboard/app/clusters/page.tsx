@@ -16,11 +16,10 @@ type ClusterJobStatus = {
 };
 
 /**
- * Display the Issue Clusters page and manage its loading, error, empty, and populated states.
+ * Renders the Issue Clusters page and manages loading, error, empty, and populated UI states.
  *
- * On mount the component loads cluster data and the count of unclustered items so it can display
- * whether backend-owned clustering is still chewing through new feedback. The UI lets users browse
- * clusters, toggle source configuration, and link to details for deeper triage.
+ * Manages cluster data, unclustered item count, latest clustering job state, and user actions such as
+ * triggering a clustering run and toggling source configuration.
  *
  * @returns The React element for the Issue Clusters page
  */

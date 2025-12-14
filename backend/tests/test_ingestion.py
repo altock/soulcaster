@@ -16,8 +16,9 @@ client = TestClient(app)
 @pytest.fixture
 def disable_auto_clustering(monkeypatch):
     """
-    Prevent the async clustering runner from draining the unclustered set so tests
-    can assert ingestion semantics before clustering runs.
+    Prevent the asynchronous clustering runner from starting so tests can inspect unclustered feedback before clustering occurs.
+    
+    Replaces main._kickoff_clustering with a no-op using the provided pytest `monkeypatch` fixture.
     """
     monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
 

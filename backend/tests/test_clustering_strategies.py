@@ -60,6 +60,17 @@ def test_cluster_issues_uses_embed_fn(monkeypatch):
     )
 
     def fake_embed(texts):
+        """
+        Provide a mock embedding function that returns a pre-defined embeddings array for exactly three input texts.
+        
+        Asserts that the input sequence contains three items and returns the module-level `mock_embeddings` value.
+        
+        Parameters:
+            texts (Sequence[str]): Sequence of exactly three texts to embed.
+        
+        Returns:
+            numpy.ndarray: The pre-defined `mock_embeddings` array.
+        """
         assert len(texts) == 3
         return mock_embeddings
 

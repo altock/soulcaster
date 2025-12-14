@@ -33,8 +33,15 @@ logger = logging.getLogger(__name__)
 
 def _test_embed(texts):
     """
-    Deterministic lightweight embeddings for test runs when GOOGLE_API_KEY is absent.
-    Produces simple one-hot style vectors to allow clustering without network calls.
+    Provide deterministic lightweight embeddings for testing.
+    
+    Generates a float32 matrix with shape (len(texts), max(3, len(texts))) where each row is a one-hot–like vector containing a single 1.0 and zeros elsewhere. For an empty input returns an empty array with shape (0, 3).
+    
+    Parameters:
+        texts (Sequence[str]): Input texts; only the number of texts is used to determine embedding size.
+    
+    Returns:
+        numpy.ndarray: Float32 embedding matrix of shape (n, dims) where n is len(texts) and dims is max(3, n).
     """
     n = len(texts)
     if n == 0:
@@ -66,7 +73,15 @@ def _prepare_issue_payloads(items: Sequence[FeedbackItem]) -> List[dict]:
 
 def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
     """
-    Create an IssueCluster record from a list of feedback items (>=1).
+    Builds a new IssueCluster from a non-empty list of FeedbackItem objects.
+    
+    The returned cluster groups the provided feedback items: it assigns a new UUID as the cluster id, sets the cluster's project_id from the first item, derives the title and summary from the first item (summary limited to 200 characters if a body exists), collects the feedback item ids, sets status to "new", and sets created_at/updated_at to the current UTC time.
+    
+    Parameters:
+        item_group (List[FeedbackItem]): A non-empty list of feedback items to include in the cluster.
+    
+    Returns:
+        IssueCluster: A newly constructed IssueCluster representing the grouped feedback items.
     """
     now = datetime.now(timezone.utc)
     first = item_group[0]
@@ -87,7 +102,16 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
 
 def _split_clusters(items: Sequence[FeedbackItem], labels, clusters, singletons) -> List[IssueCluster]:
     """
-    Map clustering output back to IssueCluster models.
+    Convert clustering results into IssueCluster models.
+    
+    Parameters:
+        items (Sequence[FeedbackItem]): Source feedback items referenced by index.
+        labels: Unused placeholder for per-item labels (accepted but ignored).
+        clusters: Iterable of iterables of integer indices; each iterable identifies items that form a cluster.
+        singletons: Iterable of integer indices representing individual-item clusters.
+    
+    Returns:
+        List[IssueCluster]: IssueCluster objects created from the provided index groups; multi-item clusters (from `clusters`) appear first in the returned list followed by singletons.
     """
     grouped: List[IssueCluster] = []
     for idxs in clusters:
@@ -99,7 +123,13 @@ def _split_clusters(items: Sequence[FeedbackItem], labels, clusters, singletons)
 
 async def maybe_start_clustering(project_id: str) -> ClusterJob:
     """
-    Acquire lock and schedule clustering job; returns the ClusterJob record.
+    Create a new clustering job for the given project, attempt to acquire the per-project clustering lock, and schedule the background clustering runner if the lock is obtained.
+    
+    Parameters:
+    	project_id (str): Project identifier for which to create and (if possible) start clustering.
+    
+    Returns:
+    	job (ClusterJob): The created ClusterJob record (status "pending"). If the per-project lock was not acquired, no background task will be scheduled and the returned job remains pending.
     """
     job_id = str(uuid4())
     now = datetime.now(timezone.utc)
@@ -124,7 +154,13 @@ async def maybe_start_clustering(project_id: str) -> ClusterJob:
 
 async def run_clustering_job(project_id: str, job_id: str):
     """
-    Execute clustering for unclustered feedback within a project.
+    Perform clustering for a project's unclustered feedback and update the corresponding ClusterJob.
+    
+    This function marks the job as running, retrieves unclustered feedback for the given project, and either:
+    - In testing mode (no external embedding keys or running under pytest): optionally creates a single cluster when no clusters exist and removes processed items from the unclustered batch.
+    - In production mode: prepares payloads, runs the clustering pipeline with embeddings, persists resulting IssueCluster records, and removes processed items from the unclustered batch.
+    
+    On success the ClusterJob is updated with status "succeeded" and statistics (clustered count, new_clusters, singletons). On error the ClusterJob is updated with status "failed" and the error message. The per-project cluster lock is released in all cases.
     """
     start = datetime.now(timezone.utc)
     update_cluster_job(project_id, job_id, status="running", started_at=start)
