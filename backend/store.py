@@ -1413,6 +1413,8 @@ class RedisStore:
         for field in ("created_at", "started_at", "finished_at"):
             if isinstance(payload.get(field), datetime):
                 payload[field] = _dt_to_iso(payload[field])
+        if isinstance(payload.get("stats"), dict):
+            payload["stats"] = json.dumps(payload["stats"])
         key = self._cluster_job_key(str(job.project_id), job.id)
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
         self._hset(key, hash_payload)
@@ -1501,7 +1503,10 @@ class RedisStore:
             return bool(self.client.set(key, job_id, nx=True, ex=ttl_seconds))
         try:
             result = self.client.set_with_opts(key, job_id, "NX", "EX", str(ttl_seconds))
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Failed to acquire cluster lock for project %s: %s", project_id, exc
+            )
             return False
         return bool(result)
 
@@ -1517,11 +1522,24 @@ class RedisStore:
             job_id (str): Identifier of the cluster job expected to own the lock.
         """
         key = self._cluster_lock_key(project_id)
-        try:
-            current = self._get(key)
-            if current == job_id:
-                self._delete(key)
-        except Exception:
+        if self.mode == "redis":
+            lua_script = """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            else
+                return 0
+            end
+            """
+            try:
+                self.client.eval(lua_script, 1, key, job_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to release cluster lock for project %s: %s", project_id, exc
+                )
+            return
+
+        current = self._get(key)
+        if current == job_id:
             self._delete(key)
 
     def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
