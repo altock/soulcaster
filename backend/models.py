@@ -22,6 +22,21 @@ class AgentJob(BaseModel):
     updated_at: datetime
 
 
+class ClusterJob(BaseModel):
+    """
+    Represents a clustering job tracked by the backend.
+    """
+
+    id: str
+    project_id: Union[str, UUID]
+    status: Literal["pending", "running", "succeeded", "failed"]
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[str] = None
+    stats: Dict[str, int] = {}
+
+
 class FeedbackItem(BaseModel):
     """
     Represents a single piece of user feedback from any source.

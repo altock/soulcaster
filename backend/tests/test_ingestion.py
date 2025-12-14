@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from main import app
 from store import (
@@ -10,6 +11,16 @@ from store import (
 )
 
 client = TestClient(app)
+
+
+@pytest.fixture
+def disable_auto_clustering(monkeypatch):
+    """
+    Prevent the asynchronous clustering runner from starting so tests can inspect unclustered feedback before clustering occurs.
+    
+    Replaces main._kickoff_clustering with a no-op using the provided pytest `monkeypatch` fixture.
+    """
+    monkeypatch.setattr("main._kickoff_clustering", lambda _project_id: None)
 
 def setup_function():
     """
@@ -173,6 +184,7 @@ def test_ingest_reddit_with_empty_body(project_context):
 
 # ========== Phase 1: Ingestion Moat - Unclustered Feedback Tests ==========
 
+@pytest.mark.usefixtures("disable_auto_clustering")
 def test_add_feedback_writes_to_unclustered(project_context):
     """Phase 1: Verify feedback lands in unclustered set when ingested."""
     pid = project_context["project_id"]
@@ -203,6 +215,7 @@ def test_add_feedback_writes_to_unclustered(project_context):
     assert expected_id in unclustered_ids, f"Item {expected_id} not found in unclustered set. Found: {unclustered_ids}"
 
 
+@pytest.mark.usefixtures("disable_auto_clustering")
 def test_all_sources_add_to_unclustered(project_context):
     """Phase 1: Verify all ingest sources add to unclustered set."""
     pid = project_context["project_id"]
@@ -246,6 +259,7 @@ def test_all_sources_add_to_unclustered(project_context):
     assert "manual" in sources
 
 
+@pytest.mark.usefixtures("disable_auto_clustering")
 def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch):
     """GitHub ingestion should add open issues to the unclustered set."""
     pid = project_context["project_id"]
@@ -275,6 +289,7 @@ def test_github_ingestion_adds_to_unclustered(project_context, monkeypatch):
     assert any(item.source == "github" for item in unclustered)
 
 
+@pytest.mark.usefixtures("disable_auto_clustering")
 def test_remove_from_unclustered(project_context):
     """Phase 1: Verify items can be removed from unclustered set."""
     pid = project_context["project_id"]

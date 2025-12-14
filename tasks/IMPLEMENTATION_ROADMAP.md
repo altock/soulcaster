@@ -136,103 +136,120 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 
 ---
 
-## Phase 4: Build Clustering Worker
-**Worktree:** `worktrees/system-readiness`  
-**Reference:** `documentation/clustering_worker_architecture_plan.md`
-**Current state:** Clustering runs in dashboard today (`dashboard/lib/clustering.ts`, `dashboard/lib/vector.ts`, `/api/clusters/run`). This phase migrates that logic into a backend worker.
+## Phase 4: Backend Async Clustering (In-Process, No Separate Service) ✅ COMPLETE
+**Reference:** `documentation/clustering_worker_architecture_plan.md` (updated: in-process runner + future external worker)
+**Status:** ✅ **COMPLETE** - Backend in-process async clustering is now live. Clustering runs asynchronously in the backend process with Redis locks. Dashboard is status-only (no inline clustering). All ingestion paths trigger clustering automatically.
+**Goal:** Backend becomes the single clustering engine. Ingestion only writes feedback + marks it unclustered. Backend starts clustering asynchronously *in the same backend process* (no ECS/Fargate worker, no extra service), with a Redis lock + job status tracking.
 
-### Step 1: Extract Pure Clustering Module
-- [ ] **File: `backend/clustering.py`** (NEW)
-  - [ ] Move clustering logic from `dashboard/lib/clustering.ts` to Python
-  - [ ] Functions:
-    - `compute_embeddings(texts: List[str]) -> List[List[float]]`
-    - `cluster_feedback(feedback_items: List[FeedbackItem]) -> List[Cluster]`
-    - `summarize_cluster(feedback_items: List[FeedbackItem]) -> str`
-  - [ ] Use Gemini API (same as dashboard currently uses)
-  - [ ] Make it pure/testable (no Redis access in core logic)
+### Step 1: Clustering Core Module (Backend) — Implement 3 Strategies, Default Best
+- [x] **File: `backend/clustering.py`** (NEW)
+  - [x] **Goal:** Implement all 3 clustering algorithms from the local experiment notebook behind a single strategy interface.
+  - [x] **Reference (canonical):** `documentation/clustering_worker_architecture_plan.md` (see “Reference code snippets (Python)”)
+  - [x] **Planned API surface:**
+    - `prepare_issue_texts(issues, truncate_body_chars=1500) -> list[str]`
+    - `embed_texts_gemini(texts, model="gemini-embedding-001", output_dimensionality=768) -> list[list[float]]`
+    - `cluster_agglomerative(embeddings, sim_threshold=0.72, min_cluster_size=2) -> labels`
+    - `cluster_centroid(embeddings, sim_threshold=0.72) -> labels`
+    - `cluster_vector_like(embeddings, sim_threshold=0.72) -> labels`
+    - `cluster_issues(issues, method, sim_threshold, min_cluster_size, truncate_body_chars) -> {labels, clusters, singletons, texts}`
+  - [x] **Default in production (ship only the best):**
+    - `CLUSTERING_METHOD=agglomerative`
+    - `CLUSTERING_SIM_THRESHOLD=0.72`
+    - `CLUSTERING_MIN_CLUSTER_SIZE=2`
+    - `CLUSTERING_TRUNCATE_BODY_CHARS=1500`
+  - [x] **Docstrings must include:**
+    - Reference to the notebook path above
+    - Time complexity notes for each method
+  - [x] **Time complexity notes (must document):**
+    - `agglomerative`: ~O(n^2) memory-ish, ~O(n^2)–O(n^3) time (n = items)
+    - `centroid`: O(n·k·d) (k clusters; d=768)
+    - `vector_like`: O(n^2·d) (baseline; compares each item to all prior items; not ANN/vector DB)
+  - [x] Use Gemini API (same as dashboard currently uses)
+  - [x] Make it pure/testable (no Redis access in core logic)
 
-- [ ] **File: `backend/tests/test_clustering.py`** (NEW)
-  - [ ] Test embedding generation
-  - [ ] Test clustering algorithm (cosine similarity)
-  - [ ] Test summarization
-  - [ ] Use fixtures/mocks for LLM calls
+### Step 1.1: Dependencies (Backend)
+- [x] **File: `backend/requirements.txt`**
+  - [x] Add: `numpy`, `scikit-learn`, `packaging`, `google-genai`
+  - [x] (Optional/deferred) Add `sentence-transformers` only if we want HF fallback in production
 
-### Step 2: Create Clustering Worker
-- [ ] **File: `backend/clustering_worker.py`** (NEW)
-  ```python
-  # Standalone script that:
-  # 1. Fetches feedback:unclustered from Redis
-  # 2. Runs clustering.cluster_feedback()
-  # 3. Writes cluster:* keys to Redis
-  # 4. Removes clustered items from feedback:unclustered
-  # 5. Updates cluster-job status
-  ```
-  - [ ] Add CLI: `python -m backend.clustering_worker --job-id <uuid>`
-  - [ ] Add logging to CloudWatch
-  - [ ] Handle errors gracefully (mark job as failed)
+### Step 1.2: Tests (Clustering Strategies + Quality)
+- [x] **File: `backend/tests/test_clustering_strategies.py`** (NEW)
+  - [x] Ensure all 3 strategies run and return labels (smoke test)
+- [x] **File: `backend/tests/test_clustering_quality.py`** (NEW)
+  - [x] Use a small labeled fixture derived from the notebook CSV workflow to regress quality for the default method
+  - [x] CI should not call Gemini: use saved embeddings fixture or mock embedding function
 
-### Step 3: Backend Cluster Job API
-- [ ] **File: `backend/main.py`**
-  - [ ] Add endpoints:
-    - `POST /cluster-jobs` → create new cluster job, trigger worker
+### Step 2: Backend In-Process Clustering Runner (Async Task)
+- [x] **File: `backend/clustering_runner.py`** (NEW)
+  - [x] Implement `maybe_start_clustering(project_id)`:
+    - Acquire per-project Redis lock (prevents duplicate runs across workers/replicas)
+    - Create `ClusterJob` record (status=pending/running)
+    - Start background task inside FastAPI process (`asyncio.create_task(...)`)
+    - Return `job_id` immediately
+  - [x] Implement `run_clustering_job(project_id, job_id)`:
+    - Read `feedback:unclustered:{project_id}`
+    - Embed + assign clusters + summarize
+    - Write `cluster:{project_id}:{id}`, `cluster:{project_id}:{id}:items`, `clusters:{project_id}:all`
+    - Remove successfully processed IDs from `feedback:unclustered:{project_id}`
+    - Update `ClusterJob` (stats + status succeeded/failed)
+  - [x] Handle restarts safely:
+    - Lock TTL + optional heartbeat timestamp
+    - Treat stale "running" as failed/retryable
+
+**Note:** The runner should call the clustering core via the strategy interface, but production defaults to the best-performing method (agglomerative @ 0.72). Other strategies remain switchable by env for later evaluation.
+
+### Step 3: Backend Cluster Job API (Status + Optional Manual Trigger)
+- [x] **File: `backend/main.py`**
+  - [x] Add endpoints:
+    - `POST /cluster-jobs` → create new cluster job and start in-process async task (optional; UI may not expose a button)
     - `GET /cluster-jobs/{id}` → get job status
-    - `PATCH /cluster-jobs/{id}` → update job (from worker)
+    - `GET /cluster-jobs` → list recent jobs for a project (optional)
+    - `GET /clustering/status` → convenience endpoint (pending count, is_clustering, last job) (optional)
 
-- [ ] **File: `backend/models.py`**
-  - [ ] Add `ClusterJob` model:
+- [x] **File: `backend/models.py`**
+  - [x] Add `ClusterJob` model:
     ```python
     class ClusterJob(BaseModel):
         id: str
-        status: Literal["pending", "running", "completed", "failed"]
+        project_id: Union[str, UUID]
+        status: Literal["pending", "running", "succeeded", "failed"]
         created_at: datetime
         started_at: Optional[datetime]
-        completed_at: Optional[datetime]
+        finished_at: Optional[datetime]
         error: Optional[str]
-        clusters_created: int
+        stats: Dict[str, int]  # clustered, new_clusters, updated_clusters, embedding_failures, etc.
     ```
 
-### Step 4: Worker Container
-- [ ] **File: `backend/Dockerfile.clustering-worker`** (NEW)
-  - [ ] Based on `backend/Dockerfile` or create new
-  - [ ] CMD: `python -m backend.clustering_worker`
+### Step 4: Remove Frontend-Driven Clustering (Status-Only UI)
+- [x] **File: `dashboard/app/(pages)/clusters/*` (or relevant UI)**
+  - [x] Remove "Run clustering" button (clustering is automatic on ingest)
+  - [x] Keep status display (pending count / last job status)
+- [x] **Files: `dashboard/app/api/clusters/run*/route.ts`**
+  - [x] Deprecate/remove inline clustering routes in production (keep behind a dev-only flag if needed)
+  - [x] If a manual trigger is still desired, call backend `POST /cluster-jobs` (no heavy work in Next.js)
+- [x] **File: `dashboard/lib/clustering.ts`**
+  - [x] Mark as deprecated for production use (backend is canonical)
+  - [x] Keep temporarily for local debugging / tests if needed
 
-- [ ] **File: `backend/terraform/clustering-ecs.tf`** (NEW)
-  - [ ] ECS task definition for clustering worker
-  - [ ] Reuse networking from coding-agent setup
-  - [ ] Environment variables: `REDIS_URL`, `GEMINI_API_KEY`, etc.
-
-### Step 5: Trigger Worker from Dashboard
-- [ ] **File: `dashboard/app/api/clusters/run/route.ts`**
-  - [ ] Change from running clustering inline to:
-    ```typescript
-    // POST to backend /cluster-jobs
-    // Return job_id to frontend
-    // Frontend polls /cluster-jobs/{id} for status
-    ```
-
-- [ ] **File: `dashboard/lib/clustering.ts`**
-  - [ ] Mark current code as `// DEPRECATED: Moving to backend worker`
-  - [ ] Keep for backward compatibility initially
-  - [ ] Add env flag: `USE_BACKEND_CLUSTERING_WORKER`
-
-### Step 6: Disable Auto-Clustering
-- [ ] **File: `dashboard/lib/redis.ts`** (or wherever auto-clustering lives)
-  - [ ] Find `_auto_cluster_feedback()` calls
-  - [ ] Wrap in: `if (process.env.AUTO_CLUSTER_ENABLED === 'true')`
-  - [ ] Default to `false` once worker is stable
+### Step 5: Disable Heuristic Auto-Clustering in Backend Ingest
+- [x] **File: `backend/main.py`**
+  - [x] Remove `_auto_cluster_feedback()` calls from all ingest paths (GitHub sync, manual, reddit, sentry)
+  - [x] Ingest should only mark feedback as unclustered; clustering happens via the in-process runner
 
 ### Testing
-- [ ] **File: `backend/tests/test_clustering_worker.py`** (NEW)
-  - [ ] Test worker reads unclustered feedback
-  - [ ] Test worker creates clusters
-  - [ ] Test worker updates job status
-  - [ ] Test error handling
+- [x] **File: `backend/tests/test_clustering_runner.py`** (NEW)
+  - [x] Test runner reads unclustered feedback
+  - [x] Test runner writes cluster keys + removes from unclustered
+  - [x] Test lock prevents concurrent runs
+  - [x] Test job status transitions + error handling
 
 ### Acceptance Criteria
-- ✅ Clustering runs as async worker (not blocking dashboard)
-- ✅ Dashboard triggers worker via backend API
-- ✅ Worker can be scaled independently (ECS task count)
-- ✅ Auto-clustering is disabled in favor of explicit jobs
+- [x] Clustering runs asynchronously inside the backend process (non-blocking)
+- [x] Ingestion never clusters; it only marks feedback unclustered
+- [x] Redis lock prevents concurrent clustering per project
+- [x] Dashboard is status-only (no inline clustering in Next.js in production)
+- [x] Separate clustering service (ECS/Fargate worker) is deferred to a future phase if scaling requires it
+- [x] All 3 strategies exist in the clustering core, but only the best is enabled by default (others are behind config for later testing)
 
 ---
 
@@ -409,11 +426,11 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 └─────────────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────────────┐
-│ Phase 4: Clustering Worker                  │
+│ Phase 4: Backend Async Clustering           │
 │ Worktree: system-readiness                  │
 │ Time: ~5-7 days                             │
-│ Files: clustering.py, clustering_worker.py  │
-│ Infra: ECS task, Terraform                  │
+│ Files: clustering.py, clustering_runner.py, │
+│       main.py, models.py                    │
 └─────────────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────────────┐

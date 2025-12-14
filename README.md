@@ -16,7 +16,7 @@ Soulcaster is an open-source feedback triage and automated fix generation system
   - GitHub Issues (via manual sync or webhooks)
   - Manual feedback submission
 
-- **AI-Powered Clustering**: Uses embedding-based similarity (via Gemini) to group related feedback into issue clusters with automatic deduplication
+- **AI-Powered Clustering**: Backend-owned async jobs embed feedback with Gemini and automatically deduplicate similar reports into clusters
 
 - **Multi-Tenant Projects**: Support for multiple projects per user with project-level isolation for feedback and clusters
 
@@ -121,19 +121,20 @@ See `.env.example` for all available environment variables. Key configuration in
 **Backend** (`.env`):
 - `UPSTASH_REDIS_REST_URL` - Redis REST API URL (Upstash)
 - `UPSTASH_REDIS_REST_TOKEN` - Redis REST API token
-- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - For embeddings and LLM operations (required for clustering)
+- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - Required for embeddings + backend-owned clustering
 - `GITHUB_TOKEN` - GitHub personal access token with repo permissions (optional, for higher API limits)
 
 **Dashboard** (`.env.local`):
 - `UPSTASH_REDIS_REST_URL` - Same Redis credentials
 - `UPSTASH_REDIS_REST_TOKEN` - Same Redis token
-- `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - For embeddings (clustering runs in dashboard)
 - `GITHUB_ID` - GitHub OAuth app client ID
 - `GITHUB_SECRET` - GitHub OAuth app client secret
 - `NEXTAUTH_URL` - Your app URL (e.g., `http://localhost:3000`)
 - `NEXTAUTH_SECRET` - Random secret for NextAuth (generate with `openssl rand -base64 32`)
 - `DATABASE_URL` - PostgreSQL connection string for NextAuth and projects
-- `GITHUB_TOKEN` - Optional GitHub token for higher API limits when syncing issues
+- `GITHUB_TOKEN` - Optional GitHub token for higher API limits when syncing issues (for syncing GitHub issues)
+- `BACKEND_URL` - Backend API URL (defaults to `http://localhost:8000`)
+- `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` - Only required if you opt into the deprecated dashboard-run clustering flow (see `ENABLE_DASHBOARD_CLUSTERING`)
 
 **Coding Agent** (`.env` in `coding-agent/`):
 - `GEMINI_API_KEY` or `MINIMAX_API_KEY` - LLM provider for fix generation
@@ -152,9 +153,9 @@ See `.env.example` for all available environment variables. Key configuration in
 - `REDIS_URL` or `UPSTASH_REDIS_URL` - Alternative Redis connection string (if not using REST API)
 
 **Dashboard**:
-- `BACKEND_URL` - Backend API URL (defaults to `http://localhost:8000`)
 - `GITHUB_OWNER` - Default GitHub repository owner (for new issues)
 - `GITHUB_REPO` - Default GitHub repository name (for new issues)
+- `ENABLE_DASHBOARD_CLUSTERING` - (default `false`) temporarily re-enable deprecated dashboard-run clustering APIs for dev-only experiments; production setups should keep this unset so clustering remains backend-owned
 - AWS configuration (for Fargate agent deployment):
   - `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
   - `ECS_CLUSTER_NAME`, `ECS_TASK_DEFINITION`
@@ -231,10 +232,10 @@ soulcaster/
    - GitHub: Manual sync or webhook integration
    - Sentry: Webhook integration
    - Manual: Direct submission via dashboard
-3. **Clustering**: New feedback items are:
-   - Embedded using Gemini's text-embedding models
-   - Compared against existing clusters using cosine similarity
-   - Automatically assigned to matching clusters or create new ones
+3. **Clustering**: New feedback items are queued in the backend and clustered asynchronously:
+   - Feedback is embedded using Gemini and grouped via the backend's clustering runner
+   - `POST /cluster-jobs` kicks off a job, while `/cluster-jobs*` and `/clustering/status` expose job progress + pending counts
+   - Resulting clusters automatically deduplicate similar reports and refresh the dashboard view
 4. **Triage**: Clusters are displayed in the dashboard with:
    - AI-generated summaries and titles
    - Feedback count and source breakdown

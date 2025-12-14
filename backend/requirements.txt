@@ -6,3 +6,7 @@ httpx
 redis
 requests
 python-dotenv
+numpy
+scikit-learn
+packaging
+google-genai

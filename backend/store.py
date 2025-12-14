@@ -16,7 +16,7 @@ ProjectId = Union[UUID, str]
 
 import requests
 
-from models import FeedbackItem, IssueCluster, AgentJob, Project, User
+from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob
 
 try:
     import redis  # type: ignore
@@ -127,9 +127,34 @@ class UpstashRESTClient:
         return parsed
 
     def set(self, key: str, value: str):
+        """
+        Set a string value for a Redis key using the Upstash REST client.
+        
+        Parameters:
+            key (str): Redis key to set.
+            value (str): String value to store at the key.
+        
+        Returns:
+            The raw Redis reply from the SET command (for example, "OK").
+        """
         return self._cmd("SET", key, value)
 
+    def set_with_opts(self, key: str, value: str, *options: str):
+        """
+        Execute SET with additional options (e.g., NX/EX) supported by Upstash REST.
+        """
+        return self._cmd("SET", key, value, *options)
+
     def get(self, key: str) -> Optional[str]:
+        """
+        Fetch the string value stored at a Redis key via the REST client.
+        
+        Parameters:
+            key (str): Redis key to fetch.
+        
+        Returns:
+            Optional[str]: The string value for the key, or `None` if the key does not exist.
+        """
         return self._cmd("GET", key)
 
     def hset(self, key: str, mapping: Dict[str, Any]):
@@ -222,17 +247,20 @@ def _upstash_rest_client_from_env():
 class InMemoryStore:
     def __init__(self):
         """
-        Initialize an in-memory storage backend holding feedback, clusters, jobs, projects, users, configs, and lookup indices.
+        Create an in-memory storage backend for feedback, clusters, jobs, projects, users, and related indices.
         
         Attributes:
-            feedback_items: Mapping from feedback ID to FeedbackItem.
-            issue_clusters: Mapping from cluster ID to IssueCluster.
-            agent_jobs: Mapping from job ID to AgentJob.
-            projects: Mapping from project ID to Project.
-            users: Mapping from user ID to User.
-            reddit_subreddits: Per-project subreddit list mapping (project ID -> list of subreddit names).
-            external_index: Mapping from (project_id, source, external_id) to feedback ID for deduplication/lookup.
-            unclustered_feedback_ids: Per-project set of feedback IDs that have not been assigned to any cluster.
+            feedback_items: dict mapping feedback UUID -> FeedbackItem.
+            issue_clusters: dict mapping cluster ID (str) -> IssueCluster.
+            agent_jobs: dict mapping job UUID -> AgentJob.
+            projects: dict mapping project ID (str) -> Project.
+            users: dict mapping user ID (str) -> User.
+            reddit_subreddits: dict mapping project ID (str) -> list of subreddit names.
+            external_index: dict mapping (project_id, source, external_id) -> feedback UUID for deduplication/lookup.
+            unclustered_feedback_ids: dict mapping project ID (str) -> set of feedback UUIDs not assigned to any cluster.
+            cluster_jobs: dict mapping cluster job ID (str) -> ClusterJob.
+            cluster_job_index: dict mapping project ID (str) -> list of cluster job IDs (recent ordering).
+            cluster_locks: dict mapping project ID (str) -> lock owner/job ID (str) for in-memory lock tracking.
         """
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[str, IssueCluster] = {}
@@ -243,20 +271,21 @@ class InMemoryStore:
         self.external_index: Dict[Tuple[str, str, str], UUID] = {}
         # Track unclustered feedback per project (project_id -> set(feedback_ids))
         self.unclustered_feedback_ids: Dict[str, set[UUID]] = {}
+        # Cluster jobs and locks (in-memory)
+        self.cluster_jobs: Dict[str, ClusterJob] = {}
+        self.cluster_job_index: Dict[str, List[str]] = {}
+        self.cluster_locks: Dict[str, str] = {}
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
         """
-        Add a FeedbackItem to the store, indexing by external_id and marking it as unclustered.
+        Add a FeedbackItem to the store, index it by external_id if present, and mark it as unclustered.
         
         Parameters:
-            item (FeedbackItem): The feedback item to add; must reference an existing project.
+            item (FeedbackItem): Feedback item to store.
         
         Returns:
-            FeedbackItem: The stored feedback item (the newly added item or an existing item when an external_id duplicate is detected).
-        
-        Raises:
-            KeyError: If the item's project_id does not exist in the store.
+            FeedbackItem: The stored feedback item; if an item with the same (project_id, source, external_id) already exists, returns that existing item.
         """
         # Allow either UUID or string identifiers; skip strict project existence check in-memory
         project_key = str(item.project_id)
@@ -507,21 +536,124 @@ class InMemoryStore:
 
     def clear_jobs(self):
         """
-        Clear all AgentJob entries from the store.
+        Clear all AgentJob entries from this store.
+        
+        This removes every AgentJob from the in-memory job mapping.
         """
         self.agent_jobs.clear()
+
+    # Cluster Jobs (clustering runner)
+    def add_cluster_job(self, job: ClusterJob) -> ClusterJob:
+        """
+        Store a ClusterJob in the in-memory cluster job store and mark it as the most recent entry for its project.
+        
+        Parameters:
+            job (ClusterJob): Cluster job to add or update in the store.
+        
+        Returns:
+            ClusterJob: The stored ClusterJob.
+        """
+        job_id = str(job.id)
+        pid = str(job.project_id)
+        self.cluster_jobs[job_id] = job
+        self.cluster_job_index.setdefault(pid, [])
+        # maintain most recent first
+        self.cluster_job_index[pid] = [job_id] + [
+            jid for jid in self.cluster_job_index[pid] if jid != job_id
+        ]
+        return job
+
+    def get_cluster_job(self, project_id: str, job_id: str) -> Optional[ClusterJob]:
+        """
+        Retrieve the cluster job with the given ID if it belongs to the specified project.
+        
+        Parameters:
+            project_id (str): Project identifier to scope the lookup.
+            job_id (str): Cluster job identifier.
+        
+        Returns:
+            ClusterJob or None: The matching ClusterJob when it exists and is scoped to `project_id`, otherwise `None`.
+        """
+        job = self.cluster_jobs.get(job_id)
+        if job and str(job.project_id) == str(project_id):
+            return job
+        return None
+
+    def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
+        """
+        Return recent cluster jobs for a specific project.
+        
+        Parameters:
+        	project_id (str): Project identifier to scope the cluster jobs.
+        	limit (int): Maximum number of cluster jobs to return.
+        
+        Returns:
+        	list[ClusterJob]: Up to `limit` ClusterJob objects for the project in the store's recorded order.
+        """
+        ids = self.cluster_job_index.get(str(project_id), [])
+        return [self.cluster_jobs[jid] for jid in ids[:limit] if jid in self.cluster_jobs]
+
+    def update_cluster_job(self, project_id: str, job_id: str, **updates) -> ClusterJob:
+        """
+        Update fields of an existing ClusterJob and persist the updated job.
+        
+        Parameters:
+            project_id (str): Identifier of the project that owns the cluster job.
+            job_id (str): Identifier of the cluster job to update.
+            **updates: Fields to merge into the existing ClusterJob; keys should match ClusterJob model attributes.
+        
+        Returns:
+            ClusterJob: The persisted ClusterJob after applying the updates.
+        
+        Raises:
+            KeyError: If no ClusterJob with the given job_id exists for the specified project_id.
+        """
+        existing = self.get_cluster_job(project_id, job_id)
+        if not existing:
+            raise KeyError(f"ClusterJob {job_id} not found for project {project_id}")
+        updated = existing.model_copy(update=updates)
+        return self.add_cluster_job(updated)
+
+    def acquire_cluster_lock(self, project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+        """
+        Acquire a non-expiring lock for a cluster job within a project.
+        
+        Attempts to acquire a lock scoped to the given project; if no lock is held, records this job_id as the lock holder and returns success. The in-memory implementation does not enforce TTL — the `ttl_seconds` parameter is accepted for API compatibility but is ignored; the lock remains until released via `release_cluster_lock`.
+        
+        Parameters:
+            project_id (str): The project identifier to lock.
+            job_id (str): The cluster job identifier attempting to hold the lock.
+            ttl_seconds (int): Requested lock time-to-live in seconds (ignored by the in-memory store).
+        
+        Returns:
+            bool: `true` if the lock was acquired, `false` otherwise.
+        """
+        key = str(project_id)
+        holder = self.cluster_locks.get(key)
+        if holder:
+            return False
+        self.cluster_locks[key] = job_id
+        return True
+
+    def release_cluster_lock(self, project_id: str, job_id: str):
+        """
+        Release the cluster lock for a project if it is currently held by the given job.
+        
+        Parameters:
+            project_id (str): ID of the project whose lock should be released.
+            job_id (str): ID of the job expected to own the lock; the lock is removed only if this matches the current owner.
+        """
+        key = str(project_id)
+        if self.cluster_locks.get(key) == job_id:
+            self.cluster_locks.pop(key, None)
 
     # Users / Projects
     def create_user_with_default_project(self, user: User, default_project: Project) -> Project:
         """
         Create a user record and its default project in the in-memory store.
         
-        Parameters:
-            user (User): The user to create or store.
-            default_project (Project): The user's default project to create or store.
-        
         Returns:
-            Project: The stored default project.
+            The stored default project.
         """
         self.users[str(user.id)] = user
         self.projects[str(default_project.id)] = default_project
@@ -625,8 +757,50 @@ class RedisStore:
 
     @staticmethod
     def _cluster_all_key(project_id: str) -> str:
-        """Match dashboard: clusters:${projectId}:all"""
+        """
+        Builds the Redis key for a project's set of all clusters.
+        
+        Returns:
+            str: Redis key in the format "clusters:<project_id>:all".
+        """
         return f"clusters:{project_id}:all"
+
+    @staticmethod
+    def _cluster_job_key(project_id: str, job_id: str) -> str:
+        """
+        Builds the Redis key used to store a cluster job's metadata.
+        
+        Parameters:
+            project_id (str): Project identifier to scope the cluster job.
+            job_id (str): Cluster job identifier.
+        
+        Returns:
+            key (str): Redis key in the form "cluster_job:<project_id>:<job_id>".
+        """
+        return f"cluster_job:{project_id}:{job_id}"
+
+    @staticmethod
+    def _cluster_jobs_recent_key(project_id: str) -> str:
+        """
+        Return the Redis key for the sorted set of recent clustering jobs for a project.
+        
+        Parameters:
+            project_id (str): Project identifier.
+        
+        Returns:
+            key (str): Redis key in the form "cluster_jobs:<project_id>:recent".
+        """
+        return f"cluster_jobs:{project_id}:recent"
+
+    @staticmethod
+    def _cluster_lock_key(project_id: str) -> str:
+        """
+        Builds the Redis key used for per-project cluster locking.
+        
+        Returns:
+            key (str): Redis key string for the cluster lock for the given project.
+        """
+        return f"cluster:lock:{project_id}"
 
     @staticmethod
     def _reddit_subreddits_key(project_id: UUID) -> str:
@@ -1224,6 +1398,150 @@ class RedisStore:
         if job_keys:
             self._delete(*job_keys)
 
+    # Cluster Jobs (clustering runner)
+    def add_cluster_job(self, job: ClusterJob) -> ClusterJob:
+        """
+        Store a ClusterJob and index it for recent retrieval.
+        
+        Parameters:
+            job (ClusterJob): Cluster job to persist.
+        
+        Returns:
+            ClusterJob: The stored cluster job (same instance).
+        """
+        payload = job.model_dump()
+        for field in ("created_at", "started_at", "finished_at"):
+            if isinstance(payload.get(field), datetime):
+                payload[field] = _dt_to_iso(payload[field])
+        if isinstance(payload.get("stats"), dict):
+            payload["stats"] = json.dumps(payload["stats"])
+        key = self._cluster_job_key(str(job.project_id), job.id)
+        hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        self._hset(key, hash_payload)
+        ts = job.created_at.timestamp()
+        self._zadd(self._cluster_jobs_recent_key(str(job.project_id)), ts, job.id)
+        return job
+
+    def get_cluster_job(self, project_id: str, job_id: str) -> Optional[ClusterJob]:
+        """
+        Load a ClusterJob for the given project and job IDs.
+        
+        If present, ISO-formatted timestamp strings for `created_at`, `started_at`, and `finished_at` are converted to datetime objects and the `stats` field is JSON-decoded into a dict. Returns `None` when the job does not exist or has no stored data.
+        
+        Returns:
+            ClusterJob | None: The reconstructed ClusterJob for the given project and job ID, or `None` if not found.
+        """
+        key = self._cluster_job_key(project_id, job_id)
+        data = self._hgetall(key)
+        if not data:
+            return None
+        for field in ("created_at", "started_at", "finished_at"):
+            if isinstance(data.get(field), str):
+                data[field] = _iso_to_dt(data[field])
+        # Parse stats JSON string into dict when stored as text
+        if isinstance(data.get("stats"), str):
+            try:
+                data["stats"] = json.loads(data["stats"])
+            except json.JSONDecodeError:
+                data["stats"] = {}
+        return ClusterJob(**data)
+
+    def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
+        """
+        Retrieve recent cluster jobs for a project in newest-first order.
+        
+        Parameters:
+            project_id (str): Project identifier to list cluster jobs for.
+            limit (int): Maximum number of jobs to return; defaults to 20.
+        
+        Returns:
+            List[ClusterJob]: List of ClusterJob objects ordered from newest to oldest; may contain fewer than `limit` if not enough jobs exist.
+        """
+        ids = self._zrange(self._cluster_jobs_recent_key(project_id), -limit, -1, rev=True)
+        jobs: List[ClusterJob] = []
+        for jid in ids:
+            job = self.get_cluster_job(project_id, jid)
+            if job:
+                jobs.append(job)
+        return jobs
+
+    def update_cluster_job(self, project_id: str, job_id: str, **updates) -> ClusterJob:
+        """
+        Update fields of an existing ClusterJob and persist the updated job.
+        
+        Parameters:
+            project_id (str): Identifier of the project that owns the cluster job.
+            job_id (str): Identifier of the cluster job to update.
+            **updates: Fields to merge into the existing ClusterJob; keys should match ClusterJob model attributes.
+        
+        Returns:
+            ClusterJob: The persisted ClusterJob after applying the updates.
+        
+        Raises:
+            KeyError: If no ClusterJob with the given job_id exists for the specified project_id.
+        """
+        existing = self.get_cluster_job(project_id, job_id)
+        if not existing:
+            raise KeyError(f"ClusterJob {job_id} not found for project {project_id}")
+        updated = existing.model_copy(update=updates)
+        return self.add_cluster_job(updated)
+
+    def acquire_cluster_lock(self, project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+        """
+        Acquire a per-project cluster lock by atomically setting a lock key with the caller job as owner.
+        
+        Parameters:
+            project_id (str): Project identifier used to scope the lock.
+            job_id (str): Identifier stored as the lock owner when acquisition succeeds.
+            ttl_seconds (int): Time-to-live for the lock in seconds (defaults to 600).
+        
+        Returns:
+            `True` if the lock was acquired and the job_id was stored as owner, `False` otherwise.
+        """
+        key = self._cluster_lock_key(project_id)
+        if self.mode == "redis":
+            return bool(self.client.set(key, job_id, nx=True, ex=ttl_seconds))
+        try:
+            result = self.client.set_with_opts(key, job_id, "NX", "EX", str(ttl_seconds))
+        except Exception as exc:
+            logger.warning(
+                "Failed to acquire cluster lock for project %s: %s", project_id, exc
+            )
+            return False
+        return bool(result)
+
+    def release_cluster_lock(self, project_id: str, job_id: str):
+        """
+        Release the clustering lock for a project if owned by the given cluster job.
+        
+        If the stored lock for the project is held by `job_id`, the lock is removed.
+        If reading the lock state fails, the lock is removed as a best-effort fallback.
+        
+        Parameters:
+            project_id (str): Identifier of the project whose cluster lock should be released.
+            job_id (str): Identifier of the cluster job expected to own the lock.
+        """
+        key = self._cluster_lock_key(project_id)
+        if self.mode == "redis":
+            lua_script = """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            else
+                return 0
+            end
+            """
+            try:
+                self.client.eval(lua_script, 1, key, job_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to release cluster lock for project %s: %s", project_id, exc
+                )
+            return
+
+        current = self._get(key)
+        if current == job_id:
+            self._delete(key)
+
     def get_feedback_by_external_id(self, project_id: UUID, source: str, external_id: str) -> Optional[FeedbackItem]:
         """
         Resolve a feedback item by its external identifier within a project.
@@ -1234,7 +1552,7 @@ class RedisStore:
             external_id (str): External identifier provided by the source.
         
         Returns:
-            FeedbackItem or None: The corresponding FeedbackItem if a mapping exists and points to a valid UUID, `None` if no mapping exists, `external_id` is empty, or the stored id is invalid.
+            FeedbackItem or None: `FeedbackItem` if a mapping exists and resolves to an existing item, `None` otherwise.
         """
         if not external_id:
             return None
@@ -1743,12 +2061,95 @@ def get_all_jobs() -> List[AgentJob]:
 
 def clear_jobs():
     """
-    Remove all agent job records and their indexes from the active storage backend.
+    Delete all AgentJob records and their related indexes from the active storage backend.
     
-    If the configured store exposes a `clear_jobs` operation, this function invokes it; otherwise it does nothing.
+    If the currently selected store does not implement a `clear_jobs` operation, no action is taken.
     """
     if hasattr(_STORE, "clear_jobs"):
         _STORE.clear_jobs()
+
+
+# Cluster job API
+def add_cluster_job(job: ClusterJob) -> ClusterJob:
+    """
+    Store a ClusterJob and index it for project-scoped retrieval and locking.
+    
+    Parameters:
+        job (ClusterJob): ClusterJob to persist; its project_id determines the project namespace used for indexing.
+    
+    Returns:
+        ClusterJob: The stored ClusterJob.
+    """
+    return _STORE.add_cluster_job(job)
+
+
+def get_cluster_job(project_id: str, job_id: str) -> Optional[ClusterJob]:
+    """
+    Retrieve a cluster job for the specified project and job identifiers.
+    
+    @returns The ClusterJob matching the provided `project_id` and `job_id`, or `None` if no matching job exists.
+    """
+    return _STORE.get_cluster_job(project_id, job_id)
+
+
+def list_cluster_jobs(project_id: str, limit: int = 20) -> List[ClusterJob]:
+    """
+    Retrieves recent cluster jobs for a project.
+    
+    Parameters:
+        project_id (str): ID of the project whose cluster jobs to list.
+        limit (int): Maximum number of cluster jobs to return (default 20).
+    
+    Returns:
+        List[ClusterJob]: Cluster jobs ordered by recency (most recent first), up to `limit`.
+    """
+    return _STORE.list_cluster_jobs(project_id, limit)
+
+
+def update_cluster_job(project_id: str, job_id: str, **updates) -> ClusterJob:
+    """
+    Update fields of an existing cluster job and return the updated ClusterJob.
+    
+    Parameters:
+        project_id (str): ID of the project that owns the cluster job.
+        job_id (str): ID of the cluster job to update.
+        **updates: Field names and values to apply to the ClusterJob (only provided keys will be changed).
+    
+    Returns:
+        ClusterJob: The updated ClusterJob instance.
+    """
+    return _STORE.update_cluster_job(project_id, job_id, **updates)
+
+
+def acquire_cluster_lock(project_id: str, job_id: str, ttl_seconds: int = 600) -> bool:
+    """
+    Attempt to acquire a lock for a cluster job in the selected storage backend.
+    
+    If the active store implements `acquire_cluster_lock`, delegates to it; if not, succeeds by default.
+    
+    Parameters:
+        project_id (str): Project identifier that scopes the lock.
+        job_id (str): Cluster job identifier that will own the lock.
+        ttl_seconds (int): Lock time-to-live in seconds.
+    
+    Returns:
+        `true` if the lock was acquired, `false` otherwise.
+    """
+    if hasattr(_STORE, "acquire_cluster_lock"):
+        return _STORE.acquire_cluster_lock(project_id, job_id, ttl_seconds)
+    return True
+
+
+def release_cluster_lock(project_id: str, job_id: str):
+    """
+    Release the cluster lock for a clustering job in the given project.
+    
+    Parameters:
+        project_id (str): Identifier of the project that owns the lock.
+        job_id (str): Identifier of the cluster job that should release the lock.
+    """
+    if hasattr(_STORE, "release_cluster_lock"):
+        _STORE.release_cluster_lock(project_id, job_id)
 
 
 def get_unclustered_feedback(project_id: str) -> List[FeedbackItem]:
