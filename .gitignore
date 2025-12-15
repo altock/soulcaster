@@ -164,3 +164,6 @@ build/
 # Temp directories (keep locally, ignore in git)
 tasks/temp/
 documentation/temp/
+
+#Macbook
+.DS_Store
