@@ -1,6 +1,6 @@
 # Coding-Agent Plan & Strategy (Phase 5.1 – WIP)
 
-Goal: transform each IssueCluster into a structured coding plan and execute that plan via a pluggable coding-agent runner (default: Kilocode inside an e2b sandbox) while keeping the legacy AWS path available but dormant. The new flow skips GitHub issue creation—each run opens a branch and draft PR like modern coding agents.
+Goal: transform each IssueCluster into a structured coding plan and execute that plan via a pluggable coding-agent runner (default: Kilocode inside an e2b sandbox) while keeping the legacy AWS path available but dormant. The new flow skips GitHub issue creation—each run opens a branch and draft PR like modern coding agents. All LLM reasoning stays inside the sandbox (Kilocode template + prompts) rather than running in the backend.
 
 ## Overview & Desired Flow
 1. **Plan generation** – Backend creates a `CodingPlan` (summary, hypotheses, candidate files, validation steps) whenever a cluster loads or a plan regeneration is requested.
@@ -54,7 +54,7 @@ Goal: transform each IssueCluster into a structured coding plan and execute that
 ### 4. Runner implementations & modularity
 - Create `backend/agent_runner/` package with:
   - Shared utilities (repo checkout, PR helpers, log streaming).
-  - `SandboxKilocodeRunner`: uses e2b SDK ([docs](https://e2b.dev/docs), [SDK reference](https://e2b.dev/docs/sdk-reference)) to spawn a sandbox, run Kilocode commands, and push branches.
+  - `SandboxKilocodeRunner`: uses e2b SDK ([docs](https://e2b.dev/docs), [SDK reference](https://e2b.dev/docs/sdk-reference)) plus a reusable template (see Template links below) to spawn a sandbox, install Kilocode, run commands, and push branches. All coding-plan prompts are passed directly to Kilocode inside the sandbox—no backend LLM calls.
   - `AwsKilocodeRunner`: wraps existing ECS trigger or reuses `coding-agent/fix_issue.py` for environments that still rely on AWS.
 - Provide env-driven configuration so swapping runners or sandbox providers requires no dashboard/code changes.
 
@@ -87,5 +87,9 @@ Goal: transform each IssueCluster into a structured coding plan and execute that
 
 ## References
 - Kilocode CLI & provider config: see `coding-agent/README.md` and upstream doc `https://github.com/Kilo-Org/kilocode/blob/ed3e401d7ab153bab5619219ed69ca62badfcef0/cli/docs/PROVIDER_CONFIGURATION.md`.
-- e2b sandbox docs: [https://e2b.dev/docs](https://e2b.dev/docs)
+- e2b template + sandbox docs (helpful when building the Kilocode template that runs entirely in the sandbox):
+  - Templates: `/docs/template/quickstart`, `/docs/template/how-it-works`, `/docs/quickstart/install-custom-packages`, `/docs/template/examples/claude-code`, `/docs/template/defining-template.md`
+  - Filesystem: `/docs/filesystem`, `/docs/filesystem/read-write`, `/docs/filesystem/watch`, `/docs/filesystem/upload`, `/docs/filesystem/download`
+  - Commands & runtime: `/docs/commands`, `/docs/sandbox/environment-variables`, `/docs/sandbox/persistence`
+  - Other: `/docs/cli`, `/docs/sandbox/secured-access`, `/docs/sandbox/connect-bucket`
 - e2b SDK reference: [https://e2b.dev/docs/sdk-reference](https://e2b.dev/docs/sdk-reference)

@@ -18,7 +18,7 @@ High-level phases for Soulcaster delivery. Phase 5.1 introduces the backend-firs
 
 ## Phase 5.1 – Cluster Coding Plan & Sandbox Runner (WIP)
 - Objective: when a user opens a cluster they see a generated high-level plan (summary, hypotheses, candidate files, validation steps) and can trigger a fix directly via backend `/clusters/{id}/start_fix`.
-- Runner strategy: backend selects a runner (`CODING_AGENT_RUNNER`, default `sandbox_kilo`) from a registry. Default runner spins up an e2b sandbox, runs Kilocode, and opens a **branch + draft PR** (no GitHub issue). Legacy AWS runner stays opt-in for parity.
+- Runner strategy: backend selects a runner (`CODING_AGENT_RUNNER`, default `sandbox_kilo`) from a registry. Default runner spins up an e2b sandbox, installs Kilocode via a reusable template, runs the LLM agent entirely inside the sandbox, and opens a **branch + draft PR** (no GitHub issue). Legacy AWS runner stays opt-in for parity.
 - Dashboard integration: `/app/api/clusters/[id]/start_fix` simply proxies to backend; legacy `/api/trigger-agent` remains for manual AWS triggers.
 - Implementation reference: `tasks/coding_agent_plan.md` (combined plan + strategy with Kilocode/e2b doc links).
 - Expected flow:
