@@ -15,9 +15,26 @@ class AgentJob(BaseModel):
     id: UUID
     project_id: Union[str, UUID]  # Supports both UUID and CUID formats
     cluster_id: str
+    plan_id: Optional[str] = None
+    runner: Optional[str] = None
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
     pr_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CodingPlan(BaseModel):
+    """
+    Represents a generated coding plan to fix a cluster of issues.
+    """
+
+    id: str
+    cluster_id: str
+    title: str
+    description: str
+    files_to_edit: List[str]
+    tasks: List[str]
     created_at: datetime
     updated_at: datetime
 

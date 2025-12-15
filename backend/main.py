@@ -19,7 +19,7 @@ import time
 from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Path, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
-from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob
+from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob, CodingPlan
 from store import (
     add_cluster,
     add_feedback_item,
@@ -62,10 +62,16 @@ from store import (
     get_cluster_job,
     list_cluster_jobs,
     get_unclustered_feedback,
+    add_coding_plan,
+    get_coding_plan,
 )
+from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
-from reddit_poller import poll_once
 from clustering_runner import maybe_start_clustering, run_clustering_job
+from agent_runner import get_runner
+# Ensure runners are registered
+import agent_runner.sandbox
+import agent_runner.aws
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -1037,21 +1043,65 @@ def clustering_status(project_id: Optional[str] = Query(None)):
     return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
 
 
+@app.get("/clusters/{cluster_id}/plan")
+def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
+    """
+    Retrieve the latest generated coding plan for a cluster.
+    """
+    # 1. Check if cluster exists (and matches project_id if provided)
+    cluster = get_cluster(project_id, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # 2. Get existing plan
+    plan = get_coding_plan(cluster_id)
+    if not plan:
+        # Optionally, we could auto-generate here if missing.
+        # For now, return 404 so UI can show "Generate" button.
+        raise HTTPException(status_code=404, detail="No plan found for this cluster")
+
+    return plan
+
+
+@app.post("/clusters/{cluster_id}/plan")
+def generate_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
+    """
+    Generate or regenerate a coding plan for a cluster using the LLM.
+    """
+    # 1. Valdiate cluster
+    cluster = get_cluster(project_id, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # 2. Fetch feedback items for context
+    items = []
+    for fid in cluster.feedback_ids:
+        # Ideally we have a batch get, but loop is fine for prototype
+        # We need to find the item. Ideally store.get_feedback_item logic handles lookup.
+        # But get_feedback_item requires project_id. IssueCluster has project_id.
+        item = get_feedback_item(str(cluster.project_id), UUID(fid))
+        if item:
+            items.append(item)
+
+    # 3. Call planner
+    plan = generate_plan(cluster, items)
+
+    # 4. Save plan
+    add_coding_plan(plan)
+
+    return plan
+
+
 @app.post("/clusters/{cluster_id}/start_fix")
-def start_cluster_fix(cluster_id: str, project_id: Optional[str] = Query(None)):
+async def start_cluster_fix(
+    cluster_id: str, 
+    project_id: Optional[str] = Query(None),
+    background_tasks: BackgroundTasks = None # type: ignore (FastAPI injection)
+):
     """
-    Start fix generation for the specified cluster.
-    
-    Returns:
-        result (dict): Response containing:
-            - status (str): "ok"
-            - message (str): confirmation message
-            - cluster_id (str): ID of the updated cluster
-            - project_id (str): project UUID as a string
-    
-    Raises:
-        HTTPException: 404 if the cluster does not exist or does not belong to the specified project.
+    Trigger the coding agent to fix the issues in the cluster.
     """
+    from fastapi import BackgroundTasks
 
     pid = _require_project_id(project_id)
     pid_str = str(pid)
@@ -1059,11 +1109,63 @@ def start_cluster_fix(cluster_id: str, project_id: Optional[str] = Query(None)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
-    updated_cluster = update_cluster(pid_str, cluster_id, status="fixing")
+    # 1. Get or generate plan
+    plan = get_coding_plan(cluster_id)
+    if not plan:
+        # Auto-generate if missing
+        items = []
+        for fid in cluster.feedback_ids:
+            item = get_feedback_item(pid_str, UUID(fid))
+            if item: items.append(item)
+        plan = generate_plan(cluster, items)
+        add_coding_plan(plan)
+
+    # 2. Determine runner
+    runner_name = os.getenv("CODING_AGENT_RUNNER", "sandbox_kilo")
+    try:
+        runner = get_runner(runner_name)
+    except ValueError:
+        # Fallback to sandbox_kilo if env var is weird, or just error out
+        # Here we error out to be safe
+        raise HTTPException(status_code=500, detail=f"Runner '{runner_name}' not configured")
+
+    # 3. Create Job
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster_id,
+        plan_id=plan.id,
+        runner=runner_name,
+        status="pending",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    add_job(job)
+
+    # 4. Dispatch
+    update_cluster(pid_str, cluster_id, status="fixing")
+
+    async def _run_agent():
+        await runner.start(job, plan, cluster)
+
+    if background_tasks:
+        background_tasks.add_task(_run_agent)
+    else:
+        # Fallback for sync contexts
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_run_agent())
+        except RuntimeError:
+            # No loop (e.g. sync test client), run inline?
+            # Running inline might deadlock if it uses async.
+            # Ideally tests use AsyncClient.
+            pass
+
     return {
         "status": "ok",
-        "message": "Fix generation started",
-        "cluster_id": updated_cluster.id,
+        "message": f"Fix started with runner {runner_name}",
+        "job_id": str(job.id),
+        "cluster_id": cluster.id,
         "project_id": pid_str,
     }
 

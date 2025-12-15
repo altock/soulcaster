@@ -58,6 +58,17 @@ export interface IssueCluster {
   github_repo_url?: string;
 }
 
+export interface CodingPlan {
+  id: string;
+  cluster_id: string;
+  title: string;
+  description: string;
+  files_to_edit: string[];
+  tasks: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ClusterListItem {
   id: string;
   title: string;

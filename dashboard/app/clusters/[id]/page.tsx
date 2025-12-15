@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import type { ClusterDetail, FeedbackSource } from '@/types';
+import type { ClusterDetail, FeedbackSource, CodingPlan } from '@/types';
 import FeedbackCard from '@/components/FeedbackCard';
 
 /**
@@ -22,9 +22,12 @@ export default function ClusterDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [isFixing, setIsFixing] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [codingPlan, setCodingPlan] = useState<CodingPlan | null>(null);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
 
   useEffect(() => {
     fetchCluster();
+    fetchPlan();
   }, [clusterId]);
 
   useEffect(() => {
@@ -52,9 +55,46 @@ export default function ClusterDetailPage() {
     }
   };
 
+  const fetchPlan = async () => {
+    try {
+      const response = await fetch(`/api/clusters/${clusterId}/plan`);
+      if (response.ok) {
+        const data = await response.json();
+        setCodingPlan(data);
+      } else {
+        setCodingPlan(null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch plan:', err);
+    }
+  };
+
+  const handleGeneratePlan = async () => {
+    try {
+      setIsGeneratingPlan(true);
+      const response = await fetch(`/api/clusters/${clusterId}/plan`, {
+        method: 'POST'
+      });
+      if (!response.ok) throw new Error('Failed to generate plan');
+      const data = await response.json();
+      setCodingPlan(data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Plan generation failed');
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
+
   const handleStartFix = async () => {
     try {
       setIsFixing(true);
+      // Ensure plan exists first
+      if (!codingPlan) {
+        await handleGeneratePlan();
+        // Fetch updated plan
+        await fetchPlan();
+      }
+
       const response = await fetch(`/api/clusters/${clusterId}/start_fix`, {
         method: 'POST',
       });
@@ -272,11 +312,10 @@ export default function ClusterDetailPage() {
                     <button
                       key={repo}
                       onClick={() => setSelectedRepo(selectedRepo === repo ? null : repo)}
-                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
-                        selectedRepo === repo
-                          ? 'border-purple-500/50 bg-purple-500/20 text-purple-200'
-                          : 'border-purple-900/50 bg-purple-900/20 text-purple-300 hover:bg-purple-900/30'
-                      }`}
+                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${selectedRepo === repo
+                        ? 'border-purple-500/50 bg-purple-500/20 text-purple-200'
+                        : 'border-purple-900/50 bg-purple-900/20 text-purple-300 hover:bg-purple-900/30'
+                        }`}
                     >
                       <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                         <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z" />
@@ -372,11 +411,10 @@ export default function ClusterDetailPage() {
                         className="block p-3 rounded-xl bg-purple-900/20 border border-purple-900/30 hover:bg-purple-900/30 hover:border-purple-500/50 transition-all group"
                       >
                         <div className="flex items-start gap-2">
-                          <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
-                            item.status === 'open'
-                              ? 'bg-green-500/20 text-green-400'
-                              : 'bg-gray-500/20 text-gray-400'
-                          }`}>
+                          <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${item.status === 'open'
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-gray-500/20 text-gray-400'
+                            }`}>
                             {item.status === 'open' ? '●' : '✓'}
                           </span>
                           <div className="flex-1 min-w-0">
@@ -416,28 +454,65 @@ export default function ClusterDetailPage() {
             )}
 
             <div className="animate-in delay-300 rounded-3xl border border-white/10 bg-black/40 p-6 backdrop-blur-md">
-              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Cluster Intelligence</h3>
-              <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                  <div className="text-xs text-slate-500 mb-1">Health Score</div>
-                  <div className="text-2xl font-medium text-emerald-400">98/100</div>
-                  <div className="w-full bg-white/10 h-1 mt-2 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full w-[98%]"></div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                  <div className="text-xs text-slate-500 mb-1">Anomaly Detection</div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                    <span className="text-sm text-slate-200">System Normal</span>
-                  </div>
-                </div>
-
-                <button className="w-full py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-medium hover:bg-emerald-500/20 transition-colors">
-                  Run Diagnostics
-                </button>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Implementation Plan</h3>
+                {codingPlan && (
+                  <button
+                    onClick={handleGeneratePlan}
+                    disabled={isGeneratingPlan || isFixing}
+                    className="text-xs text-matrix-green hover:underline"
+                  >
+                    {isGeneratingPlan ? 'Regenerating...' : 'Regenerate'}
+                  </button>
+                )}
               </div>
+
+              {codingPlan ? (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                    <h4 className="text-sm font-bold text-slate-200 mb-2">{codingPlan.title}</h4>
+                    <p className="text-xs text-slate-400 mb-4">{codingPlan.description}</p>
+
+                    <div className="text-xs font-semibold text-purple-300 mb-1">Files to Edit:</div>
+                    <ul className="list-disc list-inside text-xs text-slate-400 mb-4 font-mono">
+                      {codingPlan.files_to_edit.map(f => (
+                        <li key={f}>{f}</li>
+                      ))}
+                    </ul>
+
+                    <div className="text-xs font-semibold text-matrix-green mb-1">Tasks:</div>
+                    <ul className="list-decimal list-inside text-xs text-slate-400">
+                      {codingPlan.tasks.map((task, i) => (
+                        <li key={i}>{task}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {canStartFix && (
+                    <button
+                      onClick={handleStartFix}
+                      disabled={isFixing}
+                      className={`w-full py-3 rounded-xl border text-sm font-medium transition-colors ${isFixing
+                        ? 'bg-matrix-green/20 border-matrix-green text-matrix-green cursor-wait'
+                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                        }`}
+                    >
+                      {isFixing ? 'Starting Agent...' : 'Start Automated Fix'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-sm text-slate-500 mb-4">No plan generated yet.</p>
+                  <button
+                    onClick={handleGeneratePlan}
+                    disabled={isGeneratingPlan}
+                    className="px-4 py-2 rounded-full bg-purple-600 text-white text-xs font-bold hover:bg-purple-500 disabled:opacity-50"
+                  >
+                    {isGeneratingPlan ? 'Generating...' : 'Generate Plan'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -17,69 +17,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: 'Invalid cluster ID' }, { status: 400 });
     }
 
-    // Fetch cluster details to get context
-    const clusterResponse = await fetch(`${BACKEND_URL}/clusters/${encodeURIComponent(id)}`);
-    if (!clusterResponse.ok) {
-      return NextResponse.json({ error: 'Failed to load cluster' }, { status: 502 });
-    }
-    const clusterData = await clusterResponse.json();
+    // Direct proxy to backend
+    // Backend expects optional project_id query param
+    const backendUrl = `${BACKEND_URL}/clusters/${encodeURIComponent(id)}/start_fix`;
 
-    // Determine repo based on cluster data
-    let repoOwner = process.env.GITHUB_OWNER;
-    let repoName = process.env.GITHUB_REPO;
+    // If we had a project_id in the request url search params, pass it along
+    // const { searchParams } = new URL(request.url);
+    // const projectId = searchParams.get('project_id');
+    // const url = projectId ? `${backendUrl}?project_id=${projectId}` : backendUrl;
 
-    const repoFromCluster = clusterData?.github_repo_url
-      ? clusterData.github_repo_url.match(/github\.com\/([^/]+)\/([^/]+)/)
-      : null;
-    if (repoFromCluster) {
-      repoOwner = repoFromCluster[1];
-      repoName = repoFromCluster[2].replace(/\.git$/, '');
-    }
-
-    if (clusterData && clusterData.feedback_items) {
-      const hasManualFeedback = clusterData.feedback_items.some(
-        (item: any) => item.source === 'manual'
-      );
-      if (hasManualFeedback && (!repoOwner || !repoName)) {
-        repoOwner = 'naga-k';
-        repoName = 'bad-ux-mart';
-      }
-    }
-
-    // Trigger the agent
-    try {
-      const triggerUrl = new URL('/api/trigger-agent', new URL(request.url).origin).toString();
-      console.log(`Triggering agent at ${triggerUrl} for ${repoOwner}/${repoName}`);
-
-      const triggerResponse = await fetch(triggerUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          issue_url: clusterData?.github_pr_url || undefined,
-          context:
-            clusterData?.issue_description || clusterData?.summary || `Fix for cluster ${id}`,
-          issue_description: clusterData?.issue_description || clusterData?.summary,
-          issue_title: clusterData?.issue_title || clusterData?.title,
-          owner: repoOwner,
-          repo: repoName,
-          repo_url: clusterData?.github_repo_url,
-          cluster_id: id,
-        }),
-      });
-
-      if (!triggerResponse.ok) {
-        const errorText = await triggerResponse.text();
-        throw new Error(`Trigger agent responded with ${triggerResponse.status}: ${errorText}`);
-      }
-
-      const triggerData = await triggerResponse.json();
-      console.log('Agent triggered successfully:', triggerData);
-    } catch (triggerError) {
-      console.error('Error calling trigger-agent:', triggerError);
-      return NextResponse.json({ error: 'Failed to trigger agent' }, { status: 502 });
-    }
-
-    const response = await fetch(`${BACKEND_URL}/clusters/${encodeURIComponent(id)}/start_fix`, {
+    // For now, assuming default project / implicit context
+    const response = await fetch(backendUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -87,7 +35,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     });
 
     if (!response.ok) {
-      throw new Error(`Backend responded with ${response.status}`);
+      const errorText = await response.text();
+      try {
+        const json = JSON.parse(errorText);
+        return NextResponse.json(json, { status: response.status });
+      } catch {
+        return NextResponse.json({ error: errorText }, { status: response.status });
+      }
     }
 
     const data = await response.json();

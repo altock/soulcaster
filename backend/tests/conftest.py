@@ -40,6 +40,8 @@ def clear_data(mock_store):
     clear_jobs()
     clear_clusters()
     clear_feedback_items()
+    from store import clear_coding_plans
+    clear_coding_plans()
 
 
 @pytest.fixture

@@ -16,7 +16,7 @@ ProjectId = Union[UUID, str]
 
 import requests
 
-from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob
+from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob, CodingPlan
 
 try:
     import redis  # type: ignore
@@ -264,6 +264,7 @@ class InMemoryStore:
         """
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[str, IssueCluster] = {}
+        self.coding_plans: Dict[str, CodingPlan] = {}  # cluster_id -> CodingPlan
         self.agent_jobs: Dict[UUID, AgentJob] = {}
         self.projects: Dict[str, Project] = {}
         self.users: Dict[str, User] = {}
@@ -460,6 +461,21 @@ class InMemoryStore:
                 self.issue_clusters.pop(cid, None)
         else:
             self.issue_clusters.clear()
+
+
+    # Coding Plans
+    def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
+        """
+        Store a CodingPlan in the in-memory store.
+        """
+        self.coding_plans[plan.cluster_id] = plan
+        return plan
+
+    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+        """
+        Retrieve a CodingPlan by cluster_id.
+        """
+        return self.coding_plans.get(cluster_id)
 
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: ProjectId) -> List[str]:
@@ -791,6 +807,29 @@ class RedisStore:
             key (str): Redis key in the form "cluster_jobs:<project_id>:recent".
         """
         return f"cluster_jobs:{project_id}:recent"
+
+    @staticmethod
+    def _coding_plan_key(cluster_id: str) -> str:
+        """Match dashboard: coding_plan:{clusterId}"""
+        return f"coding_plan:{cluster_id}"
+
+    def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
+        """
+        Store a CodingPlan in Redis.
+        """
+        key = self._coding_plan_key(plan.cluster_id)
+        self.client.set(key, plan.model_dump_json())
+        return plan
+
+    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+        """
+        Retrieve a CodingPlan from Redis.
+        """
+        key = self._coding_plan_key(cluster_id)
+        data = self.client.get(key)
+        if not data:
+            return None
+        return CodingPlan.model_validate_json(data)
 
     @staticmethod
     def _cluster_lock_key(project_id: str) -> str:
@@ -2268,3 +2307,27 @@ def get_reddit_subreddits_for_project(project_id: ProjectId) -> Optional[List[st
         A list of subreddit names for the given project, or `None` if no subreddit configuration exists.
     """
     return _STORE.get_reddit_subreddits(project_id)
+
+# Coding Plan API
+def add_coding_plan(plan: CodingPlan) -> CodingPlan:
+    """
+    Store a CodingPlan in the backend.
+    """
+    return _STORE.add_coding_plan(plan)
+
+def get_coding_plan(cluster_id: str) -> Optional[CodingPlan]:
+    """
+    Retrieve a CodingPlan by cluster_id.
+    """
+    return _STORE.get_coding_plan(cluster_id)
+
+def clear_coding_plans():
+    """
+    Remove all stored CodingPlan entries from the backend.
+    """
+    if isinstance(_STORE, InMemoryStore):
+        _STORE.coding_plans.clear()
+    elif isinstance(_STORE, RedisStore):
+        keys = list(_STORE._scan_iter("coding_plan:*"))
+        if keys:
+            _STORE._delete(*keys)
