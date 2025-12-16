@@ -272,24 +272,24 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 
 ### Phase 5.1 Checkpoints
 **Backend Planner & Orchestrator**
-- [ ] `backend/planner.py`: generate/save `CodingPlan`, expose `GET/POST /clusters/{id}/plan`.
-- [ ] Update `AgentJob` schema (`plan_id`, `runner`, `artifact_url`, logs).
-- [ ] Enhance `POST /clusters/{id}/start_fix`: ensure plan, create job, select runner, dispatch async worker, stream logs.
-- [ ] Runner registry + interfaces (`backend/agent_runner/`).
+- [x] `backend/planner.py`: generate/save `CodingPlan`, expose `GET/POST /clusters/{id}/plan`.
+- [x] Update `AgentJob` schema (`plan_id`, `runner`, `artifact_url`, logs).
+- [x] Enhance `POST /clusters/{id}/start_fix`: ensure plan, create job, select runner, dispatch async worker, stream logs.
+- [x] Runner registry + interfaces (`backend/agent_runner/`).
 
 **Sandbox Kilocode Runner**
-- [ ] Define e2b template (see `/docs/template/quickstart`, `/docs/template/defining-template.md`, etc.) that installs Kilocode, sets env vars, and runs commands.
-- [ ] Implement `SandboxKilocodeRunner`: start sandbox, upload plan/context, run Kilocode, create branch + draft PR, stream logs back via `/jobs/{id}`.
-- [ ] Document filesystem/command considerations (refs: `/docs/filesystem/*`, `/docs/commands`, `/docs/sandbox/environment-variables`, `/docs/sandbox/persistence`).
+- [x] Define e2b template (managed in e2b; set `KILOCODE_TEMPLATE_NAME`) that installs Kilocode, sets env vars, and runs commands.
+- [x] Implement `SandboxKilocodeRunner`: start sandbox, upload plan/context, run Kilocode, create branch + draft PR, stream logs back via `/jobs/{id}`.
+- [x] Document filesystem/command considerations (refs: `/docs/filesystem/*`, `/docs/commands`, `/docs/sandbox/environment-variables`, `/docs/sandbox/persistence`).
 
 **Dashboard**
-- [ ] `app/api/clusters/[id]/start_fix/route.ts` → pure proxy to backend.
-- [ ] Cluster detail page: fetch/show coding plan, allow light edits, display active runner (from `NEXT_PUBLIC_CODING_AGENT_RUNNER`).
-- [ ] Job/log UI: poll `/jobs?cluster_id=...`, render log stream + PR link/draft status.
+- [x] `app/api/clusters/[id]/start_fix/route.ts` → pure proxy to backend.
+- [x] Cluster detail page: fetch/show coding plan, allow light edits, display active runner (from `NEXT_PUBLIC_CODING_AGENT_RUNNER`).
+- [x] Job/log UI: poll `/jobs?cluster_id=...`, render log stream + PR link/draft status.
 
 **Docs/References**
-- [ ] Update `coding-agent/README.md` with sandbox template instructions and links (Kilocode provider config, e2b template docs, CLI).
-- [ ] Keep `tasks/coding_agent_plan.md` as source of truth; ensure roadmap references stay in sync.
+- [x] Update `coding-agent/README.md` with sandbox template instructions and links (Kilocode provider config, e2b template docs, CLI).
+- [x] Keep `tasks/coding_agent_plan.md` as source of truth; ensure roadmap references stay in sync.
 
 ## Documentation Links
 - Coding agent plan & strategy: `tasks/coding_agent_plan.md`

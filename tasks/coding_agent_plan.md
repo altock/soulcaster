@@ -15,6 +15,12 @@ Goal: transform each IssueCluster into a structured coding plan and execute that
 - Dashboard currently triggers the AWS agent directly (`/api/trigger-agent`) before calling backend `/clusters/{id}/start_fix`, which only flips status.
 - Legacy runner (`coding-agent/fix_issue.py`) expects a GitHub issue URL and runs on ECS/Fargate via Kilocode CLI. Phase 5.1 removes that dependency by going straight to branch creation + draft PR.
 
+## Implementation Status (PR #28)
+- Backend exposes `GET/POST /clusters/{id}/plan` and stores `CodingPlan` records.
+- `POST /clusters/{id}/start_fix` creates an `AgentJob`, clears cluster errors, infers `github_repo_url` from feedback items, and dispatches the configured runner.
+- `SandboxKilocodeRunner` persists logs per job (Redis-backed where available) and the dashboard tails them via `GET /jobs/{id}/logs`.
+- GitHub auth is standardized on `GITHUB_TOKEN` (no `GH_TOKEN`), and the runner uses non-interactive git auth (no prompts).
+
 ## Target Architecture Components
 1. **Plan generator** – Backend module that reads cluster + feedback items and stores a `CodingPlan` (Redis) with timestamps + metadata.
 2. **Orchestrator endpoint** – Enhanced `POST /clusters/{id}/start_fix` that owns plan generation, job creation, runner selection, sandbox/provider setup, and status streaming.
@@ -93,3 +99,24 @@ Goal: transform each IssueCluster into a structured coding plan and execute that
   - Commands & runtime: `/docs/commands`, `/docs/sandbox/environment-variables`, `/docs/sandbox/persistence`
   - Other: `/docs/cli`, `/docs/sandbox/secured-access`, `/docs/sandbox/connect-bucket`
 - e2b SDK reference: [https://e2b.dev/docs/sdk-reference](https://e2b.dev/docs/sdk-reference)
+
+## Known Failure Modes & Troubleshooting
+### PR creation fails after branch push
+Symptoms:
+- Logs show `git push -u origin <branch>` succeeded, but `gh pr create ...` fails (historically exit code `2` on older `gh` builds that don’t support `--json/-q`).
+- In some cases, the runner’s final fallback (`gh pr list --head <branch>`) returns no URL, so the job can’t surface a PR link even though the branch exists.
+
+Example log snippet (real-world):
+```
+Running: gh pr list --repo "naga-k/math_fucntions_soulcaster" --head "fix/soulcaster-1765846824" --json url -q '.[0].url'
+PR creation did not return a URL; a PR may still be creatable via the pushed branch.
+```
+
+Current behavior:
+- The sandbox runner attempts `gh pr create` with structured output, then falls back to non-JSON output scraping, then `gh pr list --head <branch>`.
+- If none produce a PR URL, the job can still succeed with a pushed branch; a PR may be opened manually from GitHub using that branch.
+
+Checklist:
+- Ensure `GITHUB_TOKEN` has access to the repo (private repos require `repo` scope for classic PATs, or fine-grained token permissions including `Contents: Read/Write` and `Pull requests: Read/Write`).
+- Ensure any GitHub org SSO requirement is authorized for the token.
+- Ensure the repo URL is correct (the runner infers `github_repo_url` from feedback items; stale fallback URLs should not persist across runs).
