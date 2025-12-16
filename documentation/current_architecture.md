@@ -149,15 +149,17 @@ sequenceDiagram
 - `app/api/clusters/[id]/start_fix` proxies to backend `/clusters/{id}` for context, infers repo owner/name from cluster metadata, triggers `/api/trigger-agent`, and then POSTs to backend `/clusters/{id}/start_fix` to mark status.
 - No auth on the backend endpoints; dashboard relies on Vercel env + optional NextAuth GitHub session only for GitHub API access.
 
-### Coding agent
-- Single script `coding-agent/fix_issue.py` (invoked via `uv run` locally or as container entrypoint). Depends on `GITHUB_TOKEN`, `GIT_USER_EMAIL`, `GIT_USER_NAME`, and Gemini key; optionally `BACKEND_URL`/`JOB_ID` for status reporting.
-- Flow: parse issue URL → ensure fork via `gh repo fork` → clone fork → add upstream → compute base branch via GitHub API → run `kilocode` with issue context → commit/push → open PR via `gh pr create` → update backend job (status/logs/pr_url).
-- No repo sandboxing/mocking; runs arbitrary commands against the real repo. No automated test execution unless Kilo prompt triggers it.
+### Coding agent (primary: E2B sandbox)
+- Primary execution is via the backend runner: `POST /clusters/{id}/start_fix` spins up an E2B sandbox (Kilocode in a reusable template), runs the fix inside the sandbox, and persists per-job logs for the dashboard to tail.
+- GitHub operations (clone/push/PR) are performed non-interactively using `GITHUB_TOKEN`.
+- Logs are persisted per job and surfaced via the dashboard (rather than piping all sandbox output to backend stdout).
 
-### AWS/Fargate path
-- Container image built from `coding-agent/Dockerfile` and pushed to ECR (manual per `coding-agent/FARGATE_DEPLOYMENT.md`).
-- Terraform in `coding-agent/terraform/` provisions VPC (public subnets), ECS cluster, task definition with Secrets Manager env injection (Gemini + git identity), SG, IAM roles, and CloudWatch log group.
-- Dashboard’s `/api/trigger-agent` starts tasks in Fargate with `assignPublicIp=ENABLED`; expects outbound internet to reach GitHub + model provider. No NAT/bastion path.
+**Operational note:** PR URL may be missing even after branch push.
+- In some runs, `git push` succeeds but `gh pr create` fails or returns no URL, and the final fallback (`gh pr list --head <branch>`) returns nothing, so Soulcaster can’t display a PR link even though a PR may still be creatable from the pushed branch.
+
+### AWS/Fargate path (deprecated)
+- The original ECS/Fargate coding-agent path is deprecated in favor of the E2B sandbox runner.
+- It may be retained temporarily for manual parity testing, but it should not be the default execution path.
 
 ## Decision points / cleanup backlog
 - Data source of truth: pick one interface (backend API vs direct Redis) for the dashboard and cluster logic; decide whether to retire in-memory fallback in production.
