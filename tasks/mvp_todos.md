@@ -5,7 +5,7 @@
 - [~] Choose LLM provider(s) & models (Embeddings, Summarization, Code-gen) @Sam @LLM  
   _Partially done – Gemini is chosen and wired for embeddings + clustering and the coding agent; summarization/code‑gen prompts are still evolving._
 - [~] Generate GitHub token with repo access and set env vars @Sam @Backend  
-  _Partially done – flows assume `GITHUB_ID`/`GITHUB_SECRET`/`GH_TOKEN` and work locally/in cloud, but this is not fully productized or documented as a one‑time setup task._
+  _Partially done – flows assume `GITHUB_ID`/`GITHUB_SECRET`/`GITHUB_TOKEN` and work locally/in cloud, but this is not fully productized or documented as a one‑time setup task._
 - [~] Create .env.example for backend @Sam @Shared  
   _Partially done – env usage is documented in README/PRD, but there is no dedicated backend `.env.example` file checked in._
 - [x] Decide on DB (In-memory/Redis selected) @Sam @Backend  

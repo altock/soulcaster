@@ -1,17 +1,18 @@
 import asyncio
+import json
 import logging
 import os
-import json
+import time
 from uuid import UUID
 from datetime import datetime, timezone
 
 try:
-    from e2b_code_interpreter import Sandbox
+    from e2b_code_interpreter import AsyncSandbox
 except ImportError:
-    Sandbox = None
+    AsyncSandbox = None
 
 from models import AgentJob, CodingPlan, IssueCluster
-from store import update_job
+from store import append_job_log, get_job, update_job
 from agent_runner import AgentRunner, register_runner
 
 logger = logging.getLogger(__name__)
@@ -25,57 +26,281 @@ import sys
 import json
 import subprocess
 import time
+import shlex
+import re
 from pathlib import Path
 
 def log(msg):
     print(msg)
     sys.stdout.flush()
 
-def run_command(cmd, cwd=None, env=None):
-    log(f"Running: {cmd}")
+def run_command(cmd, cwd=None, env=None, log_cmd=None, sensitive=False):
+    log(f"Running: {log_cmd or cmd}")
     try:
         subprocess.check_call(cmd, shell=True, cwd=cwd, env=env)
     except subprocess.CalledProcessError as e:
+        if sensitive:
+            log("Command failed (details redacted).")
+            raise subprocess.CalledProcessError(e.returncode, "<redacted>") from None
         log(f"Command failed: {e}")
         raise
 
-def setup_kilo_config():
-    # Configure Kilo CLI
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        log("WARN: No GEMINI_API_KEY found")
+def run_capture(cmd, cwd=None, env=None):
+    log(f"Running: {cmd}")
+    proc = subprocess.run(
+        cmd,
+        shell=True,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    out = (proc.stdout or "").strip()
+    if out:
+        log(out)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
+    return out
+
+def try_diagnostic(cmd, cwd=None):
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=os.environ.copy(),
+        )
+        out = (proc.stdout or "").strip()
+        if out:
+            log(f"[diag] {cmd}\n{out}")
+        else:
+            log(f"[diag] {cmd} (no output)")
+    except Exception as e:
+        log(f"[diag] {cmd} failed: {e}")
+
+def configure_kilocode():
+    # Pre-seed Kilo config for non-interactive sandboxes.
+    #
+    # Kilo Gateway uses browser-based device auth by default, which will hang in E2B.
+    # If we have provider credentials (e.g. Minimax/Gemini), write a config file so
+    # `kilocode --auto` can run headlessly.
+    config_dir = Path.home() / ".kilocode" / "cli"
+    config_path = config_dir / "config.json"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    explicit_config_json = (os.getenv("KILOCODE_CONFIG_JSON") or "").strip()
+    provider_preference = (os.getenv("KILOCODE_PROVIDER") or "").strip().lower()
+    minimax_key = (os.getenv("MINIMAX_API_KEY") or os.getenv("MINIMAX_API_TOKEN") or "").strip()
+    minimax_base_url = (os.getenv("MINIMAX_BASE_URL") or "https://api.minimax.io/anthropic").strip()
+    gemini_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    api_model_id = (os.getenv("KILO_API_MODEL_ID") or "").strip()
+
+    # If a config already exists, respect it and avoid overwriting settings.
+    if config_path.exists():
+        log(f"Kilo config already exists at {config_path}; leaving as-is")
         return
 
-    config_dir = Path.home() / ".kilocode" / "cli"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / "config.json"
-    
-    config_data = {
-        "version": "1.0.0",
-        "mode": "code",
-        "provider": "default",
-        "providers": [{
+    if explicit_config_json:
+        with open(config_path, "w") as f:
+            f.write(explicit_config_json)
+        log(f"Wrote Kilo config to {config_path}")
+        return
+
+    provider_cfg = None
+
+    def _want(provider: str) -> bool:
+        return (not provider_preference) or (provider_preference == provider)
+
+    # Prefer Gemini by default when available to avoid provider billing/balance issues.
+    if gemini_key and _want("gemini"):
+        provider_cfg = {
             "id": "default",
             "provider": "gemini",
             "geminiApiKey": gemini_key,
-            "apiModelId": os.getenv("KILO_API_MODEL_ID", "gemini-2.5-flash-preview-04-17"),
-            "enableUrlContext": True
-        }],
+            "apiModelId": api_model_id or "gemini-3-pro",
+            "enableUrlContext": False,
+            "enableGrounding": False,
+        }
+    elif minimax_key and _want("minimax"):
+        provider_cfg = {
+            "id": "default",
+            "provider": "minimax",
+            "minimaxBaseUrl": minimax_base_url,
+            "minimaxApiKey": minimax_key,
+        }
+        if api_model_id:
+            provider_cfg["apiModelId"] = api_model_id
+        else:
+            provider_cfg["apiModelId"] = "MiniMax-M2"
+
+    if not provider_cfg:
+        log(
+            "No Kilo provider credentials found (KILOCODE_CONFIG_JSON/GEMINI_API_KEY/MINIMAX_API_KEY). "
+            "Kilo may prompt for device auth and hang in a headless sandbox."
+        )
+        return
+
+    config_data = {
+        "version": "1.0.0",
+        "mode": "code",
+        "telemetry": True,
+        "provider": "default",
+        "providers": [provider_cfg],
         "autoApproval": {
             "enabled": True,
-            "execute": {"enabled": True},
-            "read": {"enabled": True},
-            "write": {"enabled": True}
-        }
+            "read": {"enabled": True, "outside": True},
+            "write": {"enabled": True, "outside": True, "protected": False},
+            "browser": {"enabled": False},
+            "retry": {"enabled": False, "delay": 10},
+            "mcp": {"enabled": True},
+            "mode": {"enabled": True},
+            "subtasks": {"enabled": True},
+            "execute": {
+                "enabled": True,
+                "allowed": ["ls", "cat", "echo", "pwd", "npm", "node", "yarn", "pnpm", "pip", "python", "python3", "pytest", "go", "cargo", "make", "git", "gh"],
+                "denied": ["rm -rf", "sudo rm", "mkfs", "dd if="],
+            },
+            "question": {"enabled": False, "timeout": 60},
+            "todo": {"enabled": True},
+        },
+        "theme": "dark",
+        "customThemes": {},
     }
+
     with open(config_path, "w") as f:
         json.dump(config_data, f, indent=2)
-    log("Kilo config written.")
+    log(f"Wrote Kilo config to {config_path}")
+
+def _stream_process_with_pty(argv, cwd):
+    # Stream output live and auto-accept first-run prompts by pressing Enter.
+    import os
+    import pty
+    import select
+    import subprocess
+    import time
+    import signal
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=cwd,
+            text=False,
+            env=os.environ.copy(),
+        )
+    finally:
+        os.close(slave_fd)
+
+    buffer = b""
+    last_auto_enter = 0.0
+    auth_wait_started = None
+    auth_url = None
+    auth_code = None
+    auth_timeout_seconds = int(os.getenv("KILOCODE_AUTH_TIMEOUT_SECONDS", "60"))
+
+    def maybe_auto_enter(text: str):
+        nonlocal last_auto_enter
+        now = time.time()
+        if now - last_auto_enter < 0.75:
+            return
+        # Heuristics: Kilo uses a first-run wizard with question marks and selection prompts.
+        triggers = [
+            "Please select which provider you would like to use",
+            "To get you started, please fill out",
+            "? ",
+            "navigate",
+            "Configuration",
+        ]
+        if any(t in text for t in triggers):
+            os.write(master_fd, b"\n")
+            last_auto_enter = now
+            log("[auto] pressed Enter to accept default")
+
+    def maybe_detect_auth(text: str):
+        nonlocal auth_wait_started, auth_url, auth_code
+        if "Visit:" in text:
+            # Example: "Visit: https://app.kilo.ai/device-auth?code=XXXX-YYYY"
+            auth_url = text.split("Visit:", 1)[1].strip() or auth_url
+        if text.startswith("Verification code:"):
+            auth_code = text.split("Verification code:", 1)[1].strip() or auth_code
+        if "Waiting for authorization" in text:
+            if auth_wait_started is None:
+                auth_wait_started = time.time()
+                log(
+                    f"[auth] waiting for Kilo Gateway device auth (timeout {auth_timeout_seconds}s)"
+                )
+
+    try:
+        while True:
+            r, _, _ = select.select([master_fd], [], [], 0.2)
+            if master_fd in r:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError as e:
+                    # Common PTY behavior: when the slave side closes, reads on the master
+                    # can raise EIO instead of returning b"".
+                    if getattr(e, "errno", None) == 5:
+                        break
+                    raise
+                if not chunk:
+                    break
+                buffer += chunk
+                # Emit line by line to keep logs readable
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    text = line.decode(errors="replace")
+                    log(text)
+                    maybe_auto_enter(text)
+                    maybe_detect_auth(text)
+            if auth_wait_started is not None and (time.time() - auth_wait_started) > auth_timeout_seconds:
+                log(
+                    "[auth] timed out waiting for device auth; canceling kilocode run. "
+                    "To run non-interactively, set KILOCODE_SEED_CONFIG=true and provide a gateway key/token in the sandbox, "
+                    "or pre-bake ~/.kilocode/cli/config.json into the E2B template."
+                )
+                if auth_url or auth_code:
+                    log(f"[auth] url={auth_url or ''} code={auth_code or ''}".strip())
+                try:
+                    proc.send_signal(signal.SIGINT)
+                except Exception:
+                    pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return 1
+            if proc.poll() is not None:
+                break
+        # Flush remainder
+        if buffer:
+            text = buffer.decode(errors="replace")
+            for line in text.splitlines():
+                log(line)
+                maybe_auto_enter(line)
+                maybe_detect_auth(line)
+        return proc.wait()
+    finally:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
 
 def main():
+    # Avoid committing __pycache__/pyc artifacts (and keep repos clean).
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
     # 1. Read Plan
     with open("/tmp/plan.json", "r") as f:
         plan = json.load(f)
+
+    configure_kilocode()
     
     repo_url = os.getenv("REPO_URL")
     if not repo_url:
@@ -88,12 +313,53 @@ def main():
     owner = parts[-2]
     
     # 3. Clone
-    # We use GH_TOKEN from env implicitly with gh cli or git
-    # But for simplicity, let's use git with token if needed, or assume ssh/https helper is set up
-    # The sandbox usually has gh installed.
-    # Let's try gh repo clone
-    log(f"Cloning {owner}/{repo_name}...")
-    run_command(f"gh repo clone {owner}/{repo_name} repo")
+    # We use GITHUB_TOKEN from env implicitly with gh cli. If gh can't access the repo
+    # (private repo, missing scopes, etc) try a git clone fallback (without leaking the token in logs).
+    github_token = (os.getenv("GITHUB_TOKEN") or "").strip()
+    askpass_path = None
+    if github_token:
+        log(f"GITHUB_TOKEN present (len={len(github_token)})")
+        os.environ["GITHUB_TOKEN"] = github_token
+        # Configure git non-interactively (clone/push) without embedding tokens in URLs or logs.
+        askpass_path = "/tmp/git_askpass.sh"
+        with open(askpass_path, "w") as f:
+            f.write(
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                '  *Username*) echo "x-access-token";;\n'
+                '  *Password*) echo "$GITHUB_TOKEN";;\n'
+                '  *) echo "";;\n'
+                "esac\n"
+            )
+        os.chmod(askpass_path, 0o700)
+    else:
+        log("GITHUB_TOKEN missing; cloning may fail for private repositories.")
+
+    log(f"Cloning {owner}/{repo_name} from {repo_url}...")
+    try:
+        run_command(f"gh repo clone {owner}/{repo_name} repo")
+    except Exception:
+        # Log a bit of context to help debug private-repo auth issues.
+        try_diagnostic("gh --version")
+        try_diagnostic("gh auth status -t")
+        try_diagnostic("gh api user -q .login")
+        try_diagnostic(f"gh api repos/{owner}/{repo_name} -q .full_name")
+
+        if not (github_token and repo_url.startswith("https://github.com/")):
+            raise
+
+        # Last-resort fallback: git clone with GIT_ASKPASS (never embeds token in URL/command).
+        if not askpass_path:
+            raise
+        clone_env = os.environ.copy()
+        clone_env["GIT_ASKPASS"] = askpass_path
+        clone_env["GIT_TERMINAL_PROMPT"] = "0"
+        clone_env["GIT_ASKPASS_REQUIRE"] = "force"
+        run_command(
+            f"git clone {shlex.quote(repo_url)} repo",
+            env=clone_env,
+            sensitive=True,
+        )
     cwd = os.path.abspath("repo")
 
     # 4. Git Config
@@ -104,8 +370,7 @@ def main():
     branch_name = f"fix/soulcaster-{int(time.time())}"
     run_command(f"git checkout -b {branch_name}", cwd=cwd)
 
-    # 6. Run Kilocode
-    setup_kilo_config()
+
     
     prompt = f"Executing Coding Plan: {plan['title']}\n\n"
     prompt += f"Description: {plan['description']}\n\n"
@@ -114,26 +379,73 @@ def main():
         prompt += f"- {task}\n"
     
     log("Starting Kilocode...")
-    # Escape quotes for shell safety - simple version
-    safe_prompt = prompt.replace('"', '\\"')
-    run_command(f'kilocode --auto "{safe_prompt}"', cwd=cwd)
+    exit_code = _stream_process_with_pty(["kilocode", "--auto", prompt], cwd=cwd)
+    log(f"Kilocode exit code: {exit_code}")
+    if exit_code != 0:
+        raise subprocess.CalledProcessError(exit_code, "kilocode --auto")
 
     # 7. Push and PR
+    # Clean up bytecode artifacts before committing.
+    run_command("find . -type d -name '__pycache__' -prune -exec rm -rf {} + || true", cwd=cwd)
+    run_command("find . -type f -name '*.pyc' -delete || true", cwd=cwd)
+
     run_command(f"git add .", cwd=cwd)
     # Check if anything to commit
+    status = run_capture("git status --porcelain", cwd=cwd)
+    if not status:
+        log("No changes detected; skipping commit/push/PR.")
+        return
+
+    commit_msg = f"Fix: {plan['title']}"
+    run_command(f"git commit -m {json.dumps(commit_msg)}", cwd=cwd)
+
+    # Ensure push doesn't block on a prompt if auth isn't configured.
+    push_env = os.environ.copy()
+    push_env["GIT_TERMINAL_PROMPT"] = "0"
+    if askpass_path:
+        push_env["GIT_ASKPASS"] = askpass_path
+        push_env["GIT_ASKPASS_REQUIRE"] = "force"
+    run_command(f"git push -u origin {branch_name}", cwd=cwd, env=push_env, sensitive=bool(askpass_path))
+
+    pr_title = f"Fix: {plan['title']}"
+    pr_body = f"Automated fix based on plan.\n\n{plan['description']}"
+    pr_url = ""
+    # Prefer structured output if supported by the installed gh version.
     try:
-        run_command(f"git commit -m 'Fix: {plan['title']}'", cwd=cwd)
-        run_command(f"git push -u origin {branch_name}", cwd=cwd)
-        
-        pr_title = f"Fix: {plan['title']}"
-        pr_body = f"Automated fix based on plan.\n\n{plan['description']}"
-        
-        # gh pr create
-        # Ensure GH_TOKEN is available to gh cli
-        run_command(f"gh pr create --title \"{pr_title}\" --body \"{pr_body}\" --head {branch_name}", cwd=cwd)
+        pr_url = run_capture(
+            f"gh pr create --repo {json.dumps(f'{owner}/{repo_name}')} "
+            f"--title {json.dumps(pr_title)} --body {json.dumps(pr_body)} "
+            f"--head {json.dumps(branch_name)} --json url -q .url",
+            cwd=cwd,
+        ).strip()
+    except Exception:
+        # Fallback 1: create PR without --json and scrape URL from output.
+        try:
+            out = run_capture(
+                f"gh pr create --repo {json.dumps(f'{owner}/{repo_name}')} "
+                f"--title {json.dumps(pr_title)} --body {json.dumps(pr_body)} "
+                f"--head {json.dumps(branch_name)}",
+                cwd=cwd,
+            )
+            match = re.search(r"https://github\\.com/[^\\s]+/pull/\\d+", out)
+            if match:
+                pr_url = match.group(0)
+        except Exception:
+            # Fallback 2: if PR already exists or create failed, try to find it by head branch.
+            try:
+                pr_url = run_capture(
+                    f"gh pr list --repo {json.dumps(f'{owner}/{repo_name}')} "
+                    f"--head {json.dumps(branch_name)} --json url -q '.[0].url'",
+                    cwd=cwd,
+                ).strip()
+            except Exception:
+                pr_url = ""
+
+    if pr_url:
+        log(f"__SOULCASTER_PR_URL__={pr_url}")
         log("PR Created Successfully.")
-    except Exception as e:
-        log(f"Git/PR step failed (maybe no changes?): {e}")
+    else:
+        log("PR creation did not return a URL; a PR may still be creatable via the pushed branch.")
 
 if __name__ == "__main__":
     main()
@@ -141,116 +453,249 @@ if __name__ == "__main__":
 
 class SandboxKilocodeRunner(AgentRunner):
     async def start(self, job: AgentJob, plan: CodingPlan, cluster: IssueCluster) -> None:
-        if not Sandbox:
+        if not AsyncSandbox:
             logger.error("e2b SDK not installed. Cannot run SandboxKilocodeRunner.")
             await self._fail_job(job.id, "e2b SDK missing")
             return
 
+        sandbox = None
         try:
              logger.info(f"Starting sandbox job {job.id} for plan {plan.id}")
              try:
-                 update_job(job.id, status="running", logs="Initializing sandbox environment...")
+                 await asyncio.to_thread(
+                     update_job,
+                     job.id,
+                     status="running",
+                     logs="Initializing sandbox environment...",
+                     updated_at=datetime.now(timezone.utc),
+                 )
              except Exception as update_err:
                  logger.error(f"Failed to update job status: {update_err}")
                  raise update_err
 
              # Prepare Environment Variables
+             repo_url = (
+                 cluster.github_repo_url
+                 or os.getenv("DEFAULT_GITHUB_REPO_URL")
+                 or "https://github.com/naga-k/bad-ux-mart"
+             ).strip()
              env_vars = {
                  "GEMINI_API_KEY": os.getenv("GEMINI_API_KEY", ""),
-                 "GH_TOKEN": os.getenv("GH_TOKEN", os.getenv("GITHUB_TOKEN", "")),
-                 "REPO_URL": cluster.github_repo_url or "",
-                 "KILO_API_MODEL_ID": os.getenv("KILO_API_MODEL_ID", "gemini-2.5-flash-preview-04-17"),
+                 "KILO_API_MODEL_ID": os.getenv("KILO_API_MODEL_ID", ""),
+                 "KILOCODE_PROVIDER": os.getenv("KILOCODE_PROVIDER", ""),
+                 "MINIMAX_API_KEY": os.getenv("MINIMAX_API_KEY", os.getenv("MINIMAX_API_TOKEN", "")),
+                 "MINIMAX_BASE_URL": os.getenv("MINIMAX_BASE_URL", ""),
+                 "KILOCODE_CONFIG_JSON": os.getenv("KILOCODE_CONFIG_JSON", ""),
+                 "GITHUB_TOKEN": os.getenv("GITHUB_TOKEN", ""),
+                 "REPO_URL": repo_url,
              }
              
              if not env_vars["REPO_URL"]:
-                  # Fallback if repo url not on cluster, try to construct? or fail
-                  await self._fail_job(job.id, "Cluster missing github_repo_url")
+                  await self._fail_job(job.id, "Missing REPO_URL for sandbox run")
                   return
-
+             
              logger.info(f"Preparing environment for job {job.id}...")
              # Create Sandbox
-             # We assume the template (KILOCODE_TEMPLATE_ID) already has 'kilocode' installed via e2b.Dockerfile.
-             # If not, the script execution might fail or we'd need to add 'pip install' here.
-             logger.info(f"Creating sandbox with template ID: {KILOCODE_TEMPLATE_ID}")
-             sandbox = Sandbox.create(template=KILOCODE_TEMPLATE_ID, envs=env_vars)
+             # Check for Template Name (alias) first, then ID
+             template_req = os.getenv("KILOCODE_TEMPLATE_NAME") or os.getenv("KILOCODE_TEMPLATE_ID", "base")
+             
+             if template_req == "base":
+                 logger.warning("KILOCODE_TEMPLATE_NAME/ID not set, defaulting to 'base' (this might fail if tools are missing)")
+             
+             logger.info(f"Creating sandbox with template: {template_req}")
+             
+             # Use AsyncSandbox
+             sandbox = await AsyncSandbox.create(template=template_req, envs=env_vars)
+             await self._log(job.id, f"Sandbox created with ID: {sandbox.sandbox_id}")
+             logger.info(f"Sandbox created: {sandbox.sandbox_id}")
+
+             # Buffer job log writes so we don't hammer Redis/Upstash on every CLI line.
+             flush_interval_s = float(os.getenv("JOB_LOG_FLUSH_INTERVAL_SECONDS", "1.0"))
+             max_buffer_chars = int(os.getenv("JOB_LOG_MAX_BUFFER_CHARS", "8000"))
+             buffer_lock = asyncio.Lock()
+             buffer_lines: list[str] = []
+             buffer_chars = 0
+             last_flush = time.monotonic()
+             mirror = os.getenv("JOB_LOG_MIRROR_TO_CONSOLE", "").lower() in {"1", "true", "yes"}
+
+             async def flush_logs(force: bool = False) -> None:
+                 nonlocal buffer_chars, buffer_lines, last_flush
+                 now = time.monotonic()
+                 if not force and buffer_chars < max_buffer_chars and (now - last_flush) < flush_interval_s:
+                     return
+                 async with buffer_lock:
+                     if not buffer_lines:
+                         last_flush = now
+                         buffer_chars = 0
+                         return
+                     chunk = "".join(buffer_lines)
+                     buffer_lines = []
+                     buffer_chars = 0
+                     last_flush = now
+
+                 await asyncio.to_thread(append_job_log, job.id, chunk)
+
+             async def buffered_log(message: str) -> None:
+                 nonlocal buffer_chars
+                 line = message if message.endswith("\n") else f"{message}\n"
+                 async with buffer_lock:
+                     buffer_lines.append(line)
+                     buffer_chars += len(line)
+                 if mirror:
+                     logger.info("[sandbox_kilo][job=%s] %s", job.id, message.rstrip())
+                 await flush_logs(force=False)
+
+             # Upload Agent Script and Plan
+             await buffered_log("Uploading context...")
+             logger.info("Uploading agent script and plan...")
+             await sandbox.files.write("/tmp/agent_script.py", AGENT_SCRIPT)
+             await sandbox.files.write("/tmp/plan.json", plan.model_dump_json())
+             logger.info("Context uploaded.")
+
+             # Execute Script
+             await buffered_log("Executing agent script...")
+             logger.info("Starting execution of agent script...")
+             
+             async def handle_stdout(output):
+                 text = str(output)
+                 # Capture PR URL signal emitted by the agent script so we can persist it.
+                 if "__SOULCASTER_PR_URL__=" in text:
+                     try:
+                         pr_url = text.split("__SOULCASTER_PR_URL__=", 1)[1].strip()
+                         if pr_url:
+                             await asyncio.to_thread(update_job, job.id, pr_url=pr_url, updated_at=datetime.now(timezone.utc))
+                             await asyncio.to_thread(
+                                 update_cluster,
+                                 str(job.project_id),
+                                 job.cluster_id,
+                                 github_pr_url=pr_url,
+                                 updated_at=datetime.now(timezone.utc),
+                             )
+                     except Exception:
+                         pass
+                 await buffered_log(text)
+
+             async def handle_stderr(output):
+                 await buffered_log(f"[ERR] {str(output)}")
+
+             timeout_env = (os.getenv("SANDBOX_AGENT_TIMEOUT_SECONDS") or "").strip()
+             timeout_seconds: int | None
              try:
-                await self._log(job.id, "Sandbox created.")
-                logger.info(f"Sandbox created: {sandbox.sandbox_id}")
+                 timeout_seconds = int(timeout_env) if timeout_env else 3600
+             except ValueError:
+                 timeout_seconds = 3600
+             if timeout_seconds <= 0:
+                 timeout_seconds = None
 
-                # Upload Agent Script and Plan
-                await self._log(job.id, "Uploading context...")
-                logger.info("Uploading agent script and plan...")
-                sandbox.files.write("/tmp/agent_script.py", AGENT_SCRIPT)
-                sandbox.files.write("/tmp/plan.json", plan.model_dump_json())
-                logger.info("Context uploaded.")
-
-                # Execute Script
-                await self._log(job.id, "Executing agent script...")
-                logger.info("Starting execution of agent script...")
-                
-                # Run and stream logs
-                # In sync mode, on_stdout might be called synchronously? 
-                # We need to adapt handle_stdout/stderr to be sync or wrap them?
-                # E2B sync client typically expects sync callbacks.
-                # But our _log method is async! verify later.
-                # If we pass async func to sync callback, it might return a coroutine and not await it.
-                # We might need to run_coroutine_threadsafe if we are in a loop.
-                # Or just use print for now? 
-                # Ideally, we define sync wrappers that call async_to_sync or similar.
-                # Given we are in an async start() method, we have a running loop.
-                
-                def handle_stdout(output):
-                    # Trying to schedule async log on existing loop
-                    try:
-                        loop = asyncio.get_running_loop()
-                        if loop.is_running():
-                             asyncio.run_coroutine_threadsafe(self._log(job.id, output.line), loop)
-                    except:
-                        pass
-
-                def handle_stderr(output):
-                    try:
-                        loop = asyncio.get_running_loop()
-                        if loop.is_running():
-                             asyncio.run_coroutine_threadsafe(self._log(job.id, f"[ERR] {output.line}"), loop)
-                    except:
-                        pass
-
-                proc = sandbox.commands.run(
-                    "python3 /tmp/agent_script.py",
-                    on_stdout=handle_stdout,
-                    on_stderr=handle_stderr,
-                    timeout=600 # 10 mins timeout
-                )
-
-                if proc.exit_code == 0:
-                    # Success
-                     # We might want to parse the PR URL from logs if not explicitly returned?
-                     # The script logs "PR Created Successfully."
-                     # For now, mark success.
-                     update_job(job.id, status="success", logs=f"{job.logs}\nSuccess.")
-                else:
-                     await self._fail_job(job.id, f"Agent script exited with code {proc.exit_code}")
-            
+             try:
+                 proc = await sandbox.commands.run(
+                     "python3 /tmp/agent_script.py",
+                     on_stdout=handle_stdout,
+                     on_stderr=handle_stderr,
+                     timeout=timeout_seconds,
+                 )
              finally:
-                if sandbox:
-                    sandbox.kill()
+                 await flush_logs(force=True)
+
+             if proc.exit_code == 0:
+                  latest_job = await asyncio.to_thread(get_job, job.id)
+                  existing_logs = (latest_job.logs or "") if latest_job else ""
+                  success_logs = (existing_logs + "\n" if existing_logs else "") + "Success."
+                  await asyncio.to_thread(
+                      update_job,
+                      job.id,
+                      status="success",
+                      logs=success_logs,
+                      updated_at=datetime.now(timezone.utc),
+                  )
+                  # Mark cluster as completed and clear any previous error.
+                  try:
+                      refreshed = await asyncio.to_thread(get_job, job.id)
+                      cluster_updates = {
+                          "status": "pr_opened" if (refreshed and refreshed.pr_url) else "new",
+                          "error_message": None,
+                          "updated_at": datetime.now(timezone.utc),
+                      }
+                      await asyncio.to_thread(
+                          update_cluster,
+                          str(job.project_id),
+                          job.cluster_id,
+                          **cluster_updates,
+                      )
+                  except Exception as e:
+                      logger.warning("Failed to update cluster %s on success: %s", job.cluster_id, e)
+             else:
+                  await self._fail_job(job.id, f"Agent script exited with code {proc.exit_code}")
 
         except Exception as e:
+            # Some transports (notably long-running streaming callbacks) can error with
+            # "peer closed connection without sending complete message body (incomplete chunked read)".
+            # This is often a timeout/stream reset rather than a true agent failure.
+            msg = str(e)
+            if "incomplete chunked read" in msg.lower() or "peer closed connection" in msg.lower():
+                try:
+                    await self._log(
+                        job.id,
+                        "Stream disconnected while running the sandbox command. "
+                        "If the job is legitimately long-running, increase `SANDBOX_AGENT_TIMEOUT_SECONDS` "
+                        "(or set it to 0 to disable the timeout).",
+                    )
+                except Exception:
+                    pass
             logger.exception(f"Job {job.id} failed in sandbox")
             await self._fail_job(job.id, str(e))
+        finally:
+            if sandbox is not None:
+                if os.getenv("E2B_KEEP_SANDBOX", "").lower() in {"1", "true", "yes"}:
+                    logger.info("E2B_KEEP_SANDBOX enabled; leaving sandbox %s running", sandbox.sandbox_id)
+                    return
+                try:
+                    killed = sandbox.kill()
+                    if asyncio.iscoroutine(killed):
+                        killed = await killed
+                    logger.info("Sandbox %s killed=%s", sandbox.sandbox_id, killed)
+                except Exception as kill_err:
+                    # E2B may already have terminated the sandbox (e.g. TTL or upstream cleanup),
+                    # which can surface as a 404 on delete. Treat that as non-fatal cleanup.
+                    msg = str(kill_err)
+                    if "404" in msg and "Not Found" in msg:
+                        logger.info("Sandbox %s already gone (404 on kill)", getattr(sandbox, "sandbox_id", "?"))
+                    else:
+                        logger.warning("Failed to kill sandbox %s: %s", getattr(sandbox, "sandbox_id", "?"), kill_err)
 
     async def _log(self, job_id: UUID, message: str):
-        from store import get_job, update_job
-        job = get_job(job_id)
-        if job:
-            # Append log line
-            # In high freq, this is bad, but acceptable for prototype
-            current_logs = job.logs or ""
-            new_log = f"{message}\n"
-            update_job(job_id, logs=current_logs + new_log)
+        # Persist to job log stream/list and optionally mirror to console.
+        mirror = os.getenv("JOB_LOG_MIRROR_TO_CONSOLE", "").lower() in {"1", "true", "yes"}
+        if mirror:
+            logger.info("[sandbox_kilo][job=%s] %s", job_id, message.rstrip())
+        line = message if message.endswith("\n") else f"{message}\n"
+        await asyncio.to_thread(append_job_log, job_id, line)
 
     async def _fail_job(self, job_id: UUID, error: str):
-        update_job(job_id, status="failed", logs=f"Error: {error}")
+        from store import get_job, update_job, update_cluster
+        job = await asyncio.to_thread(get_job, job_id)
+        current_logs = job.logs or "" if job else ""
+        await asyncio.to_thread(
+            update_job,
+            job_id,
+            status="failed",
+            logs=f"{current_logs}\nError: {error}",
+            updated_at=datetime.now(timezone.utc),
+        )
+        
+        # Update cluster status so UI can show the button again
+        if job and job.cluster_id:
+            try:
+                # update_cluster needs project_id first
+                await asyncio.to_thread(
+                    update_cluster,
+                    str(job.project_id),
+                    job.cluster_id,
+                    status="failed",
+                    error_message=error,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            except Exception as e:
+                logger.error(f"Failed to update cluster status: {e}")
 
 register_runner("sandbox_kilo", SandboxKilocodeRunner)

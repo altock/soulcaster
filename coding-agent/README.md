@@ -34,7 +34,8 @@ The coding agent architecture has moved to a **Plan-Execute** model:
 *   `GEMINI_API_KEY`: Required for generating coding plans.
 *   `E2B_API_KEY`: Required for the Sandbox runner.
 *   `CODING_AGENT_RUNNER`: processing runner to use (default: `sandbox_kilo`).
-*   `KILOCODE_TEMPLATE_ID`: E2B template ID for the agent environment (default: `base`).
+*   `KILOCODE_TEMPLATE_NAME`: E2B template name for the agent environment (recommended).
+*   `KILOCODE_TEMPLATE_ID`: E2B template ID for the agent environment (fallback, default: `base`).
 
 ## Usage
 

@@ -138,7 +138,7 @@ See `.env.example` for all available environment variables. Key configuration in
 
 **Coding Agent** (`.env` in `coding-agent/`):
 - `GEMINI_API_KEY` or `MINIMAX_API_KEY` - LLM provider for fix generation
-- `GH_TOKEN` - GitHub token with repo scope (for creating branches and PRs)
+- `GITHUB_TOKEN` - GitHub token with repo scope (for creating branches and PRs)
 - `GIT_USER_EMAIL` - Email for git commits
 - `GIT_USER_NAME` - Name for git commits
 - `BACKEND_URL` - Backend API URL for status reporting (optional)
@@ -151,6 +151,8 @@ See `.env.example` for all available environment variables. Key configuration in
 - `REDDIT_SORTS` - Listing sorts to pull (`new`, `hot`, `top`) - defaults to `"new"`
 - `REDDIT_POLL_INTERVAL_SECONDS` - How often to poll Reddit - defaults to `300`
 - `REDIS_URL` or `UPSTASH_REDIS_URL` - Alternative Redis connection string (if not using REST API)
+- `E2B_API_KEY` - Required for the `sandbox_kilo` runner (E2B sandbox provisioning)
+- `KILOCODE_TEMPLATE_NAME` - E2B template name for the Kilo sandbox (e.g. `kilo-sandbox-v-0-1-dev`)
 
 **Dashboard**:
 - `GITHUB_OWNER` - Default GitHub repository owner (for new issues)

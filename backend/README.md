@@ -154,6 +154,9 @@ All ingestion endpoints support optional `?project_id=<uuid>` query parameter fo
 | `REDDIT_POLL_INTERVAL_SECONDS` | How often to poll Reddit | `300` |
 | `BACKEND_URL` | URL of the ingestion API (for reddit poller) | `http://localhost:8000` |
 | `GITHUB_TOKEN` | GitHub personal access token (optional, for higher API limits) | _unset_ |
+| `E2B_API_KEY` | E2B API key (required for `sandbox_kilo` runner) | _unset_ |
+| `KILOCODE_TEMPLATE_NAME` | E2B template name for Kilo sandbox | _unset_ |
+| `KILOCODE_TEMPLATE_ID` | E2B template ID (fallback when name not set) | `base` |
 
 ## Development Notes
 

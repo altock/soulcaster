@@ -150,7 +150,7 @@ sequenceDiagram
 - No auth on the backend endpoints; dashboard relies on Vercel env + optional NextAuth GitHub session only for GitHub API access.
 
 ### Coding agent
-- Single script `coding-agent/fix_issue.py` (invoked via `uv run` locally or as container entrypoint). Depends on `GH_TOKEN`, `GIT_USER_EMAIL`, `GIT_USER_NAME`, and Gemini key; optionally `BACKEND_URL`/`JOB_ID` for status reporting.
+- Single script `coding-agent/fix_issue.py` (invoked via `uv run` locally or as container entrypoint). Depends on `GITHUB_TOKEN`, `GIT_USER_EMAIL`, `GIT_USER_NAME`, and Gemini key; optionally `BACKEND_URL`/`JOB_ID` for status reporting.
 - Flow: parse issue URL → ensure fork via `gh repo fork` → clone fork → add upstream → compute base branch via GitHub API → run `kilocode` with issue context → commit/push → open PR via `gh pr create` → update backend job (status/logs/pr_url).
 - No repo sandboxing/mocking; runs arbitrary commands against the real repo. No automated test execution unless Kilo prompt triggers it.
 
@@ -320,7 +320,7 @@ This section expands the high-level overview into more implementation detail so 
 - **Manual triggering (via dashboard)**: `POST /api/trigger-agent`:
   - Operation order: (1) Creates or validates a GitHub issue using the user's Octokit token (from NextAuth session), (2) Creates a backend job record (`POST {BACKEND_URL}/jobs`) when `cluster_id` is provided, then (3) Starts a Fargate task via `RunTaskCommand` with:
     - Command: `[issue_url, '--job-id', job_id]` or `[issue_url]`.
-    - Env: `BACKEND_URL`, `JOB_ID` (if any), and `GH_TOKEN` (if user is authenticated).
+    - Env: `BACKEND_URL`, `JOB_ID` (if any), and `GITHUB_TOKEN` (if user is authenticated).
   - Used when a user clicks "Generate Fix" on a cluster from the dashboard UI.
   - Canonical path: dashboard → backend `/api/*` with `project_id` → project-scoped keys.
 

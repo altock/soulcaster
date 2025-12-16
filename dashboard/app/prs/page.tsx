@@ -2,16 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import type { AgentJob } from '@/types';
 
-interface AgentJob {
-    id: string;
-    cluster_id: string;
-    status: 'pending' | 'running' | 'success' | 'failed';
-    logs: string | null;
-    pr_url: string | null;
-    created_at: string;
-    updated_at: string;
-}
+type JobLogsPayload = {
+    chunks: string[];
+};
 
 /**
  * Render the Agent Jobs & PRs user interface.
@@ -23,11 +18,13 @@ interface AgentJob {
 export default function PrsPage() {
     const [jobs, setJobs] = useState<AgentJob[]>([]);
     const [loading, setLoading] = useState(true);
+    const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+    const [jobLogs, setJobLogs] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchJobs = async () => {
             try {
-                const res = await fetch('http://localhost:8000/jobs');
+                const res = await fetch('/api/jobs');
                 if (res.ok) {
                     const data = await res.json();
                     setJobs(data);
@@ -44,6 +41,32 @@ export default function PrsPage() {
         const interval = setInterval(fetchJobs, 5000);
         return () => clearInterval(interval);
     }, []);
+
+    useEffect(() => {
+        if (!selectedJobId) {
+            setJobLogs(null);
+            return;
+        }
+
+        let cancelled = false;
+        const fetchLogs = async () => {
+            try {
+                const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/logs?cursor=0&limit=200`);
+                if (!res.ok) return;
+                const payload = (await res.json()) as JobLogsPayload;
+                if (!cancelled) {
+                    setJobLogs(payload.chunks?.join('') || '');
+                }
+            } catch (error) {
+                console.error('Failed to fetch job logs:', error);
+            }
+        };
+
+        fetchLogs();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedJobId]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -121,11 +144,17 @@ export default function PrsPage() {
                                             </div>
                                         )}
                                     </div>
+                                    <button
+                                        onClick={() => setSelectedJobId(selectedJobId === job.id ? null : job.id)}
+                                        className="ml-4 text-xs text-slate-300 hover:text-white border border-white/10 rounded-lg px-3 py-2 bg-black/20 hover:bg-black/40 transition-colors"
+                                    >
+                                        {selectedJobId === job.id ? 'Hide logs' : 'View logs'}
+                                    </button>
                                 </div>
 
-                                {job.logs && (
+                                {selectedJobId === job.id && jobLogs !== null && (
                                     <div className="mt-4 bg-black/50 rounded-lg p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-64 whitespace-pre-wrap border border-white/5">
-                                        {job.logs}
+                                        {jobLogs || 'No logs yet.'}
                                     </div>
                                 )}
                             </div>

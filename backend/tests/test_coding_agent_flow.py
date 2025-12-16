@@ -14,22 +14,39 @@ client = TestClient(app)
 def sample_data(project_context):
     pid = project_context["project_id"]
     
+    feedback = FeedbackItem(
+        id=uuid4(),
+        project_id=pid,
+        source="github",
+        title="Issue: CI failing",
+        body="CI is failing on main",
+        raw_text="https://github.com/octocat/Hello-World/issues/1",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+        repo="octocat/Hello-World",
+        github_issue_number=1,
+        github_issue_url="https://github.com/octocat/Hello-World/issues/1",
+        status="open",
+    )
+    add_feedback_item(feedback)
+
     # Create cluster
     cluster = IssueCluster(
         id="cluster-123", project_id=pid, title="Test Cluster", summary="Summary",
-        feedback_ids=[], status="new", created_at=datetime.now(timezone.utc),
+        feedback_ids=[str(feedback.id)], status="new", created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
     add_cluster(cluster)
     
-    return {"pid": pid, "cluster": cluster}
+    return {"pid": pid, "cluster": cluster, "feedback": feedback}
 
 @patch("main.generate_plan")
 @patch("agent_runner.sandbox.SandboxKilocodeRunner.start", new_callable=AsyncMock)
-def test_start_fix_creates_plan_and_job(mock_runner_start, mock_generate_plan, sample_data):
+def test_start_fix_creates_plan_and_job(mock_runner_start, mock_generate_plan, sample_data, monkeypatch):
     # Setup
     pid = sample_data["pid"]
     cid = sample_data["cluster"].id
+    monkeypatch.setenv("ENABLE_AGENT_RUNNER_IN_TESTS", "true")
     
     # Mock plan generation
     mock_plan = AsyncMock()
@@ -84,6 +101,7 @@ def test_start_fix_creates_plan_and_job(mock_runner_start, mock_generate_plan, s
     assert job_arg.id == job_id
     assert plan_arg.id == "plan-abc"
     assert cluster_arg.id == cid
+    assert cluster_arg.github_repo_url == "https://github.com/octocat/Hello-World"
 
 def test_get_plan_endpoint(sample_data):
     cid = sample_data["cluster"].id

@@ -22,7 +22,7 @@
 - GitHub OAuth via NextAuth: set `GITHUB_ID`, `GITHUB_SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`; uses optional `GITHUB_TOKEN` for higher API limits when syncing issues.
 
 ## Coding Agent (CLI + AWS task)
-- Local: `uv run coding-agent/fix_issue.py <issue_url> [--job-id UUID]`. Requires `GH_TOKEN` (repo scope), `GIT_USER_EMAIL`, `GIT_USER_NAME`, and a provider key (`GEMINI_API_KEY` or `MINIMAX_API_KEY`); optional `BACKEND_URL`/`JOB_ID` to report status.
+- Local: `uv run coding-agent/fix_issue.py <issue_url> [--job-id UUID]`. Requires `GITHUB_TOKEN` (repo scope), `GIT_USER_EMAIL`, `GIT_USER_NAME`, and a provider key (`GEMINI_API_KEY` or `MINIMAX_API_KEY`); optional `BACKEND_URL`/`JOB_ID` to report status.
 - Kilo is configured on the fly (~/.kilocode/cli/config.json) to use Gemini/Minimax; branch + PR are created in a fork (via gh CLI).
 - Fargate path: Next.js `/api/trigger-agent` starts the ECS task defined by `ECS_CLUSTER_NAME`/`ECS_TASK_DEFINITION`, passing GitHub token and job/env overrides; AWS creds (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, subnet/SG IDs) must be set in the dashboard environment.
 

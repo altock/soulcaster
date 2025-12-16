@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import type { ClusterDetail, FeedbackSource, CodingPlan } from '@/types';
+import type { AgentJob, ClusterDetail, FeedbackSource, CodingPlan } from '@/types';
 import FeedbackCard from '@/components/FeedbackCard';
 
 /**
@@ -24,10 +24,17 @@ export default function ClusterDetailPage() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
   const [codingPlan, setCodingPlan] = useState<CodingPlan | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [fixJobs, setFixJobs] = useState<AgentJob[]>([]);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [logText, setLogText] = useState<string>('');
+  const [logCursor, setLogCursor] = useState(0);
+  const [isTailingLogs, setIsTailingLogs] = useState(false);
 
   useEffect(() => {
     fetchCluster();
     fetchPlan();
+    fetchFixJobs();
   }, [clusterId]);
 
   useEffect(() => {
@@ -37,6 +44,19 @@ export default function ClusterDetailPage() {
       return () => clearInterval(interval);
     }
   }, [cluster?.status, isFixing]);
+
+  useEffect(() => {
+    const jobIsRunning = fixJobs.some((job) => job.status === 'running' || job.status === 'pending');
+    if (!jobIsRunning) return;
+    const interval = setInterval(fetchFixJobs, 5000);
+    return () => clearInterval(interval);
+  }, [fixJobs]);
+
+  useEffect(() => {
+    if (!selectedJobId || !isTailingLogs) return;
+    const interval = setInterval(() => fetchJobLogs(selectedJobId, { append: true }), 2000);
+    return () => clearInterval(interval);
+  }, [selectedJobId, isTailingLogs, logCursor]);
 
   const fetchCluster = async () => {
     try {
@@ -67,6 +87,39 @@ export default function ClusterDetailPage() {
     } catch (err) {
       console.error('Failed to fetch plan:', err);
     }
+  };
+
+  const fetchFixJobs = async () => {
+    try {
+      setJobsError(null);
+      const response = await fetch(`/api/clusters/${clusterId}/jobs`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch fix jobs');
+      }
+      const data = (await response.json()) as AgentJob[];
+      setFixJobs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setJobsError(err instanceof Error ? err.message : 'Failed to fetch fix jobs');
+    }
+  };
+
+  const fetchJobLogs = async (jobId: string, opts?: { append?: boolean }) => {
+    const append = opts?.append ?? false;
+    const cursor = append ? logCursor : 0;
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/logs?cursor=${cursor}&limit=200`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch logs');
+    }
+    const payload = await response.json();
+    const chunks = (payload?.chunks as string[]) || [];
+    const nextCursor = typeof payload?.next_cursor === 'number' ? payload.next_cursor : cursor + chunks.length;
+    if (append) {
+      setLogText((prev) => prev + chunks.join(''));
+    } else {
+      setLogText(chunks.join(''));
+    }
+    setLogCursor(nextCursor);
+    setIsTailingLogs(Boolean(payload?.has_more) || fixJobs.some((j) => j.id === jobId && j.status === 'running'));
   };
 
   const handleGeneratePlan = async () => {
@@ -102,6 +155,7 @@ export default function ClusterDetailPage() {
         throw new Error('Failed to start fix');
       }
       await fetchCluster();
+      await fetchFixJobs();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to start fix');
     } finally {
@@ -137,6 +191,19 @@ export default function ClusterDetailPage() {
   };
 
   const canStartFix = cluster && ['new', 'failed'].includes(cluster.status);
+
+  const statusLabel = (status: AgentJob['status']) => {
+    switch (status) {
+      case 'success':
+        return 'success';
+      case 'failed':
+        return 'failed';
+      case 'running':
+        return 'running';
+      default:
+        return 'pending';
+    }
+  };
 
   if (loading && !cluster) {
     return (
@@ -511,6 +578,110 @@ export default function ClusterDetailPage() {
                   >
                     {isGeneratingPlan ? 'Generating...' : 'Generate Plan'}
                   </button>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 rounded-3xl border border-white/10 bg-black/40 p-6 backdrop-blur-md">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Fix Jobs</h3>
+                <button
+                  onClick={fetchFixJobs}
+                  className="text-xs text-matrix-green hover:underline"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              {jobsError && (
+                <div className="text-xs text-red-400 mb-3">{jobsError}</div>
+              )}
+
+              {fixJobs.length === 0 ? (
+                <div className="text-sm text-slate-500">No fix jobs yet. Click “Start Automated Fix” to create one.</div>
+              ) : (
+                <div className="grid gap-3">
+                  {fixJobs.map((job) => (
+                    <div key={job.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-slate-400">{job.id.slice(0, 8)}</span>
+                            <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                              {new Date(job.created_at).toLocaleString()}
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wider text-slate-300">
+                              {statusLabel(job.status)}
+                            </span>
+                          </div>
+                          {job.pr_url && (
+                            <a
+                              href={job.pr_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex text-xs text-emerald-400 hover:underline break-all"
+                            >
+                              View PR
+                            </a>
+                          )}
+                        </div>
+                        <div className="shrink-0 flex gap-2">
+                          <button
+                            onClick={async () => {
+                              setSelectedJobId(selectedJobId === job.id ? null : job.id);
+                              setLogCursor(0);
+                              setLogText('');
+                              if (selectedJobId !== job.id) {
+                                try {
+                                  await fetchJobLogs(job.id, { append: false });
+                                } catch (err) {
+                                  alert(err instanceof Error ? err.message : 'Failed to fetch logs');
+                                }
+                              } else {
+                                setIsTailingLogs(false);
+                              }
+                            }}
+                            className="text-xs rounded-lg border border-white/10 px-3 py-2 bg-black/20 hover:bg-black/40 transition-colors text-slate-200"
+                          >
+                            {selectedJobId === job.id ? 'Hide logs' : 'View logs'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {selectedJobId === job.id && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                              {isTailingLogs ? 'Tailing…' : 'Logs'}
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await fetchJobLogs(job.id, { append: true });
+                                  } catch (err) {
+                                    alert(err instanceof Error ? err.message : 'Failed to fetch logs');
+                                  }
+                                }}
+                                className="text-[10px] text-matrix-green hover:underline"
+                              >
+                                Load more
+                              </button>
+                              <button
+                                onClick={() => setIsTailingLogs((v) => !v)}
+                                className="text-[10px] text-slate-300 hover:underline"
+                              >
+                                {isTailingLogs ? 'Pause' : 'Tail'}
+                              </button>
+                            </div>
+                          </div>
+                          <pre className="bg-black/50 rounded-lg p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-96 whitespace-pre-wrap border border-white/5">
+                            {logText || 'No logs yet.'}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

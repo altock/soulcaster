@@ -53,7 +53,7 @@ sequenceDiagram
     - `issue_url`
     - `JOB_ID`
     - `BACKEND_URL`
-    - `GH_TOKEN`, `GIT_USER_NAME`, `GIT_USER_EMAIL`, provider keys, etc.
+    - `GITHUB_TOKEN`, `GIT_USER_NAME`, `GIT_USER_EMAIL`, provider keys, etc.
 - ECS runs the `coding-agent` container whose entrypoint is:
   - `uv run fix_issue.py <issue_url> [--job-id UUID]`
 - `fix_issue.py`:
@@ -63,7 +63,7 @@ sequenceDiagram
     - Ensure a fork of the target repo exists (unique `aie-fork-{repo}-{suffix}` name).
     - Clone the fork into a temporary directory.
     - Add `upstream` remote pointing at the original repo.
-  - Configures Git (`user.name`, `user.email`, `credential.helper` using `GH_TOKEN`).
+  - Configures Git (`user.name`, `user.email`, `credential.helper` using `GITHUB_TOKEN`).
   - Creates a feature branch for the issue.
   - Runs `kilocode --auto "<prompt>"` in the repo directory to generate fixes.
   - If changes exist:
@@ -93,7 +93,7 @@ graph TB
         Provider[Gemini/Minimax<br/>via Kilo]
     end
     
-    Git <-->|GH_TOKEN| GitHub
+    Git <-->|GITHUB_TOKEN| GitHub
     Kilo -->|API calls| Provider
     Container -->|Update job| Backend
     
@@ -108,7 +108,7 @@ graph TB
 - **Isolation unit**: the ECS/Fargate task running our Docker image.
   - The task has its own container filesystem and ephemeral `/tmp` workspace.
   - It talks to:
-    - GitHub (via `gh` + `GH_TOKEN`).
+    - GitHub (via `gh` + `GITHUB_TOKEN`).
     - Backend (`BACKEND_URL`).
     - (Optionally) providers like Gemini/Minimax via Kilo CLI.
 - **“Sandbox” here is at the infrastructure level** (Docker/ECS), not a programmatic, per-request code execution sandbox like E2B.
@@ -670,4 +670,3 @@ For Soulcaster, an incremental path that respects current constraints and modern
    - Use the tools agent for transparent, inspectable workflows and new features.
 
 This approach keeps the current behavior and truth intact, while aligning Soulcaster with the security and architectural patterns used by Copilot, Claude Code, and E2B-style agents.
-

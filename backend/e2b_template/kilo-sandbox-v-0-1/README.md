@@ -14,6 +14,7 @@ Before you begin, make sure you have:
 1. Create a `.env` file in your project root or set the environment variable:
    ```
    E2B_API_KEY=your_api_key_here
+   KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
    ```
 
 ## Installing Dependencies

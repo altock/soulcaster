@@ -210,7 +210,7 @@ We have two plausible architectures:
 - `/api/trigger-agent` (Next.js) is responsible for:
   - Validating or creating a GitHub issue.
   - Creating a backend job (`POST /jobs`).
-  - Starting the ECS task with `BACKEND_URL`, `JOB_ID`, `GH_TOKEN` in env.
+  - Starting the ECS task with `BACKEND_URL`, `JOB_ID`, `GITHUB_TOKEN` in env.
 - Backend remains unaware of AWS/ECS and just exposes `/jobs` API.
 
 **Pros:**
@@ -289,7 +289,7 @@ sequenceDiagram
   UI->>DAPI: POST /api/clusters/{id}/start_fix
   DAPI->>B: POST /clusters/{id}/run_agent
   B->>B: Create AgentJob + mark cluster status=fixing
-  B->>ECS: RunTask (issue_url, BACKEND_URL, JOB_ID, GH_TOKEN?)
+  B->>ECS: RunTask (issue_url, BACKEND_URL, JOB_ID, GITHUB_TOKEN?)
 
   ECS->>G: Clone repo, create PR, etc.
   ECS->>B: PATCH /jobs/{id} (status + logs + pr_url)
@@ -382,4 +382,3 @@ If you follow these plans (ingestion + API/workers) you end up with:
   - “What is the status of the fix job for this cluster?”
 
 You can implement these phases incrementally and validate each step with small tests and manual flows, without needing a big-bang rewrite.
-
