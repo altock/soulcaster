@@ -539,20 +539,6 @@ export default function ClusterDetailPage() {
                   <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
                     <h4 className="text-sm font-bold text-slate-200 mb-2">{codingPlan.title}</h4>
                     <p className="text-xs text-slate-400 mb-4">{codingPlan.description}</p>
-
-                    <div className="text-xs font-semibold text-purple-300 mb-1">Files to Edit:</div>
-                    <ul className="list-disc list-inside text-xs text-slate-400 mb-4 font-mono">
-                      {codingPlan.files_to_edit.map(f => (
-                        <li key={f}>{f}</li>
-                      ))}
-                    </ul>
-
-                    <div className="text-xs font-semibold text-matrix-green mb-1">Tasks:</div>
-                    <ul className="list-decimal list-inside text-xs text-slate-400">
-                      {codingPlan.tasks.map((task, i) => (
-                        <li key={i}>{task}</li>
-                      ))}
-                    </ul>
                   </div>
 
                   {canStartFix && (

@@ -63,8 +63,6 @@ export interface CodingPlan {
   cluster_id: string;
   title: string;
   description: string;
-  files_to_edit: string[];
-  tasks: string[];
   created_at: string;
   updated_at: string;
 }

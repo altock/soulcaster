@@ -33,8 +33,6 @@ async def run_test():
         cluster_id="test_cluster",
         title="Test Plan",
         description="This is a test plan",
-        files_to_edit=["README.md"],
-        tasks=["Add a line to README"],
         created_at=datetime.now(),
         updated_at=datetime.now()
     )

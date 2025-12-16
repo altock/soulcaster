@@ -59,7 +59,7 @@ def test_start_fix_creates_plan_and_job(mock_runner_start, mock_generate_plan, s
     from models import CodingPlan
     real_plan = CodingPlan(
         id="plan-abc", cluster_id=cid, title="Generated Plan", description="Desc",
-        files_to_edit=[], tasks=[], created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
     mock_generate_plan.return_value = real_plan
@@ -115,7 +115,7 @@ def test_get_plan_endpoint(sample_data):
     from models import CodingPlan
     plan = CodingPlan(
         id="p1", cluster_id=cid, title="P1", description="D", 
-        files_to_edit=[], tasks=[], created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
     add_coding_plan(plan)
@@ -133,7 +133,7 @@ def test_manual_plan_generation(mock_gen, sample_data):
     from models import CodingPlan
     mock_gen.return_value = CodingPlan(
         id="p2", cluster_id=cid, title="Gen", description="D", 
-        files_to_edit=[], tasks=[], created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
     

@@ -1,8 +1,4 @@
-"""
-Module for generating coding plans using Gemini.
-"""
-
-import json
+"""Module for generating coding plans using Gemini."""
 import logging
 import os
 from datetime import datetime, timezone
@@ -20,8 +16,6 @@ logger = logging.getLogger(__name__)
 class PlanSchema(BaseModel):
     title: str
     description: str
-    files_to_edit: list[str]
-    tasks: list[str]
 
 
 def _get_client():
@@ -43,21 +37,24 @@ def generate_plan(cluster: IssueCluster, feedback_items: list[FeedbackItem]) -> 
             id=str(uuid4()),
             cluster_id=cluster.id,
             title=f"Fix: {cluster.title}",
-            description="Automatic plan generation failed (no API key). This is a placeholder.",
-            files_to_edit=[],
-            tasks=["Check API key configuration"],
+            description=(
+                "Automatic plan generation failed (no API key). "
+                "This is a placeholder plan with high-level requirements only."
+            ),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
 
     # Construct the prompt context
     feedback_text = "\n\n".join(
-        [f"--- Feedback {i+1} ---\nTitle: {item.title}\nBody: {item.body}" 
-         for i, item in enumerate(feedback_items)]
+        [
+            f"--- Feedback {i+1} ---\nTitle: {item.title}\nBody: {item.body}"
+            for i, item in enumerate(feedback_items)
+        ]
     )
 
     prompt = f"""
-You are a senior software engineer. Create a detailed implementation plan to fix the following issue cluster.
+You are a senior product manager writing instructions for a developer.
 
 Cluster Title: {cluster.title}
 Cluster Summary: {cluster.summary}
@@ -65,11 +62,19 @@ Cluster Summary: {cluster.summary}
 User Feedback Reports:
 {feedback_text}
 
-Your plan should include:
-1. A clear, technical title for the fix.
-2. A detailed description of the approach.
-3. A list of files that likely need to be created or modified.
-4. A step-by-step list of tasks to implement the fix.
+Write a HIGH-LEVEL plan only.
+
+Hard rules:
+- Do NOT invent file paths, code symbols, APIs, libraries, or specific implementation steps.
+- Do NOT include sections like "Files to edit" or "Tasks".
+- Only use information present in the cluster title/summary and the feedback reports.
+
+Output requirements:
+- title: a short product-facing title.
+- description: a single plain-text block that combines:
+    - problem statement and user impact
+    - explicit requirements / expected behavior
+    - (optional) acceptance criteria phrased as observable outcomes
 """
 
     try:
@@ -90,8 +95,6 @@ Your plan should include:
             cluster_id=cluster.id,
             title=parsed_plan.title,
             description=parsed_plan.description,
-            files_to_edit=parsed_plan.files_to_edit,
-            tasks=parsed_plan.tasks,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -104,8 +107,6 @@ Your plan should include:
             cluster_id=cluster.id,
             title=f"Error planning fix for: {cluster.title}",
             description=f"Plan generation failed: {str(e)}",
-            files_to_edit=[],
-            tasks=["Investigate plan generation error"],
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )

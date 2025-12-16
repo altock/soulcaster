@@ -26,8 +26,6 @@ def test_generate_plan_success():
         mock_response = MagicMock()
         mock_response.parsed.title = "Technical Fix Plan"
         mock_response.parsed.description = "Fix steps"
-        mock_response.parsed.files_to_edit = ["main.py"]
-        mock_response.parsed.tasks = ["Edit file"]
         
         mock_client.models.generate_content.return_value = mock_response
         
@@ -37,7 +35,7 @@ def test_generate_plan_success():
         # Verify
         assert plan is not None
         assert plan.title == "Technical Fix Plan"
-        assert plan.files_to_edit == ["main.py"]
+        assert plan.description == "Fix steps"
         assert plan.cluster_id == "c1"
 
 def test_generate_plan_no_api_key():
@@ -50,7 +48,7 @@ def test_generate_plan_no_api_key():
     with patch("planner._get_client", return_value=None):
         plan = generate_plan(cluster, [])
         assert "no API key" in plan.description 
-        assert plan.files_to_edit == []
+        assert plan.cluster_id == "c1"
 
 def test_generate_plan_execption_handling():
     cluster = IssueCluster(

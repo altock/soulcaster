@@ -9,7 +9,7 @@ def test_coding_plan_storage():
     
     plan = CodingPlan(
         id="plan-1", cluster_id="c-1", title="My Plan", 
-        description="Desc", files_to_edit=["a.py"], tasks=["do it"],
+        description="Desc",
         created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc)
     )
     
