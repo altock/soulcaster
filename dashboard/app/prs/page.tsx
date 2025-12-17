@@ -51,7 +51,7 @@ export default function PrsPage() {
         let cancelled = false;
         const fetchLogs = async () => {
             try {
-                const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/logs?cursor=0&limit=200`);
+                const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?cursor=0&limit=200`);
                 if (!res.ok) return;
                 const payload = (await res.json()) as JobLogsPayload;
                 if (!cancelled) {
