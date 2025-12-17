@@ -106,7 +106,7 @@ export default function ClusterDetailPage() {
   const fetchJobLogs = async (jobId: string, opts?: { append?: boolean }) => {
     const append = opts?.append ?? false;
     const cursor = append ? logCursor : 0;
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/logs?cursor=${cursor}&limit=200`);
+    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/job-logs?cursor=${cursor}&limit=200`);
     if (!response.ok) {
       throw new Error('Failed to fetch logs');
     }
