@@ -342,7 +342,7 @@ def main():
     except Exception:
         # Log a bit of context to help debug private-repo auth issues.
         try_diagnostic("gh --version")
-        try_diagnostic("gh auth status -t")
+        try_diagnostic("gh auth status")  # Removed -t flag to avoid leaking token
         try_diagnostic("gh api user -q .login")
         try_diagnostic(f"gh api repos/{owner}/{repo_name} -q .full_name")
 
@@ -849,7 +849,7 @@ class SandboxKilocodeRunner(AgentRunner):
 
     async def _fail_job(self, job_id: UUID, error: str):
         job = await asyncio.to_thread(get_job, job_id)
-        current_logs = job.logs or "" if job else ""
+        current_logs = (job.logs or "") if job is not None else ""
         await asyncio.to_thread(
             update_job,
             job_id,
