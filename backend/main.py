@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import sys
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,7 +20,7 @@ import time
 from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Path, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -32,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
-from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob
+from models import FeedbackItem, IssueCluster, AgentJob, User, Project, ClusterJob, CodingPlan
 from store import (
     add_cluster,
     add_feedback_item,
@@ -55,6 +56,7 @@ from store import (
     update_job,
     get_jobs_by_cluster,
     get_all_jobs,
+    get_job_logs,
     create_user_with_default_project,
     create_project,
     get_projects_for_user,
@@ -62,10 +64,16 @@ from store import (
     get_cluster_job,
     list_cluster_jobs,
     get_unclustered_feedback,
+    add_coding_plan,
+    get_coding_plan,
 )
+from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
-from reddit_poller import poll_once
 from clustering_runner import maybe_start_clustering, run_clustering_job
+from agent_runner import get_runner
+# Ensure runners are registered
+import agent_runner.sandbox
+import agent_runner.aws
 
 app = FastAPI(
     title="FeedbackAgent Ingestion API",
@@ -119,6 +127,38 @@ def _require_project_id(project_id: Optional[UUID | str]) -> str:
     if not project_id:
         raise HTTPException(status_code=400, detail="project_id is required")
     return str(project_id)
+
+_GITHUB_REPO_RE = re.compile(
+    r"https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s#?]+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_github_repo_url(text: str) -> Optional[str]:
+    match = _GITHUB_REPO_RE.search(text or "")
+    if not match:
+        return None
+    owner = match.group("owner")
+    repo = match.group("repo").replace(".git", "")
+    return f"https://github.com/{owner}/{repo}"
+
+
+def _infer_cluster_github_repo_url(items: List[FeedbackItem]) -> Optional[str]:
+    for item in items:
+        if item.github_issue_url:
+            derived = _extract_github_repo_url(item.github_issue_url)
+            if derived:
+                return derived
+    for item in items:
+        if item.repo and "/" in item.repo:
+            owner, repo = item.repo.split("/", 1)
+            return f"https://github.com/{owner}/{repo}"
+    for item in items:
+        for text in (item.title, item.body, item.raw_text or ""):
+            derived = _extract_github_repo_url(text)
+            if derived:
+                return derived
+    return None
 
 
 def _kickoff_clustering(project_id: str):
@@ -1037,21 +1077,72 @@ def clustering_status(project_id: Optional[str] = Query(None)):
     return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
 
 
+@app.get("/clusters/{cluster_id}/plan")
+def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
+    """
+    Retrieve the latest generated coding plan for a cluster.
+    """
+    pid = _require_project_id(project_id)
+
+    # 1. Check if cluster exists (and matches project_id if provided)
+    cluster = get_cluster(pid, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # 2. Get existing plan
+    plan = get_coding_plan(cluster_id)
+    if not plan:
+        # Optionally, we could auto-generate here if missing.
+        # For now, return 404 so UI can show "Generate" button.
+        raise HTTPException(status_code=404, detail="No plan found for this cluster")
+
+    return plan
+
+
+@app.post("/clusters/{cluster_id}/plan")
+def generate_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
+    """
+    Generate or regenerate a coding plan for a cluster using the LLM.
+    """
+    pid = _require_project_id(project_id)
+
+    # 1. Valdiate cluster
+    cluster = get_cluster(pid, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # 2. Fetch feedback items for context
+    items = []
+    for fid in cluster.feedback_ids:
+        # Ideally we have a batch get, but loop is fine for prototype
+        # We need to find the item. Ideally store.get_feedback_item logic handles lookup.
+        # But get_feedback_item requires project_id. IssueCluster has project_id.
+        item = get_feedback_item(str(cluster.project_id), UUID(fid))
+        if item:
+            items.append(item)
+
+    # 3. Call planner
+    plan = generate_plan(cluster, items)
+
+    # 4. Save plan
+    add_coding_plan(plan)
+
+    return plan
+
+
 @app.post("/clusters/{cluster_id}/start_fix")
-def start_cluster_fix(cluster_id: str, project_id: Optional[str] = Query(None)):
+async def start_cluster_fix(
+    cluster_id: str,
+    project_id: Optional[str] = Query(None),
+    background_tasks: BackgroundTasks = None, # type: ignore (FastAPI injection)
+    x_github_token: Optional[str] = Header(None, alias="X-GitHub-Token")
+):
     """
-    Start fix generation for the specified cluster.
-    
-    Returns:
-        result (dict): Response containing:
-            - status (str): "ok"
-            - message (str): confirmation message
-            - cluster_id (str): ID of the updated cluster
-            - project_id (str): project UUID as a string
-    
-    Raises:
-        HTTPException: 404 if the cluster does not exist or does not belong to the specified project.
+    Trigger the coding agent to fix the issues in the cluster.
+    Accepts optional X-GitHub-Token header for per-user GitHub authentication.
+    Falls back to GITHUB_TOKEN environment variable if header is not provided.
     """
+    from fastapi import BackgroundTasks
 
     pid = _require_project_id(project_id)
     pid_str = str(pid)
@@ -1059,11 +1150,109 @@ def start_cluster_fix(cluster_id: str, project_id: Optional[str] = Query(None)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
-    updated_cluster = update_cluster(pid_str, cluster_id, status="fixing")
+    # If the cluster doesn't have a repo URL yet, infer it from linked GitHub issue URLs in its feedback.
+    items_for_context: List[FeedbackItem] = []
+    for fid in cluster.feedback_ids:
+        try:
+            item = get_feedback_item(pid_str, UUID(fid))
+        except Exception:
+            item = None
+        if item:
+            items_for_context.append(item)
+
+    if not cluster.github_repo_url:
+        inferred_repo_url = _infer_cluster_github_repo_url(items_for_context)
+        # Fallback is for prototyping so "Start Fix" doesn't hard-fail when
+        # the cluster has no GitHub context yet.
+        fallback_repo_url = (
+            os.getenv("DEFAULT_GITHUB_REPO_URL") or "https://github.com/naga-k/bad-ux-mart"
+        ).strip()
+        repo_url = inferred_repo_url or fallback_repo_url
+        cluster = update_cluster(
+            pid_str,
+            cluster_id,
+            github_repo_url=repo_url,
+            updated_at=datetime.now(timezone.utc),
+        )
+    else:
+        # If we previously set a fallback repo URL but feedback now contains a real GitHub repo,
+        # prefer the inferred value so subsequent fix runs target the right repository.
+        inferred_repo_url = _infer_cluster_github_repo_url(items_for_context)
+        if inferred_repo_url and inferred_repo_url != cluster.github_repo_url:
+            cluster = update_cluster(
+                pid_str,
+                cluster_id,
+                github_repo_url=inferred_repo_url,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+    # 1. Get or generate plan
+    plan = get_coding_plan(cluster_id)
+    if not plan:
+        # Auto-generate if missing
+        plan = generate_plan(cluster, items_for_context)
+        add_coding_plan(plan)
+
+    # 2. Determine runner
+    runner_name = os.getenv("CODING_AGENT_RUNNER", "sandbox_kilo")
+    try:
+        runner = get_runner(runner_name)
+    except ValueError:
+        # Fallback to sandbox_kilo if env var is weird, or just error out
+        # Here we error out to be safe
+        raise HTTPException(status_code=500, detail=f"Runner '{runner_name}' not configured")
+
+    # 3. Create Job
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster_id,
+        plan_id=plan.id,
+        runner=runner_name,
+        status="pending",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    add_job(job)
+
+    # 4. Dispatch
+    update_cluster(
+        pid_str,
+        cluster_id,
+        status="fixing",
+        error_message=None,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    async def _run_agent():
+        await runner.start(job, plan, cluster, github_token=x_github_token)
+
+    # In unit tests, avoid launching real external runners (E2B/AWS) unless explicitly enabled.
+    # Starlette's TestClient executes BackgroundTasks after the response, which can flip
+    # cluster status to "failed" if the runner tries to use the network.
+    is_pytest = bool(os.getenv("PYTEST_CURRENT_TEST"))
+    enable_runner_in_tests = os.getenv("ENABLE_AGENT_RUNNER_IN_TESTS", "").lower() in {"1", "true", "yes"}
+    if (not is_pytest) or enable_runner_in_tests:
+        if background_tasks:
+            background_tasks.add_task(_run_agent)
+        else:
+            # Fallback for sync contexts
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(_run_agent())
+                _BACKGROUND_TASKS.add(task)
+                task.add_done_callback(_BACKGROUND_TASKS.discard)
+            except RuntimeError:
+                # No loop (e.g. sync test client), run inline?
+                # Running inline might deadlock if it uses async.
+                # Ideally tests use AsyncClient.
+                pass
+
     return {
         "status": "ok",
-        "message": "Fix generation started",
-        "cluster_id": updated_cluster.id,
+        "message": f"Fix started with runner {runner_name}",
+        "job_id": str(job.id),
+        "cluster_id": cluster.id,
         "project_id": pid_str,
     }
 
@@ -1254,6 +1443,33 @@ def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
     if not job or str(job.project_id) != pid:
         raise HTTPException(status_code=404, detail="Job not found for project")
     return job
+
+
+@app.get("/jobs/{job_id}/logs")
+def get_job_log_lines(
+    job_id: UUID,
+    project_id: Optional[str] = Query(None),
+    cursor: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """
+    Retrieve persisted log chunks for a job.
+
+    This endpoint is designed for UI log tailing without forcing the backend to print logs to stdout.
+    """
+    pid = _require_project_id(project_id)
+    job = get_job(job_id)
+    if not job or str(job.project_id) != pid:
+        raise HTTPException(status_code=404, detail="Job not found for project")
+    chunks, next_cursor, has_more = get_job_logs(job_id, cursor=cursor, limit=limit)
+    return {
+        "job_id": str(job_id),
+        "project_id": str(pid),
+        "cursor": cursor,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "chunks": chunks,
+    }
 
 
 @app.get("/clusters/{cluster_id}/jobs")

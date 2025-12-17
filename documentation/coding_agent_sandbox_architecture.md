@@ -15,16 +15,16 @@ The goal is to preserve what already works for GitHub issue fixing, while moving
 
 ---
 
-## 1. Today’s Soulcaster Coding Agent Architecture
+## 1. Today’s Soulcaster Coding Agent Architecture (deprecated ECS/Fargate path)
 
-### 1.1 High-level flow
+### 1.1 High-level flow (historical)
 
 ```mermaid
 sequenceDiagram
     participant User
     participant Dashboard
     participant Backend
-    participant ECS as ECS/Fargate
+    participant ECS as ECS/Fargate (deprecated)
     participant Kilo as Kilo CLI
     participant GitHub
     
@@ -44,7 +44,7 @@ sequenceDiagram
     Dashboard-->>User: Show PR link
 ```
 
-**User → Dashboard → Backend → ECS/Fargate → GitHub PR**
+**User → Dashboard → Backend → ECS/Fargate → GitHub PR (deprecated)**
 
 - User clicks **“Generate Fix”** on a cluster in the dashboard.
 - Dashboard:
@@ -53,7 +53,7 @@ sequenceDiagram
     - `issue_url`
     - `JOB_ID`
     - `BACKEND_URL`
-    - `GH_TOKEN`, `GIT_USER_NAME`, `GIT_USER_EMAIL`, provider keys, etc.
+    - `GITHUB_TOKEN`, `GIT_USER_NAME`, `GIT_USER_EMAIL`, provider keys, etc.
 - ECS runs the `coding-agent` container whose entrypoint is:
   - `uv run fix_issue.py <issue_url> [--job-id UUID]`
 - `fix_issue.py`:
@@ -63,7 +63,7 @@ sequenceDiagram
     - Ensure a fork of the target repo exists (unique `aie-fork-{repo}-{suffix}` name).
     - Clone the fork into a temporary directory.
     - Add `upstream` remote pointing at the original repo.
-  - Configures Git (`user.name`, `user.email`, `credential.helper` using `GH_TOKEN`).
+  - Configures Git (`user.name`, `user.email`, `credential.helper` using `GITHUB_TOKEN`).
   - Creates a feature branch for the issue.
   - Runs `kilocode --auto "<prompt>"` in the repo directory to generate fixes.
   - If changes exist:
@@ -72,11 +72,26 @@ sequenceDiagram
     - Opens a PR against the upstream default branch using `gh pr create`.
   - Throughout the process, calls `update_job(job_id, status, logs, pr_url)` to patch the backend job status (`pending` → `running` → `success`/`failed`).
 
-### 1.2 Execution + sandbox model (today)
+### 1.1.1 PR URL capture can fail even after push
+It’s possible for the agent to successfully push a branch but fail to surface a PR URL back to Soulcaster.
+
+Common symptom:
+- The branch push succeeds, but `gh pr create` does not return a URL, and the fallback lookup returns nothing:
+
+```
+Running: gh pr list --repo "naga-k/math_fucntions_soulcaster" --head "fix/soulcaster-1765846824" --json url -q '.[0].url'
+PR creation did not return a URL; a PR may still be creatable via the pushed branch.
+```
+
+Implications:
+- The job may be “done” from a code-change perspective, but the UI can’t link to a PR.
+- A PR can typically still be opened manually from GitHub using the pushed branch (or via the “Compare & pull request” banner).
+
+### 1.2 Execution + sandbox model (historical)
 
 ```mermaid
 graph TB
-    subgraph "ECS/Fargate Task (Sandbox Boundary)"
+    subgraph "ECS/Fargate Task (Sandbox Boundary, deprecated)"
         Container[Docker Container]
         FS[Ephemeral Filesystem<br/>/tmp workspace]
         Kilo[Kilo CLI Agent]
@@ -93,7 +108,7 @@ graph TB
         Provider[Gemini/Minimax<br/>via Kilo]
     end
     
-    Git <-->|GH_TOKEN| GitHub
+    Git <-->|GITHUB_TOKEN| GitHub
     Kilo -->|API calls| Provider
     Container -->|Update job| Backend
     
@@ -108,7 +123,7 @@ graph TB
 - **Isolation unit**: the ECS/Fargate task running our Docker image.
   - The task has its own container filesystem and ephemeral `/tmp` workspace.
   - It talks to:
-    - GitHub (via `gh` + `GH_TOKEN`).
+    - GitHub (via `gh` + `GITHUB_TOKEN`).
     - Backend (`BACKEND_URL`).
     - (Optionally) providers like Gemini/Minimax via Kilo CLI.
 - **“Sandbox” here is at the infrastructure level** (Docker/ECS), not a programmatic, per-request code execution sandbox like E2B.
@@ -670,4 +685,7 @@ For Soulcaster, an incremental path that respects current constraints and modern
    - Use the tools agent for transparent, inspectable workflows and new features.
 
 This approach keeps the current behavior and truth intact, while aligning Soulcaster with the security and architectural patterns used by Copilot, Claude Code, and E2B-style agents.
-
+## 1.3 Current direction: E2B sandbox as the primary runner
+Soulcaster’s default coding-agent execution is now aligned with the “per-job sandbox” pattern:
+- Backend `POST /clusters/{id}/start_fix` spins up an E2B sandbox, runs Kilocode inside it, and streams/persists logs per job for the dashboard.
+- ECS/Fargate remains only as a legacy/compatibility path and should be treated as deprecated.

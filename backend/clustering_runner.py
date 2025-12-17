@@ -9,8 +9,9 @@ blocking the request.
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timezone
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 from uuid import uuid4
 
 from models import ClusterJob, FeedbackItem, IssueCluster
@@ -30,6 +31,40 @@ import clustering
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+_GITHUB_REPO_RE = re.compile(
+    r"https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s#?]+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_github_repo_url(text: str) -> Optional[str]:
+    match = _GITHUB_REPO_RE.search(text or "")
+    if not match:
+        return None
+    owner = match.group("owner")
+    repo = match.group("repo").replace(".git", "")
+    return f"https://github.com/{owner}/{repo}"
+
+
+def _derive_github_repo_url(items: List[FeedbackItem]) -> Optional[str]:
+    for item in items:
+        if item.github_issue_url:
+            derived = _extract_github_repo_url(item.github_issue_url)
+            if derived:
+                return derived
+
+    for item in items:
+        if item.repo and "/" in item.repo:
+            owner, repo = item.repo.split("/", 1)
+            return f"https://github.com/{owner}/{repo}"
+
+    for item in items:
+        for text in (item.title, item.body, item.raw_text or ""):
+            derived = _extract_github_repo_url(text)
+            if derived:
+                return derived
+    return None
 
 
 def _test_embed(texts):
@@ -91,6 +126,7 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
     title = raw_title[:80]
     summary = raw_summary[:300]
     feedback_ids = [str(item.id) for item in item_group]
+    github_repo_url = _derive_github_repo_url(item_group)
     return IssueCluster(
         id=str(uuid4()),
         project_id=first.project_id,
@@ -100,6 +136,7 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
         status="new",
         created_at=now,
         updated_at=now,
+        github_repo_url=github_repo_url,
     )
 
 
@@ -204,6 +241,7 @@ async def run_clustering_job(project_id: str, job_id: str):
                     subreddit = first.metadata.get("subreddit")
                 title = f"Reddit: r/{subreddit}" if subreddit else first.title
                 summary = first.body[:200] if first.body else "Feedback cluster"
+                github_repo_url = _derive_github_repo_url(items)
                 cluster = IssueCluster(
                     id=str(uuid4()),
                     project_id=first.project_id,
@@ -213,6 +251,7 @@ async def run_clustering_job(project_id: str, job_id: str):
                     status="new",
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),
+                    github_repo_url=github_repo_url,
                 )
                 grouped_clusters = [cluster]
                 for cluster in grouped_clusters:

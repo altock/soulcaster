@@ -149,15 +149,23 @@ sequenceDiagram
 - `app/api/clusters/[id]/start_fix` proxies to backend `/clusters/{id}` for context, infers repo owner/name from cluster metadata, triggers `/api/trigger-agent`, and then POSTs to backend `/clusters/{id}/start_fix` to mark status.
 - No auth on the backend endpoints; dashboard relies on Vercel env + optional NextAuth GitHub session only for GitHub API access.
 
-### Coding agent
-- Single script `coding-agent/fix_issue.py` (invoked via `uv run` locally or as container entrypoint). Depends on `GH_TOKEN`, `GIT_USER_EMAIL`, `GIT_USER_NAME`, and Gemini key; optionally `BACKEND_URL`/`JOB_ID` for status reporting.
-- Flow: parse issue URL → ensure fork via `gh repo fork` → clone fork → add upstream → compute base branch via GitHub API → run `kilocode` with issue context → commit/push → open PR via `gh pr create` → update backend job (status/logs/pr_url).
-- No repo sandboxing/mocking; runs arbitrary commands against the real repo. No automated test execution unless Kilo prompt triggers it.
+### Coding agent (primary: E2B sandbox)
+- Primary execution is via the backend runner: `POST /clusters/{id}/start_fix` spins up an E2B sandbox (Kilocode in a reusable template), runs the fix inside the sandbox, and persists per-job logs for the dashboard to tail.
+- GitHub operations (clone/push/PR) are performed non-interactively using `GITHUB_TOKEN`.
+- Logs are persisted per job and surfaced via the dashboard (rather than piping all sandbox output to backend stdout).
 
-### AWS/Fargate path
-- Container image built from `coding-agent/Dockerfile` and pushed to ECR (manual per `coding-agent/FARGATE_DEPLOYMENT.md`).
-- Terraform in `coding-agent/terraform/` provisions VPC (public subnets), ECS cluster, task definition with Secrets Manager env injection (Gemini + git identity), SG, IAM roles, and CloudWatch log group.
-- Dashboard’s `/api/trigger-agent` starts tasks in Fargate with `assignPublicIp=ENABLED`; expects outbound internet to reach GitHub + model provider. No NAT/bastion path.
+**Operational note:** ~~PR URL may be missing even after branch push.~~ **[RESOLVED - 2025-12-16]**
+- **Fixed**: PR URLs are now reliably extracted through improved fallback logic:
+  1. Attempts `gh pr create --draft --json` for structured output
+  2. Falls back to non-JSON output with regex URL extraction
+  3. Checks for existing PRs using `gh pr list --head <branch>` before creating new ones
+  4. Extracts URLs from "already exists" error messages
+  5. Generates PR descriptions using Gemini and marks as ready after Kilocode completes
+- The sandbox runner now successfully captures PR URLs in all scenarios where a PR is created or already exists.
+
+### AWS/Fargate path (deprecated)
+- The original ECS/Fargate coding-agent path is deprecated in favor of the E2B sandbox runner.
+- It may be retained temporarily for manual parity testing, but it should not be the default execution path.
 
 ## Decision points / cleanup backlog
 - Data source of truth: pick one interface (backend API vs direct Redis) for the dashboard and cluster logic; decide whether to retire in-memory fallback in production.
@@ -320,7 +328,7 @@ This section expands the high-level overview into more implementation detail so 
 - **Manual triggering (via dashboard)**: `POST /api/trigger-agent`:
   - Operation order: (1) Creates or validates a GitHub issue using the user's Octokit token (from NextAuth session), (2) Creates a backend job record (`POST {BACKEND_URL}/jobs`) when `cluster_id` is provided, then (3) Starts a Fargate task via `RunTaskCommand` with:
     - Command: `[issue_url, '--job-id', job_id]` or `[issue_url]`.
-    - Env: `BACKEND_URL`, `JOB_ID` (if any), and `GH_TOKEN` (if user is authenticated).
+    - Env: `BACKEND_URL`, `JOB_ID` (if any), and `GITHUB_TOKEN` (if user is authenticated).
   - Used when a user clicks "Generate Fix" on a cluster from the dashboard UI.
   - Canonical path: dashboard → backend `/api/*` with `project_id` → project-scoped keys.
 

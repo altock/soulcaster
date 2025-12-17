@@ -56,7 +56,7 @@ function createPrismaClient() {
 
   const PrismaClient = getPrismaClientConstructor();
 
-  return new PrismaClient({ adapter, log: ['query'] });
+  return new PrismaClient({ adapter, log: ['error', 'warn'] });
 }
 
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();

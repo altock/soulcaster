@@ -16,7 +16,7 @@ ProjectId = Union[UUID, str]
 
 import requests
 
-from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob
+from models import FeedbackItem, IssueCluster, AgentJob, Project, User, ClusterJob, CodingPlan
 
 try:
     import redis  # type: ignore
@@ -182,6 +182,36 @@ class UpstashRESTClient:
         result = self._cmd(*args)
         return result or []
 
+    def rpush(self, key: str, *values: str) -> int:
+        """
+        Append one or more values to the end of a Redis list.
+
+        Returns:
+            int: The length of the list after the push.
+        """
+        if not values:
+            return 0
+        return int(self._cmd("RPUSH", key, *values) or 0)
+
+    def lrange(self, key: str, start: int, stop: int) -> List[str]:
+        """
+        Return a range of elements from a Redis list.
+        """
+        result = self._cmd("LRANGE", key, str(start), str(stop))
+        return result or []
+
+    def llen(self, key: str) -> int:
+        """
+        Return the length of a Redis list.
+        """
+        return int(self._cmd("LLEN", key) or 0)
+
+    def expire(self, key: str, seconds: int) -> int:
+        """
+        Set an expire (TTL) on a key.
+        """
+        return int(self._cmd("EXPIRE", key, str(int(seconds))) or 0)
+
     def sadd(self, key: str, member: str):
         return self._cmd("SADD", key, member)
 
@@ -264,7 +294,9 @@ class InMemoryStore:
         """
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[str, IssueCluster] = {}
+        self.coding_plans: Dict[str, CodingPlan] = {}  # cluster_id -> CodingPlan
         self.agent_jobs: Dict[UUID, AgentJob] = {}
+        self.job_logs: Dict[UUID, List[str]] = {}
         self.projects: Dict[str, Project] = {}
         self.users: Dict[str, User] = {}
         self.reddit_subreddits: Dict[str, List[str]] = {}
@@ -461,6 +493,21 @@ class InMemoryStore:
         else:
             self.issue_clusters.clear()
 
+
+    # Coding Plans
+    def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
+        """
+        Store a CodingPlan in the in-memory store.
+        """
+        self.coding_plans[plan.cluster_id] = plan
+        return plan
+
+    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+        """
+        Retrieve a CodingPlan by cluster_id.
+        """
+        return self.coding_plans.get(cluster_id)
+
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: ProjectId) -> List[str]:
         """
@@ -526,6 +573,21 @@ class InMemoryStore:
         self.agent_jobs[job_id] = updated_job
         return updated_job
 
+    def append_job_log(self, job_id: UUID, message: str) -> None:
+        self.job_logs.setdefault(job_id, []).append(message)
+
+    def get_job_logs(self, job_id: UUID, cursor: int = 0, limit: int = 200) -> tuple[list[str], int, bool]:
+        lines = self.job_logs.get(job_id, [])
+        if cursor < 0:
+            cursor = 0
+        if limit <= 0:
+            return ([], cursor, False)
+        end = min(len(lines), cursor + limit)
+        chunk = lines[cursor:end]
+        next_cursor = end
+        has_more = next_cursor < len(lines)
+        return (chunk, next_cursor, has_more)
+
     def get_jobs_by_cluster(self, cluster_id: str) -> List[AgentJob]:
         return [
             job for job in self.agent_jobs.values() if job.cluster_id == cluster_id
@@ -541,6 +603,7 @@ class InMemoryStore:
         This removes every AgentJob from the in-memory job mapping.
         """
         self.agent_jobs.clear()
+        self.job_logs.clear()
 
     # Cluster Jobs (clustering runner)
     def add_cluster_job(self, job: ClusterJob) -> ClusterJob:
@@ -793,6 +856,29 @@ class RedisStore:
         return f"cluster_jobs:{project_id}:recent"
 
     @staticmethod
+    def _coding_plan_key(cluster_id: str) -> str:
+        """Match dashboard: coding_plan:{clusterId}"""
+        return f"coding_plan:{cluster_id}"
+
+    def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
+        """
+        Store a CodingPlan in Redis.
+        """
+        key = self._coding_plan_key(plan.cluster_id)
+        self.client.set(key, plan.model_dump_json())
+        return plan
+
+    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+        """
+        Retrieve a CodingPlan from Redis.
+        """
+        key = self._coding_plan_key(cluster_id)
+        data = self.client.get(key)
+        if not data:
+            return None
+        return CodingPlan.model_validate_json(data)
+
+    @staticmethod
     def _cluster_lock_key(project_id: str) -> str:
         """
         Builds the Redis key used for per-project cluster locking.
@@ -821,6 +907,10 @@ class RedisStore:
             The Redis key string in the form "job:<job_id>".
         """
         return f"job:{job_id}"
+
+    @staticmethod
+    def _job_logs_key(job_id: UUID) -> str:
+        return f"job:{job_id}:logs"
 
     @staticmethod
     def _cluster_jobs_key(cluster_id: str) -> str:
@@ -1352,11 +1442,46 @@ class RedisStore:
         return AgentJob(**data)
 
     def update_job(self, job_id: UUID, **updates) -> AgentJob:
-        job = self.get_job(job_id)
-        if not job:
+        key = self._job_key(job_id)
+        existing = self._hgetall(key)
+        if not existing:
             raise KeyError(f"Job {job_id} not found")
-        updated = job.model_copy(update=updates)
-        return self.add_job(updated)
+        # Only update provided fields (avoid re-writing + re-indexing on every log line).
+        payload = {}
+        for k, v in updates.items():
+            if isinstance(v, datetime):
+                payload[k] = _dt_to_iso(v)
+            elif v is None:
+                continue
+            else:
+                payload[k] = str(v)
+        if payload:
+            self._hset(key, payload)
+        return self.get_job(job_id)  # type: ignore[return-value]
+
+    def append_job_log(self, job_id: UUID, message: str) -> None:
+        key = self._job_logs_key(job_id)
+        # Store chunks (may contain multiple lines).
+        self.client.rpush(key, message)
+        ttl_seconds = int(os.getenv("JOB_LOG_TTL_SECONDS", "604800"))  # 7 days
+        try:
+            if ttl_seconds > 0:
+                self.client.expire(key, ttl_seconds)
+        except Exception as exc:
+            # Best-effort TTL: not all clients/backends support expire the same way.
+            logger.debug("Failed to set TTL on %s: %s", key, exc)
+
+    def get_job_logs(self, job_id: UUID, cursor: int = 0, limit: int = 200) -> tuple[list[str], int, bool]:
+        key = self._job_logs_key(job_id)
+        if cursor < 0:
+            cursor = 0
+        limit = max(1, min(int(limit), 1000))
+        stop = cursor + limit - 1
+        items = self.client.lrange(key, cursor, stop)
+        next_cursor = cursor + len(items)
+        total = self.client.llen(key)
+        has_more = next_cursor < total
+        return (items, next_cursor, has_more)
 
     def get_jobs_by_cluster(self, cluster_id: str) -> List[AgentJob]:
         key = self._cluster_jobs_key(cluster_id)
@@ -1394,7 +1519,11 @@ class RedisStore:
         
         This deletes keys matching `job:*` (individual job hashes) and `cluster:jobs:*` (cluster-specific job sorted sets) from the configured store.
         """
-        job_keys = list(self._scan_iter("job:*")) + list(self._scan_iter("cluster:jobs:*"))
+        job_keys = (
+            list(self._scan_iter("job:*"))
+            + list(self._scan_iter("cluster:jobs:*"))
+            + list(self._scan_iter("job:*:logs"))
+        )
         if job_keys:
             self._delete(*job_keys)
 
@@ -2058,6 +2187,15 @@ def get_jobs_by_cluster(cluster_id: str) -> List[AgentJob]:
 def get_all_jobs() -> List[AgentJob]:
     return _STORE.get_all_jobs()
 
+def append_job_log(job_id: UUID, message: str) -> None:
+    if hasattr(_STORE, "append_job_log"):
+        _STORE.append_job_log(job_id, message)
+
+def get_job_logs(job_id: UUID, cursor: int = 0, limit: int = 200) -> tuple[list[str], int, bool]:
+    if hasattr(_STORE, "get_job_logs"):
+        return _STORE.get_job_logs(job_id, cursor=cursor, limit=limit)
+    return ([], cursor, False)
+
 
 def clear_jobs():
     """
@@ -2268,3 +2406,27 @@ def get_reddit_subreddits_for_project(project_id: ProjectId) -> Optional[List[st
         A list of subreddit names for the given project, or `None` if no subreddit configuration exists.
     """
     return _STORE.get_reddit_subreddits(project_id)
+
+# Coding Plan API
+def add_coding_plan(plan: CodingPlan) -> CodingPlan:
+    """
+    Store a CodingPlan in the backend.
+    """
+    return _STORE.add_coding_plan(plan)
+
+def get_coding_plan(cluster_id: str) -> Optional[CodingPlan]:
+    """
+    Retrieve a CodingPlan by cluster_id.
+    """
+    return _STORE.get_coding_plan(cluster_id)
+
+def clear_coding_plans():
+    """
+    Remove all stored CodingPlan entries from the backend.
+    """
+    if isinstance(_STORE, InMemoryStore):
+        _STORE.coding_plans.clear()
+    elif isinstance(_STORE, RedisStore):
+        keys = list(_STORE._scan_iter("coding_plan:*"))
+        if keys:
+            _STORE._delete(*keys)

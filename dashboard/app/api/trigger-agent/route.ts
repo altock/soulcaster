@@ -169,7 +169,7 @@ export async function POST(request: Request) {
 
         // Pass the user's session token to the agent
         if (githubToken) {
-            envOverrides.push({ name: "GH_TOKEN", value: githubToken });
+            envOverrides.push({ name: "GITHUB_TOKEN", value: githubToken });
         }
 
         const command = new RunTaskCommand({

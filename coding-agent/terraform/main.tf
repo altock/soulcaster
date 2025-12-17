@@ -182,7 +182,7 @@ resource "aws_ecs_task_definition" "main" {
         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/gemini-api-key"
       },
       {
-        name      = "GH_TOKEN"
+        name      = "GITHUB_TOKEN"
         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/github-token"
       },
       {

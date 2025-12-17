@@ -125,7 +125,7 @@ def get_github_username() -> str:
     """
     Retrieve the authenticated GitHub username.
     
-    Queries the local GitHub CLI configuration to obtain the current user's login. Raises an exception if no username can be determined (for example, when GH_TOKEN or CLI authentication is not configured).
+    Queries the local GitHub CLI configuration to obtain the current user's login. Raises an exception if no username can be determined (for example, when GITHUB_TOKEN or CLI authentication is not configured).
     
     Returns:
         str: The GitHub username.
@@ -133,7 +133,7 @@ def get_github_username() -> str:
     user = run_command("gh api user --jq .login")
     cleaned = user.strip()
     if not cleaned:
-        raise Exception("Unable to determine GitHub username; ensure GH_TOKEN is configured.")
+        raise Exception("Unable to determine GitHub username; ensure GITHUB_TOKEN is configured.")
     return cleaned
 
 
@@ -396,9 +396,9 @@ def _run_agent_logic(issue_url):
     run_command(f'git config user.email "{git_email}"', cwd=cwd)
     run_command(f'git config user.name "{git_name}"', cwd=cwd)
     
-    if os.getenv("GH_TOKEN"):
-        log("Configuring git credentials with GH_TOKEN...")
-        gh_token = os.getenv("GH_TOKEN")
+    if os.getenv("GITHUB_TOKEN"):
+        log("Configuring git credentials with GITHUB_TOKEN...")
+        gh_token = os.getenv("GITHUB_TOKEN")
         # Use environment variable to avoid embedding token in command string that gets logged
         credential_cmd = 'git config credential.helper "!f() { echo username=x-access-token; echo password=$GH_TOKEN_CRED; }; f"'
         # Pass token via env variable and suppress logging to prevent token exposure

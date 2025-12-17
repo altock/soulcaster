@@ -253,58 +253,47 @@ This roadmap prioritizes stabilizing your **ingestion moat** before investing in
 
 ---
 
-## Phase 5: Unify "Generate Fix" Orchestration
-**Worktree:** `worktrees/system-readiness`  
-**Reference:** `documentation/api_workers_architecture_plan.md` + `documentation/coding_agent_sandbox_architecture.md` Plan 1
+## Phase 5 – AWS Coding Agent (Deferred)
+- Dashboard `/api/trigger-agent` triggers ECS/Fargate to run `coding-agent/fix_issue.py`, then backend `/clusters/{id}/start_fix` just flips status.
+- Runs depended on creating/validating a GitHub issue per fix request.
+- Status: kept for manual/testing scenarios (set `CODING_AGENT_RUNNER=aws_kilo`), but not the default path once Phase 5.1 lands.
 
-### Backend Owns RunTask
-- [ ] **File: `backend/main.py`**
-  - [ ] Enhance `POST /clusters/{id}/start_fix`:
-    ```python
-    # 1. Create AgentJob in Redis
-    # 2. Call ECS RunTask with job_id, cluster_id
-    # 3. Return job_id to caller
-    ```
-  - [ ] Move ECS client logic from dashboard to backend
-  - [ ] Add AWS credentials to backend env: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+## Phase 5.1 – Cluster Coding Plan & Sandbox Runner (WIP)
+- Objective: when a user opens a cluster they see a generated high-level plan (summary, hypotheses, candidate files, validation steps) and can trigger a fix directly via backend `/clusters/{id}/start_fix`.
+- Runner strategy: backend selects a runner (`CODING_AGENT_RUNNER`, default `sandbox_kilo`) from a registry. Default runner spins up an e2b sandbox, installs Kilocode via a reusable template, runs the LLM agent entirely inside the sandbox, and opens a **branch + draft PR** (no GitHub issue). Legacy AWS runner stays opt-in for parity.
+- Dashboard integration: `/app/api/clusters/[id]/start_fix` simply proxies to backend; legacy `/api/trigger-agent` remains for manual AWS triggers.
+- Implementation reference: `tasks/coding_agent_plan.md` (combined plan + strategy with Kilocode/e2b doc links).
+- Expected flow:
+  1. Cluster opens → backend (or user) generates plan via `/clusters/{id}/plan`.
+  2. User reviews/edits plan → clicks "Generate fix".
+  3. Backend `/clusters/{id}/start_fix` creates job, selects runner, and dispatches to sandbox/provider.
+  4. Runner streams logs, runs tests, and posts a draft PR; backend updates `/jobs` + cluster metadata.
+- Status: WIP until planner, orchestrator, and sandbox runner are implemented; AWS runner remains behind `CODING_AGENT_RUNNER=aws_kilo`.
 
-- [ ] **File: `backend/aws_client.py`** (NEW)
-  - [ ] Function: `run_coding_agent_task(cluster_id, job_id, github_issue_url)`
-  - [ ] Uses `boto3` to call ECS RunTask
-  - [ ] Passes environment overrides: `JOB_ID`, `GITHUB_ISSUE_URL`, etc.
+### Phase 5.1 Checkpoints
+**Backend Planner & Orchestrator**
+- [x] `backend/planner.py`: generate/save `CodingPlan`, expose `GET/POST /clusters/{id}/plan`.
+- [x] Update `AgentJob` schema (`plan_id`, `runner`, `artifact_url`, logs).
+- [x] Enhance `POST /clusters/{id}/start_fix`: ensure plan, create job, select runner, dispatch async worker, stream logs.
+- [x] Runner registry + interfaces (`backend/agent_runner/`).
 
-### Dashboard Calls Backend
-- [ ] **File: `dashboard/app/api/clusters/[id]/start_fix/route.ts`**
-  - [ ] Simplify to just:
-    ```typescript
-    // Call backend POST /clusters/{id}/start_fix
-    // Return job_id to frontend
-    ```
-  - [ ] Remove ECS client logic from dashboard
-  - [ ] Remove `dashboard/app/api/trigger-agent/route.ts` (deprecated)
+**Sandbox Kilocode Runner**
+- [x] Define e2b template (managed in e2b; set `KILOCODE_TEMPLATE_NAME`) that installs Kilocode, sets env vars, and runs commands.
+- [x] Implement `SandboxKilocodeRunner`: start sandbox, upload plan/context, run Kilocode, create branch + draft PR, stream logs back via `/jobs/{id}`.
+- [x] Document filesystem/command considerations (refs: `/docs/filesystem/*`, `/docs/commands`, `/docs/sandbox/environment-variables`, `/docs/sandbox/persistence`).
 
-### Refactor Coding Agent
-- [ ] **File: `coding-agent/fix_issue.py`**
-  - [ ] Extract: `run_kilo_github_agent(issue_url, job_id, backend_url)`
-  - [ ] Keep CLI wrapper thin:
-    ```python
-    if __name__ == "__main__":
-        issue_url = sys.argv[1]
-        job_id = os.getenv("JOB_ID")
-        run_kilo_github_agent(issue_url, job_id, BACKEND_URL)
-    ```
-  - [ ] Don't change Kilo/GitHub behavior (keep as-is)
+**Dashboard**
+- [x] `app/api/clusters/[id]/start_fix/route.ts` → pure proxy to backend.
+- [x] Cluster detail page: fetch/show coding plan, allow light edits, display active runner (from `NEXT_PUBLIC_CODING_AGENT_RUNNER`).
+- [x] Job/log UI: poll `/jobs?cluster_id=...`, render log stream + PR link/draft status.
 
-### Testing
-- [ ] **File: `backend/tests/test_agent_orchestration.py`** (NEW)
-  - [ ] Test `POST /clusters/{id}/start_fix` creates job
-  - [ ] Test ECS RunTask is called (mock boto3)
-  - [ ] Test job status is tracked
+**Docs/References**
+- [x] Update `coding-agent/README.md` with sandbox template instructions and links (Kilocode provider config, e2b template docs, CLI).
+- [x] Keep `tasks/coding_agent_plan.md` as source of truth; ensure roadmap references stay in sync.
 
-### Acceptance Criteria
-- ✅ Backend owns agent orchestration (dashboard is just UI)
-- ✅ Coding agent flow: dashboard → backend → ECS → agent → PR
-- ✅ All job tracking centralized in backend
+## Documentation Links
+- Coding agent plan & strategy: `tasks/coding_agent_plan.md`
+- Data model background: `documentation/db_design.md`
 
 ---
 
@@ -495,5 +484,3 @@ After Phase 6:
 - ✅ Data isolation between customers
 - ✅ Usage tracking per project
 - ✅ Ready for $200+ MRR
-
-

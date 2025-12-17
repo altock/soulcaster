@@ -56,6 +56,23 @@ def _make_feedback(project_id: str, title: str) -> FeedbackItem:
     )
 
 
+def _make_github_feedback(project_id: str, title: str, issue_url: str) -> FeedbackItem:
+    return FeedbackItem(
+        id=uuid4(),
+        project_id=project_id,
+        source="github",
+        title=title,
+        body=f"{title} body",
+        raw_text=f"See {issue_url}",
+        metadata={},
+        created_at=clustering_runner.datetime.now(clustering_runner.timezone.utc),
+        github_issue_url=issue_url,
+        repo="owner/repo",
+        github_issue_number=123,
+        status="open",
+    )
+
+
 async def test_run_clustering_job_writes_clusters(monkeypatch):
     project_id = str(uuid4())
     clear_feedback_items(project_id)
@@ -99,6 +116,38 @@ async def test_run_clustering_job_writes_clusters(monkeypatch):
     assert jobs
     assert jobs[0].status == "succeeded"
     assert jobs[0].stats.get("clustered") == 2
+
+
+async def test_run_clustering_job_sets_cluster_repo_url(monkeypatch):
+    project_id = str(uuid4())
+    clear_feedback_items(project_id)
+    clear_clusters(project_id)
+
+    add_feedback_item(
+        _make_github_feedback(
+            project_id,
+            "Export fails",
+            "https://github.com/octocat/Hello-World/issues/1",
+        )
+    )
+    add_feedback_item(_make_feedback(project_id, "Export timeout"))
+
+    def fake_cluster_issues(issues, **kwargs):
+        return {
+            "labels": np.array([0, 0]),
+            "clusters": [[0, 1]],
+            "singletons": [],
+            "texts": [i["title"] for i in issues],
+        }
+
+    monkeypatch.setattr(clustering_core, "cluster_issues", fake_cluster_issues)
+
+    job = await clustering_runner.maybe_start_clustering(project_id)
+    await clustering_runner.run_clustering_job(project_id, job.id)
+
+    clusters = get_all_clusters(project_id)
+    assert len(clusters) == 1
+    assert clusters[0].github_repo_url == "https://github.com/octocat/Hello-World"
 
 
 async def test_maybe_start_clustering_respects_lock(monkeypatch):

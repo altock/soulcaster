@@ -6,6 +6,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+try:
+    # Pydantic v2
+    from pydantic import ConfigDict
+except ImportError:  # pragma: no cover
+    # Pydantic v1 fallback
+    ConfigDict = None  # type: ignore
+
 
 class AgentJob(BaseModel):
     """
@@ -15,9 +22,31 @@ class AgentJob(BaseModel):
     id: UUID
     project_id: Union[str, UUID]  # Supports both UUID and CUID formats
     cluster_id: str
+    plan_id: Optional[str] = None
+    runner: Optional[str] = None
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
     pr_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CodingPlan(BaseModel):
+    """
+    Represents a generated coding plan to fix a cluster of issues.
+    """
+
+    if ConfigDict:
+        # Allow decoding older stored plans that may contain extra fields.
+        model_config = ConfigDict(extra="ignore")
+    else:  # pragma: no cover
+        class Config:
+            extra = "ignore"
+
+    id: str
+    cluster_id: str
+    title: str
+    description: str
     created_at: datetime
     updated_at: datetime
 

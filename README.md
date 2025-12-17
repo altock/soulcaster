@@ -20,14 +20,18 @@ Soulcaster is an open-source feedback triage and automated fix generation system
 
 - **Multi-Tenant Projects**: Support for multiple projects per user with project-level isolation for feedback and clusters
 
-- **Authentication & Authorization**: GitHub OAuth integration via NextAuth for secure access control
+- **Authentication & Authorization**: GitHub OAuth integration via NextAuth
+  - Users sign in with their GitHub account
+  - PRs are created from the user's account (personalized attribution)
+  - Secure token management with encrypted session storage
+  - Future: GitHub App support for bot-based PRs
 
 - **Automated Fix Generation**: LLM-powered coding agent that:
   - Analyzes clustered issues
   - Selects relevant files to modify
   - Generates code patches
-  - Opens GitHub pull requests
-  - Can run locally or on AWS Fargate
+  - Opens GitHub pull requests from the authenticated user's account
+  - Runs in E2B sandboxes (default) or AWS Fargate (legacy)
 
 - **Job Tracking**: Monitor agent fix generation jobs with status updates, logs, and PR links
 
@@ -122,27 +126,30 @@ See `.env.example` for all available environment variables. Key configuration in
 - `UPSTASH_REDIS_REST_URL` - Redis REST API URL (Upstash)
 - `UPSTASH_REDIS_REST_TOKEN` - Redis REST API token
 - `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - Required for embeddings + backend-owned clustering
-- `GITHUB_TOKEN` - GitHub personal access token with repo permissions (optional, for higher API limits)
+- `GITHUB_ID` - GitHub OAuth app client ID
+- `GITHUB_SECRET` - GitHub OAuth app client secret
+- `E2B_API_KEY` - Required for E2B sandbox provisioning (default coding agent runner)
+- `KILOCODE_TEMPLATE_NAME` - E2B template name (e.g., `kilo-sandbox-v-0-1-dev`)
 
 **Dashboard** (`.env.local`):
 - `UPSTASH_REDIS_REST_URL` - Same Redis credentials
 - `UPSTASH_REDIS_REST_TOKEN` - Same Redis token
-- `GITHUB_ID` - GitHub OAuth app client ID
-- `GITHUB_SECRET` - GitHub OAuth app client secret
+- `GITHUB_ID` - GitHub OAuth app client ID (same as backend)
+- `GITHUB_SECRET` - GitHub OAuth app client secret (same as backend)
 - `NEXTAUTH_URL` - Your app URL (e.g., `http://localhost:3000`)
 - `NEXTAUTH_SECRET` - Random secret for NextAuth (generate with `openssl rand -base64 32`)
 - `DATABASE_URL` - PostgreSQL connection string for NextAuth and projects
-- `GITHUB_TOKEN` - Optional GitHub token for higher API limits when syncing issues (for syncing GitHub issues)
 - `BACKEND_URL` - Backend API URL (defaults to `http://localhost:8000`)
 - `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` - Only required if you opt into the deprecated dashboard-run clustering flow (see `ENABLE_DASHBOARD_CLUSTERING`)
 
-**Coding Agent** (`.env` in `coding-agent/`):
-- `GEMINI_API_KEY` or `MINIMAX_API_KEY` - LLM provider for fix generation
-- `GH_TOKEN` - GitHub token with repo scope (for creating branches and PRs)
-- `GIT_USER_EMAIL` - Email for git commits
-- `GIT_USER_NAME` - Name for git commits
-- `BACKEND_URL` - Backend API URL for status reporting (optional)
-- `JOB_ID` - Job ID for tracking (optional, auto-passed when triggered from dashboard)
+**How GitHub Authentication Works**:
+- Users MUST sign in with GitHub OAuth (required for all environments - local and production)
+- GitHub redirects user to authorization page where they grant `repo` and `read:user` scopes
+- Access token is stored securely in encrypted NextAuth session
+- When user triggers a fix, their token is passed to the backend
+- PRs are created from the user's GitHub account (e.g., @username), not a bot
+- No fallback to personal access tokens - consistent behavior everywhere
+- Future: GitHub App support coming for bot-based PRs (soulcaster[bot])
 
 ### Optional Variables
 
