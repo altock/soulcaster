@@ -1,27 +1,68 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { Redis } from '@upstash/redis';
 import { parseRepoString, validateRepo } from '@/lib/github';
 import type { GitHubRepo } from '@/types';
+import { requireProjectId } from '@/lib/project';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
+const legacyReposKey = 'github:repos';
+const legacyRepoKey = (fullName: string) => `github:repo:${fullName}`;
+const projectReposKey = (projectId: string) => `github:repos:${projectId}`;
+const projectRepoKey = (projectId: string, fullName: string) => `github:repo:${projectId}:${fullName}`;
+const feedbackSourceKey = (projectId: string) => `feedback:source:${projectId}:github`;
+const feedbackKey = (projectId: string, id: string) => `feedback:${projectId}:${id}`;
+
+async function migrateLegacyReposToProject(projectId: string, existing: string[] = []): Promise<string[]> {
+  const legacyNames = (await redis.smembers(legacyReposKey)) as string[];
+  if (!legacyNames || legacyNames.length === 0) return [];
+
+  const existingSet = new Set(existing);
+  const migrated: string[] = [];
+  for (const name of legacyNames) {
+    if (existingSet.has(name)) continue;
+    const legacyData = await redis.hgetall(legacyRepoKey(name));
+    if (legacyData && Object.keys(legacyData).length > 0) {
+      await redis.hset(projectRepoKey(projectId, name), {
+        ...legacyData,
+        enabled: legacyData.enabled ?? 'true',
+      });
+      migrated.push(name);
+    }
+  }
+
+  if (migrated.length > 0) {
+    const pipeline = redis.pipeline();
+    migrated.forEach((name) => pipeline.sadd(projectReposKey(projectId), name));
+    await pipeline.exec();
+  }
+
+  return migrated;
+}
+
 /**
  * GET /api/config/github/repos
  * List all configured GitHub repositories
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    console.log('[GitHub] Fetching configured repos');
+    const projectId = await requireProjectId(request);
+    console.log('[GitHub] Fetching configured repos for project', projectId);
 
-    // Get all repo names from the set
-    const repoNames = (await redis.smembers('github:repos')) as string[];
-    console.log(`[GitHub] Found ${repoNames.length} configured repos`);
+    // Get project-scoped repo names (migrate missing legacy entries if any)
+    let repoNames = (await redis.smembers(projectReposKey(projectId))) as string[];
+    const migrated = await migrateLegacyReposToProject(projectId, repoNames);
+    if (migrated.length > 0) {
+      const deduped = new Set<string>([...repoNames, ...migrated]);
+      repoNames = Array.from(deduped);
+    }
+    console.log(`[GitHub] Found ${repoNames.length} configured repos for project ${projectId}`);
 
     // Get all GitHub feedback IDs
-    const allGithubFeedbackIds = (await redis.zrange('feedback:source:github', 0, -1)) as string[];
+    const allGithubFeedbackIds = (await redis.zrange(feedbackSourceKey(projectId), 0, -1)) as string[];
 
     // Count issues per repo by fetching and checking the repo field
     const repoIssueCounts: Record<string, number> = {};
@@ -30,7 +71,7 @@ export async function GET() {
     if (allGithubFeedbackIds.length > 0) {
       const pipeline = redis.pipeline();
       allGithubFeedbackIds.forEach(id => {
-        pipeline.hget(`feedback:${id}`, 'repo');
+        pipeline.hget(feedbackKey(projectId, id), 'repo');
       });
       const repoFields = await pipeline.exec() as (string | null)[];
 
@@ -45,14 +86,27 @@ export async function GET() {
     // Fetch full config for each repo
     const repos: GitHubRepo[] = [];
     for (const repoName of repoNames) {
-      const repoData = await redis.hgetall(`github:repo:${repoName}`);
-      if (repoData) {
+      let repoData = await redis.hgetall(projectRepoKey(projectId, repoName));
+      // Fallback to legacy data if project-scoped data is missing (during migration)
+      if (!repoData || Object.keys(repoData).length === 0) {
+        const legacyData = await redis.hgetall(legacyRepoKey(repoName));
+        if (legacyData && Object.keys(legacyData).length > 0) {
+          repoData = legacyData;
+          // Write back to project scope so future reads are project-scoped
+          await redis.hset(projectRepoKey(projectId, repoName), {
+            ...legacyData,
+            enabled: legacyData.enabled ?? 'true',
+          });
+        }
+      }
+
+      if (repoData && Object.keys(repoData).length > 0) {
         repos.push({
           owner: repoData.owner as string,
           repo: repoData.repo as string,
           full_name: repoName,
           last_synced: repoData.last_synced as string | undefined,
-          issue_count: repoIssueCounts[repoName] || 0, // Use actual count from Redis
+          issue_count: repoIssueCounts[repoName] || 0, // Use actual count from project-scoped feedback
           enabled: repoData.enabled === 'true',
         });
       }
@@ -76,8 +130,9 @@ export async function GET() {
  * Add or update a GitHub repository
  * Body: { repo: "owner/repo" or "https://github.com/owner/repo", enabled?: boolean }
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const projectId = await requireProjectId(request);
     const body = await request.json();
     const { repo: repoString, enabled = true } = body;
 
@@ -121,12 +176,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if repo already exists
-    const existingRepo = await redis.hgetall(`github:repo:${fullName}`);
+    // Check if repo already exists (project-scoped)
+    const existingRepo = await redis.hgetall(projectRepoKey(projectId, fullName));
     const isUpdate = existingRepo && Object.keys(existingRepo).length > 0;
 
     // Store repo configuration
-    await redis.hset(`github:repo:${fullName}`, {
+    await redis.hset(projectRepoKey(projectId, fullName), {
       owner,
       repo,
       full_name: fullName,
@@ -134,8 +189,8 @@ export async function POST(request: Request) {
       ...(isUpdate ? {} : { issue_count: '0' }), // Don't overwrite count on update
     });
 
-    // Add to repos set
-    await redis.sadd('github:repos', fullName);
+    // Add to repos set (project-scoped)
+    await redis.sadd(projectReposKey(projectId), fullName);
 
     console.log(`[GitHub] ${isUpdate ? 'Updated' : 'Added'} repo: ${fullName}`);
 

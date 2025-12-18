@@ -58,6 +58,15 @@ export interface IssueCluster {
   github_repo_url?: string;
 }
 
+export interface CodingPlan {
+  id: string;
+  cluster_id: string;
+  title: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ClusterListItem {
   id: string;
   title: string;
@@ -83,4 +92,18 @@ export interface GitHubRepo {
   last_synced?: string;
   issue_count?: number;
   enabled: boolean;
+}
+
+export type AgentJobStatus = 'pending' | 'running' | 'success' | 'failed';
+
+export interface AgentJob {
+  id: string;
+  project_id: string;
+  cluster_id: string;
+  plan_id?: string | null;
+  runner?: string | null;
+  status: AgentJobStatus;
+  pr_url?: string | null;
+  created_at: string;
+  updated_at: string;
 }

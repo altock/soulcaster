@@ -167,8 +167,8 @@ resource "aws_ecs_task_definition" "main" {
   family                   = "${var.app_name}-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "2048"  # 2 vCPU
-  memory                   = "4096"  # 4 GB
+  cpu                      = "4096"  # 4 vCPU for higher throughput
+  memory                   = "8192"  # 8 GB to satisfy Fargate CPU/memory pairing
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
 
   container_definitions = jsonencode([{
@@ -182,7 +182,7 @@ resource "aws_ecs_task_definition" "main" {
         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/gemini-api-key"
       },
       {
-        name      = "GH_TOKEN"
+        name      = "GITHUB_TOKEN"
         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:coding-agent/github-token"
       },
       {

@@ -1,141 +1,71 @@
-import { NextResponse } from 'next/server';
-import { Redis } from '@upstash/redis';
-import { fetchRepoIssues, issueToFeedbackItem, logRateLimit } from '@/lib/github';
-import type { GitHubRepo } from '@/types';
+import { NextRequest, NextResponse } from 'next/server';
+import { getProjectId } from '@/lib/project';
+import { getGitHubToken } from '@/lib/auth';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
 
 /**
- * POST /api/ingest/github/sync/[name]
- * Sync a specific GitHub repository
- * Name should be URL-encoded "owner/repo" (e.g., "anthropics%2Fclaude-code")
+ * Proxy GitHub sync to the backend ingestion API.
+ *
+ * The backend owns all writes; this route simply forwards the request.
+ * Passes the user's GitHub OAuth token for API authentication.
  */
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  try {
-    const { name } = await params;
+  const projectId = await getProjectId(request);
+  if (!projectId) {
+    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  }
 
-    // Decode URL-encoded repo name
-    const repoName = decodeURIComponent(name);
-
-    console.log(`[GitHub Sync] Starting sync for ${repoName}`);
-
-    // Log initial rate limit
-    await logRateLimit();
-
-    // Get repo config
-    const repoData = await redis.hgetall(`github:repo:${repoName}`);
-    if (!repoData || Object.keys(repoData).length === 0) {
-      return NextResponse.json(
-        { error: 'Repository not found in configuration' },
-        { status: 404 }
-      );
-    }
-
-    if (repoData.enabled === 'false') {
-      return NextResponse.json(
-        { error: 'Repository is disabled' },
-        { status: 400 }
-      );
-    }
-
-    const repo: GitHubRepo = {
-      owner: repoData.owner as string,
-      repo: repoData.repo as string,
-      full_name: repoName,
-      last_synced: repoData.last_synced as string | undefined,
-      issue_count: repoData.issue_count ? parseInt(repoData.issue_count as string) : 0,
-      enabled: true,
-    };
-
-    // Fetch issues (incremental if last_synced exists)
-    const issues = await fetchRepoIssues(repo.owner, repo.repo, repo.last_synced);
-
-    let newCount = 0;
-    let updatedCount = 0;
-    let closedCount = 0;
-
-    // Process each issue
-    for (const issue of issues) {
-      const feedbackItem = issueToFeedbackItem(issue, repo.full_name);
-
-      // Check if issue already exists in Redis
-      const existingFeedback = await redis.hgetall(`feedback:${feedbackItem.id}`);
-      const exists = existingFeedback && Object.keys(existingFeedback).length > 0;
-
-      // Store feedback item
-      await redis.hset(`feedback:${feedbackItem.id}`, {
-        id: feedbackItem.id,
-        source: feedbackItem.source,
-        external_id: feedbackItem.external_id || '',
-        title: feedbackItem.title,
-        body: feedbackItem.body,
-        repo: feedbackItem.repo || '',
-        github_issue_number: feedbackItem.github_issue_number?.toString() || '',
-        github_issue_url: feedbackItem.github_issue_url || '',
-        status: feedbackItem.status || 'open',
-        metadata: JSON.stringify(feedbackItem.metadata),
-        created_at: feedbackItem.created_at,
-        clustered: exists ? (existingFeedback.clustered as string) : 'false', // Preserve clustering state
-      });
-
-      // Add to created sorted set (by timestamp)
-      const timestamp = new Date(feedbackItem.created_at).getTime();
-      await redis.zadd('feedback:created', { score: timestamp, member: feedbackItem.id });
-
-      // Add to source-specific sorted set for filtering
-      await redis.zadd('feedback:source:github', { score: timestamp, member: feedbackItem.id });
-
-      // Manage unclustered set based on issue status
-      if (feedbackItem.status === 'closed') {
-        // Remove closed issues from unclustered set
-        await redis.srem('feedback:unclustered', feedbackItem.id);
-        closedCount++;
-      } else if (!exists) {
-        // New open issue - add to unclustered
-        await redis.sadd('feedback:unclustered', feedbackItem.id);
-        newCount++;
-      } else {
-        // Existing open issue - updated
-        updatedCount++;
-      }
-    }
-
-    // Update repo metadata
-    const now = new Date().toISOString();
-    await redis.hset(`github:repo:${repoName}`, {
-      last_synced: now,
-      issue_count: (repo.issue_count || 0) + newCount,
-    });
-
-    console.log(
-      `[GitHub Sync] ${repoName}: ${newCount} new, ${updatedCount} updated, ${closedCount} closed`
+  const githubToken = await getGitHubToken();
+  if (!githubToken) {
+    return NextResponse.json(
+      { error: 'GitHub authentication required. Please sign in with GitHub.' },
+      { status: 401 }
     );
+  }
 
-    // Log final rate limit
-    await logRateLimit();
+  const { name } = await params;
+  const repoName = decodeURIComponent(name);
 
-    return NextResponse.json({
-      success: true,
-      message: `Sync completed for ${repoName}`,
-      repo: repoName,
-      new_issues: newCount,
-      updated_issues: updatedCount,
-      closed_issues: closedCount,
-      total_issues: issues.length,
+  const url = `${backendUrl}/ingest/github/sync/${encodeURIComponent(repoName)}?project_id=${projectId}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Token': githubToken,
+      },
+      signal: AbortSignal.timeout(60000), // Increased timeout to 60s for large repos
     });
-  } catch (error) {
-    console.error('[GitHub Sync] Error during sync:', error);
+
+    if (!response.ok) {
+      console.error(`Backend returned ${response.status} for GitHub sync ${repoName}`);
+      const status = response.status >= 500 ? 502 : response.status;
+      return NextResponse.json({ error: 'Sync failed' }, { status });
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data, { status: response.status });
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Sync failed',
+          detail: 'Backend request timed out',
+        },
+        { status: 503 }
+      );
+    }
     return NextResponse.json(
       {
         success: false,
         error: 'Sync failed',
-        detail: error instanceof Error ? error.message : 'Unknown error',
+        detail: error?.message || 'Unknown error',
       },
       { status: 500 }
     );

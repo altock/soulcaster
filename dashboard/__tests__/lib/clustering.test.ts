@@ -19,13 +19,7 @@ jest.mock('@google/genai', () => ({
 }));
 
 // Import after mocking
-import {
-  cosineSimilarity,
-  calculateCentroid,
-  findBestCluster,
-  ClusteringBatch,
-  type ClusterMatch,
-} from '@/lib/clustering';
+import { cosineSimilarity, calculateCentroid, findBestCluster, ClusteringBatch } from '@/lib/clustering';
 
 describe('Clustering Pure Functions', () => {
   describe('cosineSimilarity', () => {
@@ -165,24 +159,6 @@ describe('Clustering Pure Functions', () => {
 });
 
 describe('ClusteringBatch - Incremental Updates', () => {
-  const createFeedback = (id: string, title: string, body: string): FeedbackItem => ({
-    id,
-    source: 'manual',
-    title,
-    body,
-    metadata: {},
-    created_at: new Date().toISOString(),
-  });
-
-  const createClusterData = (
-    id: string,
-    feedbackIds: string[],
-    centroid: number[]
-  ): ClusterData => ({
-    id,
-    feedbackIds,
-    centroid,
-  });
 
   describe('updateCentroidIncremental', () => {
     it('should correctly update centroid with new embedding', () => {

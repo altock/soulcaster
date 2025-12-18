@@ -344,16 +344,20 @@ const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_AP
 const ai = new GoogleGenAI({ apiKey });
 
 /**
- * Generate embedding for feedback text
+ * Create a 768‑dimensional embedding vector for a feedback item.
  *
- * Uses text-embedding-004 with explicit 768 dimensions to match Upstash Vector index.
- * Note: gemini-embedding-001 was returning 3072 dims which doesn't match our index.
+ * Builds input text from the feedback's title and body and requests an embedding
+ * (model: `gemini-embedding-001`) configured for 768 dimensions.
+ *
+ * @param feedback - Feedback item whose title and body are used to build the input text
+ * @returns A numeric array of length 768 representing the feedback embedding
+ * @throws Error if the embedding response is missing or the returned vector length is not 768
  */
 export async function generateFeedbackEmbedding(feedback: FeedbackItem): Promise<number[]> {
   const text = `Title: ${feedback.title || ''}\nBody: ${feedback.body || ''}`.trim();
 
   const response = await ai.models.embedContent({
-    model: 'text-embedding-004',
+    model: 'gemini-embedding-001',
     contents: [text],
     config: {
       outputDimensionality: 768,

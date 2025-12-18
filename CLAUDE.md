@@ -185,3 +185,111 @@ BACKEND_URL=     # for job status updates
 - `POST /api/clusters/cleanup` - Merge duplicate clusters by centroid similarity
 - `POST /api/clusters/reset` - Clear all clusters (debugging)
 - `POST /api/trigger-agent` - Trigger coding agent via ECS
+# Upstash Redis (required)
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token-here
+
+# GitHub OAuth (REQUIRED for beta)
+# Create OAuth app at: https://github.com/settings/developers
+# Authorization callback URL: http://localhost:3000/api/auth/callback/github
+# Scopes requested: repo, read:user
+GITHUB_ID=your-github-oauth-client-id
+GITHUB_SECRET=your-github-oauth-client-secret
+
+# NextAuth (REQUIRED)
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=generate-with-openssl-rand-base64-32
+
+# Database (REQUIRED)
+DATABASE_URL=postgresql://user:password@localhost:5432/soulcaster
+
+# Backend API URL (REQUIRED)
+BACKEND_URL=http://localhost:8000
+
+# Reddit API (optional - for automated polling)
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+REDDIT_USER_AGENT=
+
+# LLM Provider (for Gemini embeddings/clustering)
+GEMINI_API_KEY=your-gemini-api-key
+```
+
+**Required for Backend** (create `.env` in project root):
+
+```bash
+# Redis (same as dashboard)
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token-here
+
+# GitHub OAuth (same as dashboard)
+GITHUB_ID=your-github-oauth-client-id
+GITHUB_SECRET=your-github-oauth-client-secret
+
+# LLM Provider (REQUIRED)
+GEMINI_API_KEY=your-gemini-api-key
+
+# E2B Sandbox (REQUIRED for coding agent)
+E2B_API_KEY=your-e2b-api-key
+KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
+
+# Coding Agent Runner (default: sandbox_kilo)
+CODING_AGENT_RUNNER=sandbox_kilo
+```
+
+**How GitHub Authentication Works**:
+- Users MUST sign in with GitHub OAuth (required for all environments)
+- Access token stored securely in NextAuth session (encrypted)
+- Token passed to backend when creating PRs
+- PRs created from user's account (e.g., @username)
+- No fallback to personal access tokens - OAuth is required
+- Future: GitHub App support for bot-based PRs (soulcaster[bot])
+
+## Scope Guardrails (MVP Only)
+
+**What we HAVE built (Dashboard):**
+- ✅ Reddit feedback ingestion (manual submission via UI)
+- ✅ Feedback list view with source filtering
+- ✅ Embedding-based clustering with auto-run
+- ✅ Cluster list and detail views
+- ✅ Upstash Redis persistence
+- ✅ Reddit subreddit configuration UI
+
+**What we are NOT building:**
+- No auth/permissions (hardcoded env vars only)
+- No multi-repo support
+- No automated Reddit polling (manual submission only)
+- No coding agent / PR generation
+- No robust retries/rate limiting
+- No chat UI (click-to-fix only)
+- No comprehensive test suite (manual verification)
+
+## Known Limitations (Dashboard)
+
+- Client-side embedding generation (loads Xenova model in browser)
+- Simple heuristic summaries (no LLM summarization)
+- Full-feedback clustering on each run (no incremental updates)
+- No cluster merge/split UI
+- No automatic PR merge or cluster closure
+- Manual feedback submission only (no automated polling)
+
+## Testing Strategy
+
+Currently: Manual verification only
+
+Future: Write tests for:
+- Clustering logic (similarity thresholds, centroid updates)
+- FeedbackItem normalization
+- Redis data integrity
+- API endpoint responses
+
+## Post-Hackathon Future Work
+
+**DO NOT implement these during MVP:**
+- Automated Reddit polling with PRAW
+- Coding agent with PR generation (PyGithub)
+- LLM-based cluster summarization
+- Incremental clustering (only process new items)
+- Cluster merge/split UI controls
+- GitHub OAuth and multi-repo support
+- Comprehensive observability and rate limiting
