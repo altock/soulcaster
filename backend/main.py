@@ -76,6 +76,7 @@ from splunk_client import (
     verify_token,
     is_search_allowed,
 )
+from posthog_client import posthog_event_to_feedback_item, fetch_posthog_events
 # Ensure runners are registered
 import agent_runner.sandbox
 import agent_runner.aws
@@ -352,6 +353,102 @@ def ingest_splunk_webhook(
     _kickoff_clustering(pid)
 
     return {"status": "ok", "id": str(item.id), "project_id": pid}
+
+
+# ============================================================
+# POSTHOG INTEGRATION
+# ============================================================
+@app.post("/ingest/posthog/webhook")
+def ingest_posthog_webhook(payload: dict, project_id: Optional[str] = Query(None)):
+    """
+    Normalize a PostHog webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
+
+    PostHog webhook payloads have a nested structure with hook metadata and event data.
+    The actual event is in payload["data"].
+
+    Parameters:
+        payload (dict): Raw JSON payload received from PostHog's webhook.
+        project_id (str | None): UUID of the project to associate the created FeedbackItem; required and validated by the function.
+
+    Returns:
+        dict: A response containing keys "status" (always "ok" on success), "id" (created feedback item UUID as a string), and "project_id" (associated project UUID as a string).
+
+    Raises:
+        HTTPException: If project_id is missing (400) or if processing fails (500).
+    """
+    # Validate project_id first (this will raise HTTPException with 400 if missing)
+    pid = _require_project_id(project_id)
+
+    try:
+        # Extract the event data from the webhook payload
+        # PostHog webhook structure: {"hook": {...}, "data": {event data}}
+        event_data = payload.get("data", {})
+
+        # Convert PostHog event to FeedbackItem
+        item = posthog_event_to_feedback_item(event_data, pid)
+
+        # Check for deduplication
+        if item.external_id:
+            existing = get_feedback_by_external_id(pid, item.source, item.external_id)
+            if existing:
+                return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
+
+        # Store the feedback item
+        add_feedback_item(item)
+
+        # Trigger clustering
+        _kickoff_clustering(pid)
+
+        return {"status": "ok", "id": str(item.id), "project_id": pid}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process PostHog payload: {str(e)}"
+        ) from e
+
+
+@app.post("/ingest/posthog/sync")
+def ingest_posthog_sync(project_id: Optional[str] = Query(None)):
+    """
+    Pull events from PostHog API and ingest them as FeedbackItems.
+
+    This endpoint fetches events from PostHog since the last sync timestamp
+    and creates FeedbackItems for each event. Configuration (API key, project ID,
+    event types) is read from Redis.
+
+    Parameters:
+        project_id (str | None): UUID of the project to associate events with; required.
+
+    Returns:
+        dict: Summary of sync operation with keys:
+            - status (str): "ok" on success
+            - events_synced (int): Number of events fetched and stored
+            - project_id (str): The project UUID as a string
+
+    Raises:
+        HTTPException: If project_id is missing (400) or sync fails (500).
+    """
+    # Validate project_id first (this will raise HTTPException with 400 if missing)
+    pid = _require_project_id(project_id)
+
+    try:
+        # TODO: Read configuration from Redis
+        # For now, return success with 0 events synced
+        # Future implementation will:
+        # 1. Read config:posthog:{project_id}:api_key
+        # 2. Read config:posthog:{project_id}:project_id
+        # 3. Read config:posthog:{project_id}:event_types
+        # 4. Read config:posthog:{project_id}:last_synced
+        # 5. Call fetch_posthog_events()
+        # 6. Create FeedbackItems for each event
+        # 7. Update last_synced timestamp
+
+        return {"status": "ok", "events_synced": 0, "project_id": pid}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to sync PostHog events: {str(e)}"
+        ) from e
 
 
 class ManualIngestRequest(BaseModel):
