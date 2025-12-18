@@ -300,6 +300,8 @@ class InMemoryStore:
         self.projects: Dict[str, Project] = {}
         self.users: Dict[str, User] = {}
         self.reddit_subreddits: Dict[str, List[str]] = {}
+        self.datadog_webhook_secrets: Dict[str, str] = {}
+        self.datadog_monitors: Dict[str, List[str]] = {}
         self.external_index: Dict[Tuple[str, str, str], UUID] = {}
         # Track unclustered feedback per project (project_id -> set(feedback_ids))
         self.unclustered_feedback_ids: Dict[str, set[UUID]] = {}
@@ -584,6 +586,62 @@ class InMemoryStore:
         pid_str = str(project_id)
         project_config = self.sentry_config.get(pid_str, {})
         return project_config.get(key)
+
+        self.datadog_webhook_secrets = {}
+        self.datadog_monitors = {}
+
+    # Config (Datadog)
+    def set_datadog_webhook_secret(self, secret: str, project_id: ProjectId) -> str:
+        """
+        Set the Datadog webhook secret for a specific project.
+
+        Parameters:
+            secret (str): Webhook secret to use for signature verification.
+            project_id (UUID): Identifier of the project to associate the secret with.
+
+        Returns:
+            str: The secret that was stored.
+        """
+        pid_str = str(project_id)
+        if pid_str not in self.projects:
+            raise KeyError("project not found")
+        self.datadog_webhook_secrets[pid_str] = secret
+        return secret
+
+    def get_datadog_webhook_secret(self, project_id: ProjectId) -> Optional[str]:
+        """
+        Retrieve the configured Datadog webhook secret for a project.
+
+        Returns:
+            str: The webhook secret for the project, or None if no secret is configured.
+        """
+        return self.datadog_webhook_secrets.get(str(project_id))
+
+    def set_datadog_monitors(self, monitors: List[str], project_id: ProjectId) -> List[str]:
+        """
+        Set the list of Datadog monitor IDs to track for a project.
+
+        Parameters:
+            monitors (List[str]): List of monitor IDs or ["*"] for all monitors.
+            project_id (UUID): Identifier of the project to associate the monitors with.
+
+        Returns:
+            List[str]: The list of monitor IDs that was stored.
+        """
+        pid_str = str(project_id)
+        if pid_str not in self.projects:
+            raise KeyError("project not found")
+        self.datadog_monitors[pid_str] = monitors
+        return monitors
+
+    def get_datadog_monitors(self, project_id: ProjectId) -> Optional[List[str]]:
+        """
+        Retrieve the configured Datadog monitor IDs for a project.
+
+        Returns:
+            List[str]: The monitor IDs for the project, or None if no configuration exists.
+        """
+        return self.datadog_monitors.get(str(project_id))
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
@@ -954,11 +1012,31 @@ class RedisStore:
     def _reddit_subreddits_key(project_id: UUID) -> str:
         """
         Constructs the Redis key used to store a project's Reddit subreddit list.
-        
+
         Returns:
             str: Redis key in the form "config:reddit:subreddits:{project_id}".
         """
         return f"config:reddit:subreddits:{project_id}"
+
+    @staticmethod
+    def _datadog_webhook_secret_key(project_id: UUID) -> str:
+        """
+        Constructs the Redis key used to store a project's Datadog webhook secret.
+
+        Returns:
+            str: Redis key in the form "config:datadog:{project_id}:webhook_secret".
+        """
+        return f"config:datadog:{project_id}:webhook_secret"
+
+    @staticmethod
+    def _datadog_monitors_key(project_id: UUID) -> str:
+        """
+        Constructs the Redis key used to store a project's Datadog monitor IDs.
+
+        Returns:
+            str: Redis key in the form "config:datadog:{project_id}:monitors".
+        """
+        return f"config:datadog:{project_id}:monitors"
 
     @staticmethod
     def _job_key(job_id: UUID) -> str:
@@ -1511,6 +1589,73 @@ class RedisStore:
             return json.loads(raw)
         except json.JSONDecodeError:
             return None
+
+        if keys:
+            self._delete(*keys)
+        # Also clear Datadog config
+        datadog_secret_keys = list(self._scan_iter("config:datadog:*:webhook_secret"))
+        if datadog_secret_keys:
+            self._delete(*datadog_secret_keys)
+        datadog_monitor_keys = list(self._scan_iter("config:datadog:*:monitors"))
+        if datadog_monitor_keys:
+            self._delete(*datadog_monitor_keys)
+
+    # Config (Datadog)
+    def set_datadog_webhook_secret(self, secret: str, project_id: UUID) -> str:
+        """
+        Set the Datadog webhook secret for a specific project.
+
+        Parameters:
+            secret (str): Webhook secret to use for signature verification.
+            project_id (UUID): Identifier of the project to associate the secret with.
+
+        Returns:
+            str: The secret that was stored.
+        """
+        self._set(self._datadog_webhook_secret_key(project_id), secret)
+        return secret
+
+    def get_datadog_webhook_secret(self, project_id: UUID) -> Optional[str]:
+        """
+        Retrieve the configured Datadog webhook secret for a project.
+
+        Returns:
+            str: The webhook secret for the project, or None if no secret is configured.
+        """
+        return self._get(self._datadog_webhook_secret_key(project_id))
+
+    def set_datadog_monitors(self, monitors: List[str], project_id: UUID) -> List[str]:
+        """
+        Set the list of Datadog monitor IDs to track for a project.
+
+        Parameters:
+            monitors (List[str]): List of monitor IDs or ["*"] for all monitors.
+            project_id (UUID): Identifier of the project to associate the monitors with.
+
+        Returns:
+            List[str]: The list of monitor IDs that was stored.
+        """
+        payload = json.dumps(monitors)
+        self._set(self._datadog_monitors_key(project_id), payload)
+        return monitors
+
+    def get_datadog_monitors(self, project_id: UUID) -> Optional[List[str]]:
+        """
+        Retrieve the configured Datadog monitor IDs for a project.
+
+        Returns:
+            List[str]: The monitor IDs for the project, or None if no configuration exists.
+        """
+        raw = self._get(self._datadog_monitors_key(project_id))
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [str(m) for m in data]
+        except json.JSONDecodeError:
+            return None
+        return None
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
@@ -2542,6 +2687,59 @@ def get_sentry_config(project_id: ProjectId, key: str) -> Optional[Any]:
         Optional[Any]: Config value if it exists, None otherwise.
     """
     return _STORE.get_sentry_config(project_id, key)
+
+def set_datadog_webhook_secret_for_project(secret: str, project_id: ProjectId) -> str:
+    """
+    Set the Datadog webhook secret for a specific project.
+
+    Parameters:
+        secret (str): Webhook secret to use for signature verification.
+        project_id (UUID): Identifier of the project to associate the secret with.
+
+    Returns:
+        str: The secret that was stored.
+    """
+    return _STORE.set_datadog_webhook_secret(secret, project_id)
+
+
+def get_datadog_webhook_secret_for_project(project_id: ProjectId) -> Optional[str]:
+    """
+    Retrieve the configured Datadog webhook secret for a project.
+
+    Parameters:
+        project_id (UUID): The project identifier to lookup webhook secret for.
+
+    Returns:
+        str: The webhook secret for the project, or None if no secret is configured.
+    """
+    return _STORE.get_datadog_webhook_secret(project_id)
+
+
+def set_datadog_monitors_for_project(monitors: List[str], project_id: ProjectId) -> List[str]:
+    """
+    Set the list of Datadog monitor IDs to track for a project.
+
+    Parameters:
+        monitors (List[str]): List of monitor IDs or ["*"] for all monitors.
+        project_id (UUID): Identifier of the project to associate the monitors with.
+
+    Returns:
+        List[str]: The list of monitor IDs that was stored.
+    """
+    return _STORE.set_datadog_monitors(monitors, project_id)
+
+
+def get_datadog_monitors_for_project(project_id: ProjectId) -> Optional[List[str]]:
+    """
+    Retrieve the configured Datadog monitor IDs for a project.
+
+    Parameters:
+        project_id (UUID): The project identifier to lookup monitors for.
+
+    Returns:
+        List[str]: The monitor IDs for the project, or None if no configuration exists.
+    """
+    return _STORE.get_datadog_monitors(project_id)
 
 # Coding Plan API
 def add_coding_plan(plan: CodingPlan) -> CodingPlan:

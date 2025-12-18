@@ -51,6 +51,8 @@ from store import (
     clear_clusters,
     set_reddit_subreddits_for_project,
     get_reddit_subreddits_for_project,
+    get_datadog_webhook_secret_for_project,
+    get_datadog_monitors_for_project,
     update_cluster,
     add_job,
     get_job,
@@ -426,6 +428,79 @@ def ingest_splunk_webhook(
             return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
 
     # Store and trigger clustering
+
+
+# ============================================================
+# DATADOG INTEGRATION
+# ============================================================
+@app.post("/ingest/datadog/webhook")
+async def ingest_datadog_webhook(
+    request: Request,
+    payload: dict,
+    project_id: Optional[str] = Query(None),
+    x_datadog_signature: Optional[str] = Header(None, alias="X-Datadog-Signature"),
+):
+    """
+    Ingest Datadog webhook alerts and convert them to FeedbackItems.
+
+    Supports:
+    - Signature verification (if webhook secret is configured)
+    - Monitor filtering (if specific monitors are configured)
+    - Hourly deduplication (same alert within an hour is deduplicated)
+
+    Parameters:
+        request: FastAPI request object (for signature verification).
+        payload: Datadog webhook payload.
+        project_id: Project identifier; required.
+        x_datadog_signature: Optional signature header for webhook verification.
+
+    Returns:
+        dict: Status response with "ok", "duplicate", or "skipped".
+
+    Raises:
+        HTTPException: If signature is invalid (401) or processing fails (500).
+    """
+    from datadog_client import datadog_event_to_feedback_item, verify_signature
+
+    pid = _require_project_id(project_id)
+
+    # 1. Verify signature if secret is configured
+    webhook_secret = get_datadog_webhook_secret_for_project(pid)
+    if webhook_secret:
+        if not x_datadog_signature:
+            raise HTTPException(status_code=401, detail="Missing X-Datadog-Signature header")
+
+        # Get raw body for signature verification
+        body_bytes = await request.body()
+        if not verify_signature(body_bytes, x_datadog_signature, webhook_secret):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # 2. Check monitor filter
+    configured_monitors = get_datadog_monitors_for_project(pid)
+    if configured_monitors is not None:
+        # None means no filter (accept all)
+        # Empty list or specific IDs means filter is active
+        monitor_id = str(payload.get("id", ""))
+
+        # Check if wildcard or specific match
+        if "*" not in configured_monitors and monitor_id not in configured_monitors:
+            return {"status": "skipped", "message": "Monitor not configured for ingestion"}
+
+    # 3. Convert to FeedbackItem
+    try:
+        item = datadog_event_to_feedback_item(payload, pid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to convert Datadog event: {str(e)}"
+        ) from e
+
+    # 4. Check for duplicate (deduplication by external_id)
+    if item.external_id:
+        existing = get_feedback_by_external_id(pid, item.source, item.external_id)
+        if existing:
+            return {"status": "duplicate", "id": str(existing.id)}
+
+    # 5. Add item and trigger clustering
     add_feedback_item(item)
     _kickoff_clustering(pid)
 
