@@ -1,10 +1,12 @@
 """PostHog integration client for normalizing events to FeedbackItems."""
 
+import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 from uuid import uuid4
 
 from models import FeedbackItem
+from store import _STORE
 
 
 def posthog_event_to_feedback_item(event: dict, project_id: str) -> FeedbackItem:
@@ -92,3 +94,36 @@ def fetch_posthog_events(
     # TODO: Implement actual API calls to PostHog
     # For now, return empty list (will be enhanced in future iterations)
     return []
+
+
+def get_posthog_event_types(project_id: str) -> Optional[List[str]]:
+    """
+    Retrieve the list of PostHog event types to track for a project.
+
+    Args:
+        project_id: Project identifier.
+
+    Returns:
+        List[str] or None: List of event types, or None if not configured.
+    """
+    key = f"config:posthog:{project_id}:event_types"
+    value = _STORE.get(key)
+    if value is None:
+        return None
+    # Store as JSON array string
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def set_posthog_event_types(project_id: str, event_types: List[str]) -> None:
+    """
+    Set the list of PostHog event types to track for a project.
+
+    Args:
+        project_id: Project identifier.
+        event_types: List of event types to track (e.g., ["$exception", "$error"]).
+    """
+    key = f"config:posthog:{project_id}:event_types"
+    _STORE.set(key, json.dumps(event_types))

@@ -53,6 +53,8 @@ from store import (
     get_reddit_subreddits_for_project,
     get_datadog_webhook_secret_for_project,
     get_datadog_monitors_for_project,
+    set_datadog_webhook_secret_for_project,
+    set_datadog_monitors_for_project,
     update_cluster,
     add_job,
     get_job,
@@ -937,16 +939,16 @@ def get_reddit_config(project_id: Optional[str] = Query(None)):
 def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Query(None)):
     """
     Set the subreddits configured for polling for a specific project.
-    
+
     Validates and normalizes the provided subreddit names, requires a project_id, persists the cleaned list for that project, and returns the stored subreddits and project id.
-    
+
     Parameters:
         payload (SubredditConfig): Object containing `subreddits`, the list of subreddit strings to set.
         project_id (UUID | None): Project identifier used to scope the configuration.
-    
+
     Returns:
         dict: {"subreddits": List[str], "project_id": str} — the cleaned subreddit list and the project id as a string.
-    
+
     Raises:
         HTTPException: If the cleaned subreddit list is empty (400) or if `project_id` is missing/invalid (400).
     """
@@ -956,6 +958,336 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Quer
     pid = _require_project_id(project_id)
     set_reddit_subreddits_for_project(cleaned, pid)
     return {"subreddits": cleaned, "project_id": str(pid)}
+
+
+# ============================================================
+# SPLUNK CONFIG ENDPOINTS
+# ============================================================
+
+class SplunkTokenConfig(BaseModel):
+    """Payload for configuring Splunk webhook token."""
+    token: str
+
+
+class SplunkSearchesConfig(BaseModel):
+    """Payload for configuring Splunk allowed searches."""
+    searches: List[str]
+
+
+@app.get("/config/splunk")
+def get_splunk_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the Splunk configuration for a project.
+
+    Returns the webhook token and allowed searches list.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_token": str or None,
+            "allowed_searches": List[str] or None,
+            "project_id": str
+        }
+    """
+    from splunk_client import get_splunk_webhook_token, get_splunk_allowed_searches
+
+    pid = _require_project_id(project_id)
+    token = get_splunk_webhook_token(pid)
+    searches = get_splunk_allowed_searches(pid)
+
+    return {
+        "webhook_token": token,
+        "allowed_searches": searches,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/splunk/token")
+def set_splunk_token(payload: SplunkTokenConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Splunk webhook token for a project.
+
+    Parameters:
+        payload (SplunkTokenConfig): Object containing the webhook token.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from splunk_client import set_splunk_webhook_token
+
+    pid = _require_project_id(project_id)
+    set_splunk_webhook_token(pid, payload.token)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/splunk/searches")
+def set_splunk_searches(payload: SplunkSearchesConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Splunk searches for a project.
+
+    Parameters:
+        payload (SplunkSearchesConfig): Object containing the list of allowed search names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from splunk_client import set_splunk_allowed_searches
+
+    pid = _require_project_id(project_id)
+    set_splunk_allowed_searches(pid, payload.searches)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# DATADOG CONFIG ENDPOINTS
+# ============================================================
+
+class DatadogSecretConfig(BaseModel):
+    """Payload for configuring Datadog webhook secret."""
+    secret: str
+
+
+class DatadogMonitorsConfig(BaseModel):
+    """Payload for configuring Datadog allowed monitors."""
+    monitors: List[str]
+
+
+@app.get("/config/datadog")
+def get_datadog_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the Datadog configuration for a project.
+
+    Returns the webhook secret and allowed monitors list.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_secret": str or None,
+            "allowed_monitors": List[str] or None,
+            "project_id": str
+        }
+    """
+    pid = _require_project_id(project_id)
+    secret = get_datadog_webhook_secret_for_project(pid)
+    monitors = get_datadog_monitors_for_project(pid)
+
+    return {
+        "webhook_secret": secret,
+        "allowed_monitors": monitors,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/datadog/secret")
+def set_datadog_secret(payload: DatadogSecretConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Datadog webhook secret for a project.
+
+    Parameters:
+        payload (DatadogSecretConfig): Object containing the webhook secret.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_datadog_webhook_secret_for_project(payload.secret, pid)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/datadog/monitors")
+def set_datadog_monitors(payload: DatadogMonitorsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Datadog monitors for a project.
+
+    Parameters:
+        payload (DatadogMonitorsConfig): Object containing the list of monitor IDs or ["*"].
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_datadog_monitors_for_project(payload.monitors, pid)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# POSTHOG CONFIG ENDPOINTS
+# ============================================================
+
+class PostHogEventTypesConfig(BaseModel):
+    """Payload for configuring PostHog event types."""
+    event_types: List[str]
+
+
+@app.get("/config/posthog")
+def get_posthog_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the PostHog configuration for a project.
+
+    Returns the event types to track.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "event_types": List[str] or None,
+            "project_id": str
+        }
+    """
+    from posthog_client import get_posthog_event_types
+
+    pid = _require_project_id(project_id)
+    event_types = get_posthog_event_types(pid)
+
+    return {
+        "event_types": event_types,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/posthog/events")
+def set_posthog_events(payload: PostHogEventTypesConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the PostHog event types to track for a project.
+
+    Parameters:
+        payload (PostHogEventTypesConfig): Object containing the list of event types.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from posthog_client import set_posthog_event_types
+
+    pid = _require_project_id(project_id)
+    set_posthog_event_types(pid, payload.event_types)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# SENTRY CONFIG ENDPOINTS
+# ============================================================
+
+class SentrySecretConfig(BaseModel):
+    """Payload for configuring Sentry webhook secret."""
+    secret: str
+
+
+class SentryEnvironmentsConfig(BaseModel):
+    """Payload for configuring Sentry allowed environments."""
+    environments: List[str]
+
+
+class SentryLevelsConfig(BaseModel):
+    """Payload for configuring Sentry allowed levels."""
+    levels: List[str]
+
+
+@app.get("/config/sentry")
+def get_sentry_config_endpoint(project_id: Optional[str] = Query(None)):
+    """
+    Get the Sentry configuration for a project.
+
+    Returns the webhook secret, allowed environments, and allowed levels.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_secret": str or None,
+            "allowed_environments": List[str] or None,
+            "allowed_levels": List[str] or None,
+            "project_id": str
+        }
+    """
+    from store import get_sentry_config
+
+    pid = _require_project_id(project_id)
+    secret = get_sentry_config(pid, "webhook_secret")
+    environments = get_sentry_config(pid, "environments")
+    levels = get_sentry_config(pid, "levels")
+
+    return {
+        "webhook_secret": secret,
+        "allowed_environments": environments,
+        "allowed_levels": levels,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/sentry/secret")
+def set_sentry_secret(payload: SentrySecretConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Sentry webhook secret for a project.
+
+    Parameters:
+        payload (SentrySecretConfig): Object containing the webhook secret.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from store import set_sentry_config
+
+    pid = _require_project_id(project_id)
+    set_sentry_config(pid, "webhook_secret", payload.secret)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/sentry/environments")
+def set_sentry_environments(payload: SentryEnvironmentsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Sentry environments for a project.
+
+    Parameters:
+        payload (SentryEnvironmentsConfig): Object containing the list of environment names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from store import set_sentry_config
+
+    pid = _require_project_id(project_id)
+    set_sentry_config(pid, "environments", payload.environments)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/sentry/levels")
+def set_sentry_levels(payload: SentryLevelsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Sentry levels for a project.
+
+    Parameters:
+        payload (SentryLevelsConfig): Object containing the list of level names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    from store import set_sentry_config
+
+    pid = _require_project_id(project_id)
+    set_sentry_config(pid, "levels", payload.levels)
+
+    return {"status": "ok"}
 
 
 @app.post("/admin/trigger-poll")
