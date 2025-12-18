@@ -7,6 +7,7 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -21,6 +22,7 @@ from typing import Dict, List, Optional, Literal, Tuple
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Path, Query, Request, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -50,6 +52,10 @@ from store import (
     clear_clusters,
     set_reddit_subreddits_for_project,
     get_reddit_subreddits_for_project,
+    get_datadog_webhook_secret_for_project,
+    get_datadog_monitors_for_project,
+    set_datadog_webhook_secret_for_project,
+    set_datadog_monitors_for_project,
     update_cluster,
     add_job,
     get_job,
@@ -66,11 +72,44 @@ from store import (
     get_unclustered_feedback,
     add_coding_plan,
     get_coding_plan,
+    get_sentry_config as get_sentry_config_value,
+    set_sentry_config as set_sentry_config_value,
+    get_splunk_config as get_splunk_config_value,
+    set_splunk_config as set_splunk_config_value,
+    get_datadog_config as get_datadog_config_value,
+    set_datadog_config as set_datadog_config_value,
+    get_posthog_config as get_posthog_config_value,
+    set_posthog_config as set_posthog_config_value,
 )
 from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
 from clustering_runner import maybe_start_clustering, run_clustering_job
 from agent_runner import get_runner
+from reddit_poller import poll_once
+from splunk_client import (
+    splunk_alert_to_feedback_item,
+    verify_token,
+    is_search_allowed,
+    get_splunk_webhook_token,
+    get_splunk_allowed_searches,
+    set_splunk_webhook_token,
+    set_splunk_allowed_searches,
+)
+from posthog_client import (
+    posthog_event_to_feedback_item,
+    fetch_posthog_events,
+    get_posthog_event_types,
+    set_posthog_event_types,
+)
+from sentry_client import (
+    verify_sentry_signature,
+    extract_sentry_stacktrace,
+    extract_issue_short_id,
+    extract_event_id,
+    extract_sentry_metadata,
+    should_ingest_event,
+)
+from datadog_client import datadog_event_to_feedback_item, verify_signature
 # Ensure runners are registered
 import agent_runner.sandbox
 import agent_runner.aws
@@ -231,57 +270,377 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[str] = Query(None)):
 
 
 # ============================================================
-# PHASE 2: SENTRY INTEGRATION (Currently deferred)
+# PHASE 2: SENTRY INTEGRATION (Enhanced)
 # ============================================================
 @app.post("/ingest/sentry")
-def ingest_sentry(payload: dict, project_id: Optional[str] = Query(None)):
+async def ingest_sentry(
+    request: Request,
+    project_id: Optional[str] = Query(None),
+    sentry_hook_signature: Optional[str] = Header(None, alias="sentry-hook-signature"),
+):
     """
-    Normalize a Sentry webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
-    
+    Enhanced Sentry webhook ingestion with signature verification, issue deduplication, and filtering.
+
+    Features:
+    - HMAC-SHA256 signature verification (if webhook_secret configured)
+    - Deduplication by issue short_id (groups events by issue)
+    - Stack trace extraction and normalization
+    - Environment and level filtering
+
     Parameters:
-        payload (dict): Raw JSON payload received from Sentry's webhook.
-        project_id (UUID | None): UUID of the project to associate the created FeedbackItem; required and validated by the function.
-    
+        request (Request): FastAPI request object (for reading body).
+        project_id (UUID | None): UUID of the project to associate the FeedbackItem with.
+        sentry_hook_signature (str | None): HMAC signature from Sentry webhook header.
+
     Returns:
-        dict: A response containing keys `"status"` (always `"ok"` on success), `"id"` (created feedback item UUID as a string), and `"project_id"` (associated project UUID as a string).
-    
+        dict: {"status": "ok", "id": "<item-uuid>", "project_id": "<project-uuid>"}
+              or {"status": "filtered"} if event was filtered out.
+
     Raises:
-        HTTPException: If processing fails, an HTTP 500 error is raised with details about the failure.
+        HTTPException: 401 if signature verification fails, 500 if processing fails.
     """
     try:
-        event_id = payload.get("event_id")
-        title = payload.get("message") or "Sentry Issue"
+        pid = _require_project_id(project_id)
+        enabled = get_sentry_config_value(pid, "enabled")
+        if enabled is False:
+            return {"status": "filtered", "project_id": str(pid)}
 
-        # Construct body from exception data
+        # Read raw body and parse JSON
+        body = await request.body()
+        payload = json.loads(body.decode('utf-8'))
+
+        # Verify signature if configured
+        webhook_secret = get_sentry_config_value(pid, "webhook_secret")
+        if webhook_secret:
+            if not sentry_hook_signature:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Missing sentry-hook-signature header"
+                )
+
+            if not verify_sentry_signature(body, sentry_hook_signature, webhook_secret):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid webhook signature"
+                )
+
+        # Check environment and level filters
+        allowed_environments = get_sentry_config_value(pid, "environments")
+        allowed_levels = get_sentry_config_value(pid, "levels")
+
+        if not should_ingest_event(payload, allowed_environments, allowed_levels):
+            # Event filtered out - return success but don't create item
+            return {"status": "filtered", "project_id": str(pid)}
+
+        # Extract issue short_id for deduplication (prefer over event_id)
+        issue_short_id = extract_issue_short_id(payload)
+        event_id = extract_event_id(payload)
+        external_id = issue_short_id or event_id
+
+        # Check for existing item with same external_id
+        if external_id:
+            existing = get_feedback_by_external_id(pid, "sentry", external_id)
+            if existing:
+                return {"status": "duplicate", "id": str(existing.id), "project_id": str(pid)}
+
+        # Extract data from payload
+        title = payload.get("message") or payload.get("data", {}).get("event", {}).get("message") or "Sentry Issue"
+        stacktrace = extract_sentry_stacktrace(payload)
+        metadata = extract_sentry_metadata(payload)
+
+        # Construct body with exception details and stack trace
+        exception_values = payload.get("exception", {}).get("values", [])
+        if not exception_values:
+            exception_values = (
+                payload.get("data", {})
+                .get("event", {})
+                .get("exception", {})
+                .get("values", [])
+            )
+
         body = ""
-        exception = payload.get("exception", {}).get("values", [])
-        if exception:
-            exc = exception[0]
+        if exception_values:
+            exc = exception_values[0]
             exc_type = exc.get("type", "Error")
             exc_value = exc.get("value", "")
-            body += f"{exc_type}: {exc_value}\n\nStacktrace:\n"
-            # Include first 3 stack frames for context
-            for frame in exc.get("stacktrace", {}).get("frames", [])[:3]:
-                body += f"  {frame.get('filename')}:{frame.get('lineno')}\n"
+            body += f"{exc_type}: {exc_value}\n"
 
-        pid = _require_project_id(project_id)
+        if stacktrace:
+            body += f"\nStacktrace:\n{stacktrace}"
+
+        # Create FeedbackItem
         item = FeedbackItem(
             id=uuid4(),
             project_id=pid,
             source="sentry",
-            external_id=event_id,
+            external_id=external_id,
             title=title,
             body=body,
-            metadata=payload,
+            metadata=metadata,
             created_at=datetime.now(timezone.utc),
         )
         add_feedback_item(item)
         _kickoff_clustering(str(pid))
         return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (signature failures, etc.)
+        raise
     except Exception as e:
+        logger.exception(f"Failed to process Sentry payload: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to process Sentry payload: {str(e)}"
+        ) from e
+
+
+# ============================================================
+# SPLUNK INTEGRATION
+# ============================================================
+@app.post("/ingest/splunk/webhook")
+def ingest_splunk_webhook(
+    payload: dict,
+    project_id: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+    x_splunk_token: Optional[str] = Header(None, alias="X-Splunk-Token"),
+):
+    """
+    Receive Splunk alert webhooks and convert them to FeedbackItems.
+
+    Splunk alerts are sent via webhook when saved searches trigger. This endpoint
+    authenticates the request using a project-specific token, optionally filters
+    by allowed search names, and creates a FeedbackItem for clustering.
+
+    Parameters:
+        payload (dict): Splunk alert webhook payload containing result, sid, search_name, etc.
+        project_id (str): Project UUID to associate the feedback with (required).
+        token (str, optional): Authentication token via query parameter.
+        x_splunk_token (str, optional): Authentication token via X-Splunk-Token header.
+
+    Returns:
+        dict: {"status": "ok"|"duplicate"|"filtered", "id": "<uuid>", "project_id": "<uuid>"}
+              Returns "filtered" status when search is not in allowed list.
+
+    Raises:
+        HTTPException: 401 if token is missing/invalid, 400 if project_id missing.
+    """
+    pid = _require_project_id(project_id)
+    enabled = get_splunk_config_value(pid, "enabled")
+    if enabled is False:
+        return {"status": "filtered", "project_id": pid}
+
+    # Token authentication: check query param first, then header
+    provided_token = token or x_splunk_token
+    if not verify_token(provided_token, pid):
+        raise HTTPException(status_code=401, detail="Invalid or missing authentication token")
+
+    # Optional: Filter by allowed saved searches
+    search_name = payload.get("search_name", "")
+    if not is_search_allowed(search_name, pid):
+        # Return success but don't create item (silent filter)
+        return {"status": "filtered", "project_id": pid}
+
+    # Convert to FeedbackItem
+    try:
+        item = splunk_alert_to_feedback_item(payload, pid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process Splunk payload: {str(e)}"
+        ) from e
+
+    # Deduplication by external_id (sid)
+    if item.external_id:
+        existing = get_feedback_by_external_id(pid, item.source, item.external_id)
+        if existing:
+            return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
+
+    # Store and trigger clustering
+    add_feedback_item(item)
+    _kickoff_clustering(pid)
+
+    return {"status": "ok", "id": str(item.id), "project_id": pid}
+
+
+# ============================================================
+# DATADOG INTEGRATION
+# ============================================================
+@app.post("/ingest/datadog/webhook")
+async def ingest_datadog_webhook(
+    request: Request,
+    payload: dict,
+    project_id: Optional[str] = Query(None),
+    x_datadog_signature: Optional[str] = Header(None, alias="X-Datadog-Signature"),
+):
+    """
+    Ingest Datadog webhook alerts and convert them to FeedbackItems.
+
+    Supports:
+    - Signature verification (if webhook secret is configured)
+    - Monitor filtering (if specific monitors are configured)
+    - Hourly deduplication (same alert within an hour is deduplicated)
+
+    Parameters:
+        request: FastAPI request object (for signature verification).
+        payload: Datadog webhook payload.
+        project_id: Project identifier; required.
+        x_datadog_signature: Optional signature header for webhook verification.
+
+    Returns:
+        dict: Status response with "ok", "duplicate", or "filtered".
+
+    Raises:
+        HTTPException: If signature is invalid (401) or processing fails (500).
+    """
+    pid = _require_project_id(project_id)
+    enabled = get_datadog_config_value(pid, "enabled")
+    if enabled is False:
+        return {"status": "filtered", "project_id": pid}
+
+    # 1. Verify signature if secret is configured
+    webhook_secret = get_datadog_webhook_secret_for_project(pid)
+    if webhook_secret:
+        if not x_datadog_signature:
+            raise HTTPException(status_code=401, detail="Missing X-Datadog-Signature header")
+
+        # Get raw body for signature verification
+        body_bytes = await request.body()
+        if not verify_signature(body_bytes, x_datadog_signature, webhook_secret):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # 2. Check monitor filter
+    configured_monitors = get_datadog_monitors_for_project(pid)
+    if configured_monitors is not None:
+        # None means no filter (accept all)
+        # Empty list or specific IDs means filter is active
+        monitor_id = str(payload.get("id", ""))
+
+        # Check if wildcard or specific match
+        if "*" not in configured_monitors and monitor_id not in configured_monitors:
+            return {
+                "status": "filtered",
+                "message": "Monitor not configured for ingestion",
+                "project_id": pid,
+            }
+
+    # 3. Convert to FeedbackItem
+    try:
+        item = datadog_event_to_feedback_item(payload, pid)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to convert Datadog event: {str(e)}"
+        ) from e
+
+    # 4. Check for duplicate (deduplication by external_id)
+    if item.external_id:
+        existing = get_feedback_by_external_id(pid, item.source, item.external_id)
+        if existing:
+            return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
+
+    # 5. Add item and trigger clustering
+    add_feedback_item(item)
+    _kickoff_clustering(pid)
+
+    return {"status": "ok", "id": str(item.id), "project_id": pid}
+
+
+# ============================================================
+# POSTHOG INTEGRATION
+# ============================================================
+@app.post("/ingest/posthog/webhook")
+def ingest_posthog_webhook(payload: dict, project_id: Optional[str] = Query(None)):
+    """
+    Normalize a PostHog webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
+
+    PostHog webhook payloads have a nested structure with hook metadata and event data.
+    The actual event is in payload["data"].
+
+    Parameters:
+        payload (dict): Raw JSON payload received from PostHog's webhook.
+        project_id (str | None): UUID of the project to associate the created FeedbackItem; required and validated by the function.
+
+    Returns:
+        dict: A response containing keys "status" (always "ok" on success), "id" (created feedback item UUID as a string), and "project_id" (associated project UUID as a string).
+
+    Raises:
+        HTTPException: If project_id is missing (400) or if processing fails (500).
+    """
+    # Validate project_id first (this will raise HTTPException with 400 if missing)
+    pid = _require_project_id(project_id)
+    enabled = get_posthog_config_value(pid, "enabled")
+    if enabled is False:
+        return {"status": "filtered", "project_id": str(pid)}
+
+    try:
+        # Extract the event data from the webhook payload
+        # PostHog webhook structure: {"hook": {...}, "data": {event data}}
+        event_data = payload.get("data", {})
+
+        # Convert PostHog event to FeedbackItem
+        item = posthog_event_to_feedback_item(event_data, pid)
+
+        # Check for deduplication
+        if item.external_id:
+            existing = get_feedback_by_external_id(pid, item.source, item.external_id)
+            if existing:
+                return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
+
+        # Store the feedback item
+        add_feedback_item(item)
+
+        # Trigger clustering
+        _kickoff_clustering(pid)
+
+        return {"status": "ok", "id": str(item.id), "project_id": pid}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process PostHog payload: {str(e)}"
+        ) from e
+
+
+@app.post("/ingest/posthog/sync")
+def ingest_posthog_sync(project_id: Optional[str] = Query(None)):
+    """
+    Pull events from PostHog API and ingest them as FeedbackItems.
+
+    This endpoint fetches events from PostHog since the last sync timestamp
+    and creates FeedbackItems for each event. Configuration (API key, project ID,
+    event types) is read from Redis.
+
+    Parameters:
+        project_id (str | None): UUID of the project to associate events with; required.
+
+    Returns:
+        dict: Summary of sync operation with keys:
+            - status (str): "ok" on success
+            - events_synced (int): Number of events fetched and stored
+            - project_id (str): The project UUID as a string
+
+    Raises:
+        HTTPException: If project_id is missing (400) or sync fails (500).
+    """
+    # Validate project_id first (this will raise HTTPException with 400 if missing)
+    pid = _require_project_id(project_id)
+    enabled = get_posthog_config_value(pid, "enabled")
+    if enabled is False:
+        return {"status": "filtered", "project_id": str(pid)}
+
+    try:
+        # TODO: Read configuration from Redis
+        # For now, return success with 0 events synced
+        # Future implementation will:
+        # 1. Read config:posthog:{project_id}:api_key
+        # 2. Read config:posthog:{project_id}:project_id
+        # 3. Read config:posthog:{project_id}:event_types
+        # 4. Read config:posthog:{project_id}:last_synced
+        # 5. Call fetch_posthog_events()
+        # 6. Create FeedbackItems for each event
+        # 7. Update last_synced timestamp
+
+        return {"status": "ok", "events_synced": 0, "project_id": pid}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to sync PostHog events: {str(e)}"
         ) from e
 
 
@@ -631,16 +990,16 @@ def get_reddit_config(project_id: Optional[str] = Query(None)):
 def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Query(None)):
     """
     Set the subreddits configured for polling for a specific project.
-    
+
     Validates and normalizes the provided subreddit names, requires a project_id, persists the cleaned list for that project, and returns the stored subreddits and project id.
-    
+
     Parameters:
         payload (SubredditConfig): Object containing `subreddits`, the list of subreddit strings to set.
         project_id (UUID | None): Project identifier used to scope the configuration.
-    
+
     Returns:
         dict: {"subreddits": List[str], "project_id": str} — the cleaned subreddit list and the project id as a string.
-    
+
     Raises:
         HTTPException: If the cleaned subreddit list is empty (400) or if `project_id` is missing/invalid (400).
     """
@@ -650,6 +1009,449 @@ def set_reddit_config(payload: SubredditConfig, project_id: Optional[str] = Quer
     pid = _require_project_id(project_id)
     set_reddit_subreddits_for_project(cleaned, pid)
     return {"subreddits": cleaned, "project_id": str(pid)}
+
+
+# ============================================================
+# SPLUNK CONFIG ENDPOINTS
+# ============================================================
+
+class SplunkTokenConfig(BaseModel):
+    """Payload for configuring Splunk webhook token."""
+    token: str
+
+
+class SplunkSearchesConfig(BaseModel):
+    """Payload for configuring Splunk allowed searches."""
+    searches: List[str]
+
+
+class SplunkConfigUpdate(BaseModel):
+    """Payload for updating Splunk configuration in one request."""
+    webhook_token: Optional[str] = None
+    allowed_searches: Optional[List[str]] = None
+
+
+@app.get("/config/splunk")
+def get_splunk_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the Splunk configuration for a project.
+
+    Returns the webhook token, allowed searches list, and enabled state.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_token": str or None,
+            "allowed_searches": List[str] or None,
+            "enabled": bool (default True),
+            "project_id": str
+        }
+    """
+    pid = _require_project_id(project_id)
+    token = get_splunk_webhook_token(pid)
+    searches = get_splunk_allowed_searches(pid)
+    enabled = get_splunk_config_value(pid, "enabled")
+    if enabled is None:
+        enabled = True  # Default to enabled
+
+    return {
+        "webhook_token": token,
+        "allowed_searches": searches,
+        "enabled": enabled,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/splunk")
+def update_splunk_config(payload: SplunkConfigUpdate, project_id: Optional[str] = Query(None)):
+    """
+    Update the Splunk configuration for a project in a single request.
+
+    Parameters:
+        payload (SplunkConfigUpdate): Object containing the webhook token and/or allowed searches.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    if payload.webhook_token is not None:
+        set_splunk_webhook_token(pid, payload.webhook_token)
+    if payload.allowed_searches is not None:
+        set_splunk_allowed_searches(pid, payload.allowed_searches)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/splunk/token")
+def set_splunk_token(payload: SplunkTokenConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Splunk webhook token for a project.
+
+    Parameters:
+        payload (SplunkTokenConfig): Object containing the webhook token.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_splunk_webhook_token(pid, payload.token)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/splunk/searches")
+def set_splunk_searches(payload: SplunkSearchesConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Splunk searches for a project.
+
+    Parameters:
+        payload (SplunkSearchesConfig): Object containing the list of allowed search names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_splunk_allowed_searches(pid, payload.searches)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# DATADOG CONFIG ENDPOINTS
+# ============================================================
+
+class DatadogSecretConfig(BaseModel):
+    """Payload for configuring Datadog webhook secret."""
+    secret: str
+
+
+class DatadogMonitorsConfig(BaseModel):
+    """Payload for configuring Datadog allowed monitors."""
+    monitors: List[str]
+
+
+@app.get("/config/datadog")
+def get_datadog_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the Datadog configuration for a project.
+
+    Returns the webhook secret, allowed monitors list, and enabled state.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_secret": str or None,
+            "allowed_monitors": List[str] or None,
+            "enabled": bool (default True),
+            "project_id": str
+        }
+    """
+    pid = _require_project_id(project_id)
+    secret = get_datadog_webhook_secret_for_project(pid)
+    monitors = get_datadog_monitors_for_project(pid)
+    enabled = get_datadog_config_value(pid, "enabled")
+    if enabled is None:
+        enabled = True  # Default to enabled
+
+    return {
+        "webhook_secret": secret,
+        "allowed_monitors": monitors,
+        "enabled": enabled,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/datadog/secret")
+def set_datadog_secret(payload: DatadogSecretConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Datadog webhook secret for a project.
+
+    Parameters:
+        payload (DatadogSecretConfig): Object containing the webhook secret.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_datadog_webhook_secret_for_project(payload.secret, pid)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/datadog/monitors")
+def set_datadog_monitors(payload: DatadogMonitorsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Datadog monitors for a project.
+
+    Parameters:
+        payload (DatadogMonitorsConfig): Object containing the list of monitor IDs or ["*"].
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_datadog_monitors_for_project(payload.monitors, pid)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# POSTHOG CONFIG ENDPOINTS
+# ============================================================
+
+class PostHogEventTypesConfig(BaseModel):
+    """Payload for configuring PostHog event types."""
+    event_types: List[str]
+
+
+@app.get("/config/posthog")
+def get_posthog_config(project_id: Optional[str] = Query(None)):
+    """
+    Get the PostHog configuration for a project.
+
+    Returns the event types to track and enabled state.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "event_types": List[str] or None,
+            "enabled": bool (default True),
+            "project_id": str
+        }
+    """
+    pid = _require_project_id(project_id)
+    event_types = get_posthog_event_types(pid)
+    enabled = get_posthog_config_value(pid, "enabled")
+    if enabled is None:
+        enabled = True  # Default to enabled
+
+    return {
+        "event_types": event_types,
+        "enabled": enabled,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/posthog/events")
+def set_posthog_events(payload: PostHogEventTypesConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the PostHog event types to track for a project.
+
+    Parameters:
+        payload (PostHogEventTypesConfig): Object containing the list of event types.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_posthog_event_types(pid, payload.event_types)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# SENTRY CONFIG ENDPOINTS
+# ============================================================
+
+class SentrySecretConfig(BaseModel):
+    """Payload for configuring Sentry webhook secret."""
+    secret: str
+
+
+class SentryEnvironmentsConfig(BaseModel):
+    """Payload for configuring Sentry allowed environments."""
+    environments: List[str]
+
+
+class SentryLevelsConfig(BaseModel):
+    """Payload for configuring Sentry allowed levels."""
+    levels: List[str]
+
+
+class SentryConfigUpdate(BaseModel):
+    """Payload for updating Sentry configuration in one request."""
+    webhook_secret: Optional[str] = None
+    environments: Optional[List[str]] = None
+    levels: Optional[List[str]] = None
+
+
+class IntegrationEnabledConfig(BaseModel):
+    """Payload for configuring integration enabled state."""
+    enabled: bool
+
+
+@app.get("/config/sentry")
+def get_sentry_config_endpoint(project_id: Optional[str] = Query(None)):
+    """
+    Get the Sentry configuration for a project.
+
+    Returns the webhook secret, allowed environments, allowed levels, and enabled state.
+
+    Parameters:
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {
+            "webhook_secret": str or None,
+            "allowed_environments": List[str] or None,
+            "allowed_levels": List[str] or None,
+            "enabled": bool (default True),
+            "project_id": str
+        }
+    """
+    pid = _require_project_id(project_id)
+    secret = get_sentry_config_value(pid, "webhook_secret")
+    environments = get_sentry_config_value(pid, "environments")
+    levels = get_sentry_config_value(pid, "levels")
+    enabled = get_sentry_config_value(pid, "enabled")
+    if enabled is None:
+        enabled = True  # Default to enabled
+
+    return {
+        "webhook_secret": secret,
+        "allowed_environments": environments,
+        "allowed_levels": levels,
+        "enabled": enabled,
+        "project_id": str(pid)
+    }
+
+
+@app.post("/config/sentry")
+def update_sentry_config(payload: SentryConfigUpdate, project_id: Optional[str] = Query(None)):
+    """
+    Update the Sentry configuration for a project in a single request.
+
+    Parameters:
+        payload (SentryConfigUpdate): Object containing webhook secret, environments, and/or levels.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    if payload.webhook_secret is not None:
+        set_sentry_config_value(pid, "webhook_secret", payload.webhook_secret)
+    if payload.environments is not None:
+        set_sentry_config_value(pid, "environments", payload.environments)
+    if payload.levels is not None:
+        set_sentry_config_value(pid, "levels", payload.levels)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/sentry/secret")
+def set_sentry_secret(payload: SentrySecretConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the Sentry webhook secret for a project.
+
+    Parameters:
+        payload (SentrySecretConfig): Object containing the webhook secret.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_sentry_config_value(pid, "webhook_secret", payload.secret)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/sentry/environments")
+def set_sentry_environments(payload: SentryEnvironmentsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Sentry environments for a project.
+
+    Parameters:
+        payload (SentryEnvironmentsConfig): Object containing the list of environment names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_sentry_config_value(pid, "environments", payload.environments)
+
+    return {"status": "ok"}
+
+
+@app.post("/config/sentry/levels")
+def set_sentry_levels(payload: SentryLevelsConfig, project_id: Optional[str] = Query(None)):
+    """
+    Set the allowed Sentry levels for a project.
+
+    Parameters:
+        payload (SentryLevelsConfig): Object containing the list of level names.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+    """
+    pid = _require_project_id(project_id)
+    set_sentry_config_value(pid, "levels", payload.levels)
+
+    return {"status": "ok"}
+
+
+# ============================================================
+# GENERIC INTEGRATION ENABLED STATE ENDPOINT
+# ============================================================
+
+@app.post("/config/{integration}/enabled")
+def set_integration_enabled(
+    integration: str,
+    payload: IntegrationEnabledConfig,
+    project_id: Optional[str] = Query(None)
+):
+    """
+    Set the enabled state for any integration.
+
+    Supports: splunk, datadog, posthog, sentry
+
+    Parameters:
+        integration (str): Integration name (splunk, datadog, posthog, sentry).
+        payload (IntegrationEnabledConfig): Object containing the enabled boolean.
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"status": "ok"}
+
+    Raises:
+        HTTPException: 400 if integration is not supported.
+    """
+    pid = _require_project_id(project_id)
+
+    # Validate integration name
+    valid_integrations = ["splunk", "datadog", "posthog", "sentry"]
+    if integration not in valid_integrations:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid integration: {integration}. Must be one of {valid_integrations}"
+        )
+
+    # Route to appropriate config function
+    if integration == "splunk":
+        set_splunk_config_value(pid, "enabled", payload.enabled)
+    elif integration == "datadog":
+        set_datadog_config_value(pid, "enabled", payload.enabled)
+    elif integration == "posthog":
+        set_posthog_config_value(pid, "enabled", payload.enabled)
+    elif integration == "sentry":
+        set_sentry_config_value(pid, "enabled", payload.enabled)
+
+    return {"status": "ok"}
 
 
 @app.post("/admin/trigger-poll")
@@ -670,8 +1472,6 @@ async def trigger_poll(project_id: Optional[str] = Query(None)):
     subreddits = get_reddit_subreddits_for_project(pid) or []
     if not subreddits:
         return {"status": "skipped", "message": "No subreddits configured", "project_id": str(pid)}
-    
-    from fastapi.concurrency import run_in_threadpool
     
     # Helper to ingest directly without HTTP request (avoids deadlock)
     def direct_ingest(payload: dict):
@@ -1158,8 +1958,6 @@ async def start_cluster_fix(
     Accepts optional X-GitHub-Token header for per-user GitHub authentication.
     Falls back to GITHUB_TOKEN environment variable if header is not provided.
     """
-    from fastapi import BackgroundTasks
-
     pid = _require_project_id(project_id)
     pid_str = str(pid)
     cluster = get_cluster(pid_str, cluster_id)

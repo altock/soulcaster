@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import type { GitHubRepo } from '@/types';
+import IntegrationsDirectory, { type IntegrationId } from '@/components/integrations/IntegrationsDirectory';
+import RequestIntegrationDialog from '@/components/integrations/RequestIntegrationDialog';
+import SearchInput from '@/components/ui/SearchInput';
 
-type SourceType = 'reddit' | 'github';
+type SourceType = 'reddit' | 'github' | IntegrationId;
 
 /**
  * Render the administration panel for configuring Reddit subreddits and GitHub repositories.
@@ -14,6 +17,7 @@ type SourceType = 'reddit' | 'github';
  */
 export default function SourceConfig() {
   const [selectedSource, setSelectedSource] = useState<SourceType | null>(null);
+  const [sourceQuery, setSourceQuery] = useState('');
 
   // Reddit state
   const [subreddits, setSubreddits] = useState<string[]>([]);
@@ -80,7 +84,58 @@ export default function SourceConfig() {
       description: 'Sync open-source repository issues automatically',
       enabled: true,
     },
+    {
+      type: 'sentry' as const,
+      icon: '⚠️',
+      title: 'Sentry',
+      description: 'Capture errors and performance issues',
+      enabled: true,
+    },
+    {
+      type: 'splunk' as const,
+      icon: '🔍',
+      title: 'Splunk',
+      description: 'Monitor logs and trigger alerts via webhook',
+      enabled: true,
+    },
+    {
+      type: 'datadog' as const,
+      icon: '🐕',
+      title: 'Datadog',
+      description: 'Receive monitor alerts and metrics',
+      enabled: true,
+    },
+    {
+      type: 'posthog' as const,
+      icon: '📊',
+      title: 'PostHog',
+      description: 'Track product analytics events',
+      enabled: true,
+    },
   ];
+
+  const integrationIds: IntegrationId[] = ['sentry', 'splunk', 'datadog', 'posthog'];
+  const selectedIntegration =
+    selectedSource && integrationIds.includes(selectedSource as IntegrationId)
+      ? (selectedSource as IntegrationId)
+      : null;
+  const selectedIntegrationMeta = selectedIntegration
+    ? sources.find((source) => source.type === selectedIntegration)
+    : null;
+
+  const normalizedSourceQuery = sourceQuery.trim().toLowerCase();
+  const matchedSources = normalizedSourceQuery
+    ? sources.filter((source) => {
+        const haystack = `${source.title} ${source.description} ${source.type}`.toLowerCase();
+        return haystack.includes(normalizedSourceQuery);
+      })
+    : sources;
+
+  const selectedSourceItem = selectedSource ? sources.find((source) => source.type === selectedSource) : null;
+  const visibleSources =
+    selectedSourceItem && !matchedSources.some((source) => source.type === selectedSourceItem.type)
+      ? [selectedSourceItem, ...matchedSources]
+      : matchedSources;
 
   const addSubreddit = () => {
     const slug = newSubreddit.trim().toLowerCase();
@@ -220,8 +275,38 @@ export default function SourceConfig() {
       <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
       <h3 className="text-lg font-semibold text-white mb-4 relative z-10">Configure Feedback Sources</h3>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 relative z-10">
-        {sources.map((source) => {
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 relative z-10">
+        <SearchInput
+          value={sourceQuery}
+          onChange={setSourceQuery}
+          placeholder="Search sources…"
+          className="flex-1"
+        />
+        <RequestIntegrationDialog
+          requestHref="mailto:support@soulcaster.dev?subject=Integration%20%2F%20Source%20Request"
+          triggerTitle="Request a new integration/source"
+          triggerClassName="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-white/10 hover:text-white transition-colors"
+        >
+          Add new integration/source
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+        </RequestIntegrationDialog>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4 relative z-10">
+        {visibleSources.map((source) => {
           const isSelected = selectedSource === source.type;
           return (
             <button
@@ -252,6 +337,12 @@ export default function SourceConfig() {
           );
         })}
       </div>
+
+      {visibleSources.length === 0 && (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center relative z-10">
+          <p className="text-sm text-slate-300">No sources match “{sourceQuery}”.</p>
+        </div>
+      )}
 
       {selectedSource === 'reddit' && sources.find((s) => s.type === 'reddit')?.enabled && (
         <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
@@ -466,6 +557,46 @@ export default function SourceConfig() {
             {repoMessage && <p className="text-sm text-emerald-400">{repoMessage}</p>}
             {repoError && <p className="text-sm text-rose-400">{repoError}</p>}
           </div>
+        </div>
+      )}
+
+      {selectedIntegration && (
+        <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="font-semibold text-slate-200">{selectedIntegrationMeta?.title ?? 'Integration'}</h4>
+              <p className="text-sm text-slate-400">
+                {selectedIntegrationMeta?.description ??
+                  'Connect third-party tools to automatically ingest feedback via webhooks.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <a
+                href="/settings/integrations"
+                className="text-xs font-medium text-emerald-300 hover:text-emerald-200 transition-colors"
+                title="Open full-page integrations directory"
+              >
+                Open all →
+              </a>
+              <RequestIntegrationDialog
+                requestHref="mailto:support@soulcaster.dev?subject=Integration%20Request"
+                defaultName={selectedIntegrationMeta?.title ?? ''}
+                triggerTitle="Request a new integration"
+                triggerClassName="text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Request →
+              </RequestIntegrationDialog>
+            </div>
+          </div>
+
+          <IntegrationsDirectory
+            integrationIds={[selectedIntegration]}
+            pageSize={1}
+            showSearch={false}
+            showMeta={false}
+            showPagination={false}
+            showRequestButton={false}
+          />
         </div>
       )}
 

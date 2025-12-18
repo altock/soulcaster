@@ -70,13 +70,13 @@ class FeedbackItem(BaseModel):
     """
     Represents a single piece of user feedback from any source.
 
-    This model normalizes feedback from different sources (Reddit, Sentry, manual, GitHub)
+    This model normalizes feedback from different sources (Reddit, Sentry, manual, GitHub, Splunk, PostHog, Datadog)
     into a consistent schema for processing by the FeedbackAgent system.
 
     Attributes:
         id: Unique identifier for this feedback item
         project_id: Project this feedback belongs to (multi-tenant boundary, supports UUID/CUID)
-        source: The origin of the feedback (reddit, sentry, manual, or github)
+        source: The origin of the feedback (reddit, sentry, manual, github, splunk, posthog, or datadog)
         external_id: ID from the original source system (e.g., Reddit post ID)
         title: Short summary or title (max 80 chars for manual entries)
         body: Full text content of the feedback
@@ -86,7 +86,7 @@ class FeedbackItem(BaseModel):
 
     id: UUID
     project_id: Union[str, UUID]  # Supports both UUID and CUID formats
-    source: Literal["reddit", "sentry", "manual", "github"]
+    source: Literal["reddit", "sentry", "manual", "github", "splunk", "posthog", "datadog"]
     external_id: Optional[str] = None
     title: str
     body: str
