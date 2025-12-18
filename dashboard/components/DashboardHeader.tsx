@@ -45,26 +45,17 @@ export default function DashboardHeader({
 
           <nav className="flex items-center gap-1">
             <Link
-              href="/"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname === '/' || activePage === 'overview'
+              href="/dashboard"
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname === '/dashboard' || activePage === 'overview'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
             >
-              Overview
+              Dashboard
             </Link>
             <Link
-              href="/feedback"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/feedback') || activePage === 'feedback'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`}
-            >
-              Feedback
-            </Link>
-            <Link
-              href="/clusters"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/clusters') || activePage === 'clusters'
+              href="/dashboard/clusters"
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/clusters') || activePage === 'clusters'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
@@ -72,34 +63,27 @@ export default function DashboardHeader({
               Clusters
             </Link>
             <Link
-              href="/prs"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/prs') || activePage === 'prs'
+              href="/dashboard/feedback"
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/feedback') || activePage === 'feedback'
+                ? 'bg-white/5 text-emerald-400'
+                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                }`}
+            >
+              Feedback
+            </Link>
+            <Link
+              href="/dashboard/prs"
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/prs') || activePage === 'prs'
                 ? 'bg-white/5 text-emerald-400'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
             >
               PRs
             </Link>
-            <span
-              aria-disabled="true"
-              className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed select-none"
-            >
-              Billing
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/10">
-                Coming soon
-              </span>
-            </span>
           </nav>
         </div>
 
         <div className="flex items-center gap-3">
-          <button className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-400 hover:text-emerald-400 transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-            </svg>
-          </button>
-
           {status === 'loading' ? (
             <div className="h-7 w-7 rounded-full border border-white/10 bg-white/5 animate-pulse"></div>
           ) : session ? (

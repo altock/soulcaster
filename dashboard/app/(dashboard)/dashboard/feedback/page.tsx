@@ -10,13 +10,11 @@ export default function FeedbackPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   const handleFeedbackSubmitted = () => {
-    // Trigger refresh of feedback list and stats
     setRefreshTrigger((prev) => prev + 1);
   };
 
   return (
     <div className="min-h-screen">
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex justify-end mb-6">
           <button
@@ -29,7 +27,6 @@ export default function FeedbackPage() {
           </button>
         </div>
 
-        {/* Add Source Panel (collapsible) */}
         {showAddSource && (
           <div className="mb-6 space-y-4 animate-in slide-in-from-top">
             <ManualFeedbackForm onSuccess={handleFeedbackSubmitted} />
@@ -37,12 +34,10 @@ export default function FeedbackPage() {
           </div>
         )}
 
-        {/* Feedback List */}
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-white mb-4">All Feedback</h2>
           <FeedbackList refreshTrigger={refreshTrigger} />
         </div>
-
       </div>
     </div>
   );

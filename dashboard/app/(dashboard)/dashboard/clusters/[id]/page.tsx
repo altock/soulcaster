@@ -6,13 +6,6 @@ import Link from 'next/link';
 import type { AgentJob, ClusterDetail, FeedbackSource, CodingPlan } from '@/types';
 import FeedbackCard from '@/components/FeedbackCard';
 
-/**
- * Client React component that renders details for a single cluster, its feedback items, and actions related to generating fixes.
- *
- * Displays loading and error states, the cluster summary (timestamps, source counts, GitHub links/branch, and any error message), a list of feedback items, and an action to start fix generation. While a cluster is in the "fixing" status the component polls the API for updates.
- *
- * @returns The rendered JSX element for the cluster detail page
- */
 export default function ClusterDetailPage() {
   const params = useParams();
   const clusterId = params.id as string;
@@ -39,7 +32,6 @@ export default function ClusterDetailPage() {
 
   useEffect(() => {
     if (cluster?.status === 'fixing' && !isFixing) {
-      // Poll for updates while fixing
       const interval = setInterval(fetchCluster, 3000);
       return () => clearInterval(interval);
     }
@@ -141,10 +133,8 @@ export default function ClusterDetailPage() {
   const handleStartFix = async () => {
     try {
       setIsFixing(true);
-      // Ensure plan exists first
       if (!codingPlan) {
         await handleGeneratePlan();
-        // Fetch updated plan
         await fetchPlan();
       }
 
@@ -182,11 +172,11 @@ export default function ClusterDetailPage() {
   const getSourceIcon = (source: FeedbackSource) => {
     switch (source) {
       case 'reddit':
-        return '🗨️ Reddit';
+        return 'Reddit';
       case 'github':
-        return '🐙 GitHub';
+        return 'GitHub';
       case 'manual':
-        return '✍️ Manual';
+        return 'Manual';
     }
   };
 
@@ -230,7 +220,7 @@ export default function ClusterDetailPage() {
                 >
                   Try again
                 </button>
-                <Link href="/" className="text-sm font-medium text-red-800 hover:text-red-900">
+                <Link href="/dashboard/clusters" className="text-sm font-medium text-red-800 hover:text-red-900">
                   Back to clusters
                 </Link>
               </div>
@@ -241,7 +231,6 @@ export default function ClusterDetailPage() {
     );
   }
 
-  // Count by source
   const sourceCounts = cluster.feedback_items.reduce(
     (acc, item) => {
       acc[item.source] = (acc[item.source] || 0) + 1;
@@ -250,7 +239,6 @@ export default function ClusterDetailPage() {
     {} as Record<string, number>
   );
 
-  // Count by repo
   const repoCounts = cluster.feedback_items.reduce(
     (acc, item) => {
       if (item.repo) {
@@ -261,12 +249,10 @@ export default function ClusterDetailPage() {
     {} as Record<string, number>
   );
 
-  // Filter feedback items by selected repo
   const filteredFeedbackItems = selectedRepo
     ? cluster.feedback_items.filter((item) => item.repo === selectedRepo)
     : cluster.feedback_items;
 
-  // Count GitHub issues in the cluster
   const githubIssueCount = cluster.feedback_items.filter(
     (item) => item.source === 'github'
   ).length;
@@ -276,7 +262,7 @@ export default function ClusterDetailPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-6">
           <Link
-            href="/clusters"
+            href="/dashboard/clusters"
             className="text-sm font-medium text-gray-400 hover:text-matrix-green transition-colors flex items-center gap-1 uppercase tracking-wide"
           >
             ← Back to all clusters
@@ -584,7 +570,7 @@ export default function ClusterDetailPage() {
               )}
 
               {fixJobs.length === 0 ? (
-                <div className="text-sm text-slate-500">No fix jobs yet. Click “Start Automated Fix” to create one.</div>
+                <div className="text-sm text-slate-500">No fix jobs yet. Click "Start Automated Fix" to create one.</div>
               ) : (
                 <div className="grid gap-3">
                   {fixJobs.map((job) => (
