@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { useState } from 'react';
@@ -9,7 +10,6 @@ type ActivePage = 'overview' | 'feedback' | 'clusters' | 'prs' | 'billing';
 
 interface DashboardHeaderProps {
   activePage?: ActivePage;
-  rightContent?: React.ReactNode;
   className?: string;
 }
 
@@ -18,12 +18,10 @@ interface DashboardHeaderProps {
  * Highlights the active page in the navigation menu.
  *
  * @param activePage - The currently active page
- * @param rightContent - Optional content to render on the right side of the header
  * @param className - Optional additional CSS classes to apply to the outer container
  */
 export default function DashboardHeader({
   className = '',
-  rightContent,
   activePage,
 }: DashboardHeaderProps) {
   const pathname = usePathname();
@@ -95,7 +93,7 @@ export default function DashboardHeader({
                 title={session.user?.name || 'User menu'}
               >
                 {session.user?.image ? (
-                  <img src={session.user.image} alt={session.user.name || 'User'} className="h-full w-full object-cover" />
+                  <Image src={session.user.image} alt={session.user.name || 'User'} width={28} height={28} className="h-full w-full object-cover" />
                 ) : (
                   <div className="h-full w-full flex items-center justify-center text-[0.6rem] font-medium text-emerald-300 bg-emerald-500/20">
                     {session.user?.name?.substring(0, 2).toUpperCase() || 'SC'}

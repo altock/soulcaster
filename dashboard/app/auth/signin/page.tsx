@@ -6,9 +6,34 @@ import { Suspense } from 'react';
 import Link from 'next/link';
 import LandingHeader from '@/components/LandingHeader';
 
+function CheckIcon() {
+  return (
+    <svg
+      className="h-5 w-5 text-emerald-400 mr-2 flex-shrink-0 mt-0.5"
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
+      <path d="M5 13l4 4L19 7"></path>
+    </svg>
+  );
+}
+
+function isValidCallbackUrl(url: string): boolean {
+  // Only allow relative paths starting with / to prevent open redirect
+  if (!url.startsWith('/')) return false;
+  // Prevent protocol-relative URLs (e.g., //evil.com)
+  if (url.startsWith('//')) return false;
+  return true;
+}
+
 function SignInContent() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const rawCallbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const callbackUrl = isValidCallbackUrl(rawCallbackUrl) ? rawCallbackUrl : '/dashboard';
   const error = searchParams.get('error');
 
   return (
@@ -60,51 +85,21 @@ function SignInContent() {
               </h3>
               <ul className="text-sm text-slate-300 space-y-2">
                 <li className="flex items-start">
-                  <svg
-                    className="h-5 w-5 text-emerald-400 mr-2 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path d="M5 13l4 4L19 7"></path>
-                  </svg>
+                  <CheckIcon />
                   <span>
                     <strong className="text-white">Create branches and pull requests</strong> to fix
                     issues in your repositories
                   </span>
                 </li>
                 <li className="flex items-start">
-                  <svg
-                    className="h-5 w-5 text-emerald-400 mr-2 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path d="M5 13l4 4L19 7"></path>
-                  </svg>
+                  <CheckIcon />
                   <span>
                     <strong className="text-white">Read repository code</strong> to analyze issues
                     and generate fixes
                   </span>
                 </li>
                 <li className="flex items-start">
-                  <svg
-                    className="h-5 w-5 text-emerald-400 mr-2 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path d="M5 13l4 4L19 7"></path>
-                  </svg>
+                  <CheckIcon />
                   <span>
                     <strong className="text-white">Push commits</strong> to branches with automated
                     code changes

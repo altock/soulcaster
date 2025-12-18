@@ -11,27 +11,42 @@ type JobLogsPayload = {
 export default function PrsPage() {
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<string | null>(null);
 
   useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+
     const fetchJobs = async () => {
       try {
         const res = await fetch('/api/jobs');
         if (res.ok) {
           const data = await res.json();
           setJobs(data);
+          setError(null);
+        } else {
+          setError('Failed to fetch jobs');
         }
-      } catch (error) {
-        console.error('Failed to fetch jobs:', error);
+      } catch (err) {
+        console.error('Failed to fetch jobs:', err);
+        setError('Failed to fetch jobs. Check your connection.');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchJobs();
-    const interval = setInterval(fetchJobs, 5000);
-    return () => clearInterval(interval);
+    // Await initial fetch before starting interval to avoid race conditions
+    const init = async () => {
+      await fetchJobs();
+      // Only start polling after initial fetch completes
+      intervalId = setInterval(fetchJobs, 5000);
+    };
+
+    init();
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {
@@ -81,12 +96,23 @@ export default function PrsPage() {
           <div className="text-sm text-slate-400">Auto-refreshing every 5s</div>
         </div>
 
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-sm text-red-300">{error}</p>
+            </div>
+          </div>
+        )}
+
         {loading && jobs.length === 0 ? (
           <div className="text-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500 mx-auto mb-4"></div>
             <p className="text-slate-400">Loading jobs...</p>
           </div>
-        ) : jobs.length === 0 ? (
+        ) : jobs.length === 0 && !error ? (
           <div className="bg-emerald-950/20 rounded-3xl border border-white/10 backdrop-blur-sm p-16 text-center relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
             <div className="relative z-10">
