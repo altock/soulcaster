@@ -543,10 +543,47 @@ class InMemoryStore:
     def clear_config(self):
         """
         Remove all stored Reddit subreddit configurations for all projects.
-        
+
         This clears any per-project subreddit lists so subsequent lookups return no configuration.
         """
         self.reddit_subreddits = {}
+        # Also clear Sentry config
+        if hasattr(self, "sentry_config"):
+            self.sentry_config = {}
+
+    # Config (Sentry)
+    def set_sentry_config(self, project_id: ProjectId, key: str, value: Any) -> None:
+        """
+        Set a Sentry configuration value for a project.
+
+        Parameters:
+            project_id (ProjectId): Project identifier.
+            key (str): Config key (e.g., "webhook_secret", "environments", "levels").
+            value (Any): Config value to store.
+        """
+        pid_str = str(project_id)
+        if not hasattr(self, "sentry_config"):
+            self.sentry_config = {}
+        if pid_str not in self.sentry_config:
+            self.sentry_config[pid_str] = {}
+        self.sentry_config[pid_str][key] = value
+
+    def get_sentry_config(self, project_id: ProjectId, key: str) -> Optional[Any]:
+        """
+        Get a Sentry configuration value for a project.
+
+        Parameters:
+            project_id (ProjectId): Project identifier.
+            key (str): Config key to retrieve.
+
+        Returns:
+            Optional[Any]: Config value if it exists, None otherwise.
+        """
+        if not hasattr(self, "sentry_config"):
+            self.sentry_config = {}
+        pid_str = str(project_id)
+        project_config = self.sentry_config.get(pid_str, {})
+        return project_config.get(key)
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
@@ -1421,12 +1458,59 @@ class RedisStore:
         # Remove all subreddit config entries across projects
         """
         Remove all per-project Reddit subreddit configuration entries from the store.
-        
+
         This deletes every key matching the `config:reddit:subreddits:*` pattern so no project-specific subreddit lists remain.
         """
         keys = list(self._scan_iter("config:reddit:subreddits:*"))
-        if keys:
-            self._delete(*keys)
+        # Also clear Sentry config
+        sentry_keys = list(self._scan_iter("config:sentry:*"))
+        all_keys = keys + sentry_keys
+        if all_keys:
+            self._delete(*all_keys)
+
+    # Config (Sentry)
+    @staticmethod
+    def _sentry_config_key(project_id: ProjectId, key: str) -> str:
+        """
+        Construct Redis key for Sentry configuration.
+
+        Returns:
+            str: Redis key in the form "config:sentry:{project_id}:{key}".
+        """
+        return f"config:sentry:{project_id}:{key}"
+
+    def set_sentry_config(self, project_id: ProjectId, key: str, value: Any) -> None:
+        """
+        Set a Sentry configuration value for a project.
+
+        Parameters:
+            project_id (ProjectId): Project identifier.
+            key (str): Config key (e.g., "webhook_secret", "environments", "levels").
+            value (Any): Config value to store (will be JSON-encoded).
+        """
+        redis_key = self._sentry_config_key(project_id, key)
+        payload = json.dumps(value)
+        self._set(redis_key, payload)
+
+    def get_sentry_config(self, project_id: ProjectId, key: str) -> Optional[Any]:
+        """
+        Get a Sentry configuration value for a project.
+
+        Parameters:
+            project_id (ProjectId): Project identifier.
+            key (str): Config key to retrieve.
+
+        Returns:
+            Optional[Any]: Config value if it exists, None otherwise.
+        """
+        redis_key = self._sentry_config_key(project_id, key)
+        raw = self._get(redis_key)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
 
     # Jobs
     def add_job(self, job: AgentJob) -> AgentJob:
@@ -2423,14 +2507,41 @@ def set_reddit_subreddits_for_project(subreddits: List[str], project_id: Project
 def get_reddit_subreddits_for_project(project_id: ProjectId) -> Optional[List[str]]:
     """
     Retrieve the configured Reddit subreddit names for a specific project.
-    
+
     Parameters:
         project_id (UUID): The project identifier to lookup subreddit configuration for.
-    
+
     Returns:
         A list of subreddit names for the given project, or `None` if no subreddit configuration exists.
     """
     return _STORE.get_reddit_subreddits(project_id)
+
+
+# Sentry Config API
+def set_sentry_config(project_id: ProjectId, key: str, value: Any) -> None:
+    """
+    Set a Sentry configuration value for a project.
+
+    Parameters:
+        project_id (ProjectId): Project identifier.
+        key (str): Config key (e.g., "webhook_secret", "environments", "levels").
+        value (Any): Config value to store.
+    """
+    return _STORE.set_sentry_config(project_id, key, value)
+
+
+def get_sentry_config(project_id: ProjectId, key: str) -> Optional[Any]:
+    """
+    Get a Sentry configuration value for a project.
+
+    Parameters:
+        project_id (ProjectId): Project identifier.
+        key (str): Config key to retrieve.
+
+    Returns:
+        Optional[Any]: Config value if it exists, None otherwise.
+    """
+    return _STORE.get_sentry_config(project_id, key)
 
 # Coding Plan API
 def add_coding_plan(plan: CodingPlan) -> CodingPlan:

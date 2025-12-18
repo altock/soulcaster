@@ -7,6 +7,7 @@ This module provides HTTP endpoints for ingesting feedback from multiple sources
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -237,55 +238,131 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[str] = Query(None)):
 
 
 # ============================================================
-# PHASE 2: SENTRY INTEGRATION (Currently deferred)
+# PHASE 2: SENTRY INTEGRATION (Enhanced)
 # ============================================================
 @app.post("/ingest/sentry")
-def ingest_sentry(payload: dict, project_id: Optional[str] = Query(None)):
+async def ingest_sentry(
+    request: Request,
+    project_id: Optional[str] = Query(None),
+    sentry_hook_signature: Optional[str] = Header(None, alias="sentry-hook-signature"),
+):
     """
-    Normalize a Sentry webhook payload into a FeedbackItem, persist it under the given project, and trigger automatic clustering.
-    
-    Parameters:
-        payload (dict): Raw JSON payload received from Sentry's webhook.
-        project_id (UUID | None): UUID of the project to associate the created FeedbackItem; required and validated by the function.
-    
-    Returns:
-        dict: A response containing keys `"status"` (always `"ok"` on success), `"id"` (created feedback item UUID as a string), and `"project_id"` (associated project UUID as a string).
-    
-    Raises:
-        HTTPException: If processing fails, an HTTP 500 error is raised with details about the failure.
-    """
-    try:
-        event_id = payload.get("event_id")
-        title = payload.get("message") or "Sentry Issue"
+    Enhanced Sentry webhook ingestion with signature verification, issue deduplication, and filtering.
 
-        # Construct body from exception data
+    Features:
+    - HMAC-SHA256 signature verification (if webhook_secret configured)
+    - Deduplication by issue short_id (groups events by issue)
+    - Stack trace extraction and normalization
+    - Environment and level filtering
+
+    Parameters:
+        request (Request): FastAPI request object (for reading body).
+        project_id (UUID | None): UUID of the project to associate the FeedbackItem with.
+        sentry_hook_signature (str | None): HMAC signature from Sentry webhook header.
+
+    Returns:
+        dict: {"status": "ok", "id": "<item-uuid>", "project_id": "<project-uuid>"}
+              or {"status": "filtered"} if event was filtered out.
+
+    Raises:
+        HTTPException: 401 if signature verification fails, 500 if processing fails.
+    """
+    from sentry_client import (
+        verify_sentry_signature,
+        extract_sentry_stacktrace,
+        extract_issue_short_id,
+        extract_event_id,
+        extract_sentry_metadata,
+        should_ingest_event,
+    )
+    from store import get_sentry_config, get_feedback_by_external_id
+
+    try:
+        pid = _require_project_id(project_id)
+
+        # Read raw body and parse JSON
+        body = await request.body()
+        payload = json.loads(body.decode('utf-8'))
+
+        # Verify signature if configured
+        webhook_secret = get_sentry_config(pid, "webhook_secret")
+        if webhook_secret:
+            if not sentry_hook_signature:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Missing sentry-hook-signature header"
+                )
+
+            if not verify_sentry_signature(body, sentry_hook_signature, webhook_secret):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid webhook signature"
+                )
+
+        # Check environment and level filters
+        allowed_environments = get_sentry_config(pid, "environments")
+        allowed_levels = get_sentry_config(pid, "levels")
+
+        if not should_ingest_event(payload, allowed_environments, allowed_levels):
+            # Event filtered out - return success but don't create item
+            return {"status": "filtered", "project_id": str(pid)}
+
+        # Extract issue short_id for deduplication (prefer over event_id)
+        issue_short_id = extract_issue_short_id(payload)
+        event_id = extract_event_id(payload)
+        external_id = issue_short_id or event_id
+
+        # Check for existing item with same external_id
+        if external_id:
+            existing = get_feedback_by_external_id(pid, "sentry", external_id)
+            if existing:
+                return {"status": "duplicate", "id": str(existing.id), "project_id": str(pid)}
+
+        # Extract data from payload
+        title = payload.get("message") or payload.get("data", {}).get("event", {}).get("message") or "Sentry Issue"
+        stacktrace = extract_sentry_stacktrace(payload)
+        metadata = extract_sentry_metadata(payload)
+
+        # Construct body with exception details and stack trace
+        exception_values = payload.get("exception", {}).get("values", [])
+        if not exception_values:
+            exception_values = (
+                payload.get("data", {})
+                .get("event", {})
+                .get("exception", {})
+                .get("values", [])
+            )
+
         body = ""
-        exception = payload.get("exception", {}).get("values", [])
-        if exception:
-            exc = exception[0]
+        if exception_values:
+            exc = exception_values[0]
             exc_type = exc.get("type", "Error")
             exc_value = exc.get("value", "")
-            body += f"{exc_type}: {exc_value}\n\nStacktrace:\n"
-            # Include first 3 stack frames for context
-            for frame in exc.get("stacktrace", {}).get("frames", [])[:3]:
-                body += f"  {frame.get('filename')}:{frame.get('lineno')}\n"
+            body += f"{exc_type}: {exc_value}\n"
 
-        pid = _require_project_id(project_id)
+        if stacktrace:
+            body += f"\nStacktrace:\n{stacktrace}"
+
+        # Create FeedbackItem
         item = FeedbackItem(
             id=uuid4(),
             project_id=pid,
             source="sentry",
-            external_id=event_id,
+            external_id=external_id,
             title=title,
             body=body,
-            metadata=payload,
+            metadata=metadata,
             created_at=datetime.now(timezone.utc),
         )
         add_feedback_item(item)
         _kickoff_clustering(str(pid))
         return {"status": "ok", "id": str(item.id), "project_id": str(pid)}
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (signature failures, etc.)
+        raise
     except Exception as e:
+        logger.exception(f"Failed to process Sentry payload: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to process Sentry payload: {str(e)}"
         ) from e
