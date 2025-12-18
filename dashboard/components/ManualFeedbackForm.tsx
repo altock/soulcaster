@@ -78,10 +78,13 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <div>
+          <div className="flex-1">
             {error && <p className="text-sm text-rose-400">{error}</p>}
             {success && (
-              <p className="text-sm text-emerald-400">✓ Feedback submitted successfully!</p>
+              <p className="text-sm text-emerald-400">Feedback submitted successfully!</p>
+            )}
+            {!error && !success && !text.trim() && (
+              <p className="text-sm text-slate-500">Enter feedback text to submit</p>
             )}
           </div>
 

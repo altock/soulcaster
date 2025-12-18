@@ -36,7 +36,10 @@ export default function FeedbackPage() {
 
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-white mb-4">All Feedback</h2>
-          <FeedbackList refreshTrigger={refreshTrigger} />
+          <FeedbackList
+            refreshTrigger={refreshTrigger}
+            onRequestShowSources={() => setShowAddSource(true)}
+          />
         </div>
       </div>
     </div>
