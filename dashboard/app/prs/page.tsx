@@ -2,24 +2,29 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import type { AgentJob } from '@/types';
 
-interface AgentJob {
-    id: string;
-    cluster_id: string;
-    status: 'pending' | 'running' | 'success' | 'failed';
-    logs: string | null;
-    created_at: string;
-    updated_at: string;
-}
+type JobLogsPayload = {
+    chunks: string[];
+};
 
+/**
+ * Render the Agent Jobs & PRs user interface.
+ *
+ * Displays loading, empty, and populated states and, when populated, a list of job cards. Each card shows the job status, truncated id, creation time, cluster link, an optional "View Pull Request" button when a PR URL is available, and optional logs.
+ *
+ * @returns A React element representing the Agent Jobs & PRs page.
+ */
 export default function PrsPage() {
     const [jobs, setJobs] = useState<AgentJob[]>([]);
     const [loading, setLoading] = useState(true);
+    const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+    const [jobLogs, setJobLogs] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchJobs = async () => {
             try {
-                const res = await fetch('http://localhost:8000/jobs');
+                const res = await fetch('/api/jobs');
                 if (res.ok) {
                     const data = await res.json();
                     setJobs(data);
@@ -36,6 +41,32 @@ export default function PrsPage() {
         const interval = setInterval(fetchJobs, 5000);
         return () => clearInterval(interval);
     }, []);
+
+    useEffect(() => {
+        if (!selectedJobId) {
+            setJobLogs(null);
+            return;
+        }
+
+        let cancelled = false;
+        const fetchLogs = async () => {
+            try {
+                const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?cursor=0&limit=200`);
+                if (!res.ok) return;
+                const payload = (await res.json()) as JobLogsPayload;
+                if (!cancelled) {
+                    setJobLogs(payload.chunks?.join('') || '');
+                }
+            } catch (error) {
+                console.error('Failed to fetch job logs:', error);
+            }
+        };
+
+        fetchLogs();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedJobId]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -81,7 +112,7 @@ export default function PrsPage() {
                         {jobs.map((job) => (
                             <div key={job.id} className="bg-white/5 rounded-xl border border-white/10 p-6 hover:border-white/20 transition-colors">
                                 <div className="flex items-start justify-between">
-                                    <div>
+                                    <div className="flex-1">
                                         <div className="flex items-center gap-3 mb-2">
                                             <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(job.status)} uppercase tracking-wide`}>
                                                 {job.status}
@@ -96,12 +127,34 @@ export default function PrsPage() {
                                         <div className="text-slate-300 text-sm mb-4">
                                             Cluster: <Link href={`/clusters/${job.cluster_id}`} className="text-emerald-400 hover:underline">{job.cluster_id.substring(0, 8)}...</Link>
                                         </div>
+                                        
+                                        {job.pr_url && (
+                                            <div className="mb-4">
+                                                <a 
+                                                    href={job.pr_url} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/30 transition-colors text-sm font-medium"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                    </svg>
+                                                    View Pull Request
+                                                </a>
+                                            </div>
+                                        )}
                                     </div>
+                                    <button
+                                        onClick={() => setSelectedJobId(selectedJobId === job.id ? null : job.id)}
+                                        className="ml-4 text-xs text-slate-300 hover:text-white border border-white/10 rounded-lg px-3 py-2 bg-black/20 hover:bg-black/40 transition-colors"
+                                    >
+                                        {selectedJobId === job.id ? 'Hide logs' : 'View logs'}
+                                    </button>
                                 </div>
 
-                                {job.logs && (
+                                {selectedJobId === job.id && jobLogs !== null && (
                                     <div className="mt-4 bg-black/50 rounded-lg p-4 font-mono text-xs text-slate-300 overflow-x-auto max-h-64 whitespace-pre-wrap border border-white/5">
-                                        {job.logs}
+                                        {jobLogs || 'No logs yet.'}
                                     </div>
                                 )}
                             </div>

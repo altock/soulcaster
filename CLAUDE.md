@@ -134,26 +134,67 @@ See `docs/DESIGN_DECISIONS.md` for full rationale on threshold and architecture 
 
 ## Environment Variables
 
-**Backend** (`.env` in project root):
-```bash
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-REDDIT_SUBREDDITS=claudeai,programming  # optional
-```
-
 **Dashboard** (`.env.local` in `/dashboard`):
 ```bash
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-UPSTASH_VECTOR_REST_URL=   # For vector-based clustering
-UPSTASH_VECTOR_REST_TOKEN= # Get from Upstash console
-GEMINI_API_KEY=  # or GOOGLE_GENERATIVE_AI_API_KEY
-GITHUB_ID=       # GitHub OAuth (optional)
-GITHUB_SECRET=
+# Upstash Redis (required)
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token-here
+
+# GitHub OAuth (REQUIRED for beta)
+# Create OAuth app at: https://github.com/settings/developers
+# Authorization callback URL: http://localhost:3000/api/auth/callback/github
+# Scopes requested: repo, read:user
+GITHUB_ID=your-github-oauth-client-id
+GITHUB_SECRET=your-github-oauth-client-secret
+
+# NextAuth (REQUIRED)
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=
+NEXTAUTH_SECRET=generate-with-openssl-rand-base64-32
+
+# Database (REQUIRED)
+DATABASE_URL=postgresql://user:password@localhost:5432/soulcaster
+
+# Backend API URL (REQUIRED)
 BACKEND_URL=http://localhost:8000
+
+# Reddit API (optional - for automated polling)
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+REDDIT_USER_AGENT=
+
+# LLM Provider (for Gemini embeddings/clustering)
+GEMINI_API_KEY=your-gemini-api-key
 ```
+
+**Required for Backend** (create `.env` in project root):
+
+```bash
+# Redis (same as dashboard)
+UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token-here
+
+# GitHub OAuth (same as dashboard)
+GITHUB_ID=your-github-oauth-client-id
+GITHUB_SECRET=your-github-oauth-client-secret
+
+# LLM Provider (REQUIRED)
+GEMINI_API_KEY=your-gemini-api-key
+
+# E2B Sandbox (REQUIRED for coding agent)
+E2B_API_KEY=your-e2b-api-key
+KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
+
+# Coding Agent Runner (default: sandbox_kilo)
+CODING_AGENT_RUNNER=sandbox_kilo
+```
+
+**How GitHub Authentication Works**:
+- Users MUST sign in with GitHub OAuth (required for all environments)
+- Access token stored securely in NextAuth session (encrypted)
+- Token passed to backend when creating PRs
+- PRs created from user's account (e.g., @username)
+- No fallback to personal access tokens - OAuth is required
+- Future: GitHub App support for bot-based PRs (soulcaster[bot])
 
 **Coding Agent**:
 ```bash

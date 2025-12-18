@@ -11,6 +11,19 @@ const ecsClient = new ECSClient({
     },
 });
 
+/**
+ * Handles POST requests to trigger the coding agent by verifying or creating a GitHub issue,
+ * optionally creating a backend job record, and starting an ECS Fargate task that runs the agent.
+ *
+ * @param request - Incoming HTTP request with a JSON body. Expected fields (optional): 
+ *   `issue_url` (GitHub issue URL to use), `context` or `issue_description` (issue body),
+ *   `issue_title`, `repo` (repo name), `owner` (repo owner), `repo_url` (Git URL), and `cluster_id`
+ *   (to create a backend tracking job). GitHub authentication (via getGitHubToken) is required
+ *   to verify or create issues.
+ * @returns A JSON HTTP response. On success, returns an object with `success: true`, `message`,
+ *   `taskArn`, and the resolved `issue_url`. On failure, returns an error object with `error`
+ *   and `details` and an appropriate HTTP status code.
+ */
 export async function POST(request: Request) {
     try {
         const body = await request.json();
@@ -30,7 +43,7 @@ export async function POST(request: Request) {
                 // Parse URL: https://github.com/owner/repo/issues/123
                 const match = issue_url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
                 if (match) {
-                    const [_, owner, repo, issue_number] = match;
+                    const [, owner, repo, issue_number] = match;
                     const octokit = new Octokit({ auth: githubToken });
                     await octokit.rest.issues.get({
                         owner,
@@ -104,7 +117,7 @@ export async function POST(request: Request) {
                 return NextResponse.json(
                     {
                         error: 'Configuration Error',
-                        details: 'Missing issue_url. To create an issue automatically, provide issue_description (or context) plus repo_url/owner+repo and ensure GITHUB_TOKEN is set in dashboard/.env'
+                        details: 'Missing issue_url. To create an issue automatically, provide issue_description (or context) plus repo_url/owner+repo and ensure you are authenticated with GitHub.'
                     },
                     { status: 400 }
                 );
@@ -152,6 +165,11 @@ export async function POST(request: Request) {
         ];
         if (jobId) {
             envOverrides.push({ name: "JOB_ID", value: jobId });
+        }
+
+        // Pass the user's session token to the agent
+        if (githubToken) {
+            envOverrides.push({ name: "GITHUB_TOKEN", value: githubToken });
         }
 
         const command = new RunTaskCommand({

@@ -5,6 +5,12 @@ Reddit's unauthenticated JSON listings. It normalizes posts and forwards them to
 the ingestion API while respecting rate limits and caching.
 """
 
+# ============================================================
+# PHASE 2: REDDIT INTEGRATION (Currently deferred)
+# ============================================================
+# The poller remains available for backward compatibility but is not part of
+# the current GitHub-only ingestion scope.
+
 import os
 import time
 from datetime import datetime, timezone
@@ -14,13 +20,8 @@ from uuid import uuid4
 import requests
 
 try:
-    from .store import get_reddit_subreddits as _store_get_reddit_subreddits
+    from store import get_reddit_subreddits as _store_get_reddit_subreddits
 except ImportError:
-    try:
-        from store import get_reddit_subreddits as _store_get_reddit_subreddits
-    except ImportError:
-        _store_get_reddit_subreddits = None
-except Exception:
     _store_get_reddit_subreddits = None
 
 USER_AGENT = "Mozilla/5.0 (FeedbackAgentHackathon/0.1)"

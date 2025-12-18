@@ -8,10 +8,15 @@ interface FeedbackListProps {
   refreshTrigger?: number;
 }
 
+/**
+ * Render a filterable feedback list with source tabs, optional repository filter, loading state, and empty-state handling.
+ *
+ * @param refreshTrigger - Optional external numeric trigger; changing this value forces the list to re-fetch feedback.
+ * @returns The component's rendered JSX containing filters, a loading indicator, an empty-state message, or a grid of feedback cards.
+ */
 export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedbackSource | 'all'>('all');
   const [repoFilter, setRepoFilter] = useState<string>('all');
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
@@ -36,10 +41,29 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
     }
   };
 
+  // Disable Reddit in UI while keeping type support in code paths
+  const sourceFilters: Array<{
+    id: FeedbackSource | 'all';
+    label: string;
+    enabled: boolean;
+  }> = [
+    { id: 'all', label: 'All', enabled: true },
+    { id: 'reddit', label: 'Reddit', enabled: false },
+    { id: 'github', label: 'GitHub', enabled: true },
+    { id: 'manual', label: 'Manual', enabled: true },
+  ];
+
+  // Ensure we never stay on a disabled filter
+  useEffect(() => {
+    const current = sourceFilters.find((f) => f.id === sourceFilter);
+    if (current && !current.enabled) {
+      setSourceFilter('all');
+    }
+  }, [sourceFilter]);
+
   const fetchFeedback = async () => {
     try {
       setLoading(true);
-      setError(null);
       const queryParams = new URLSearchParams({ limit: '50' });
       if (sourceFilter !== 'all') {
         queryParams.append('source', sourceFilter);
@@ -49,12 +73,18 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
       }
       const response = await fetch(`/api/feedback?${queryParams}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch feedback');
+        // Handle gracefully - show empty state instead of error for expected cases
+        // like missing project_id or no data
+        console.warn('Failed to fetch feedback:', response.status);
+        setItems([]);
+        return;
       }
       const data = await response.json();
-      setItems(data.items);
+      setItems(data.items || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      console.error('Error fetching feedback:', err);
+      // Show empty state instead of error for better UX
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -68,39 +98,32 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
     );
   }
 
-  if (error) {
-    return (
-      <div className="rounded-md bg-red-50 p-4">
-        <div className="flex">
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-red-800">Error loading feedback</h3>
-            <div className="mt-2 text-sm text-red-700">{error}</div>
-            <button
-              onClick={fetchFeedback}
-              className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
-            >
-              Try again
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div>
       {/* Filter tabs */}
       <div className="flex gap-2 mb-6 border-b border-white/10 pb-1">
-        {(['all', 'reddit', 'github', 'manual'] as const).map((filter) => (
+        {sourceFilters.map((filter) => (
           <button
-            key={filter}
-            onClick={() => setSourceFilter(filter)}
-            className={`px-4 py-2 text-sm font-medium transition-all uppercase tracking-wider rounded-t-lg relative top-[1px] ${sourceFilter === filter
+            key={filter.id}
+            type="button"
+            disabled={!filter.enabled}
+            onClick={() => {
+              if (filter.enabled) setSourceFilter(filter.id);
+            }}
+            className={`px-4 py-2 text-sm font-medium transition-all uppercase tracking-wider rounded-t-lg relative top-[1px] ${
+              sourceFilter === filter.id && filter.enabled
                 ? 'border-b-2 border-emerald-500 text-emerald-400 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]'
                 : 'text-slate-500 hover:text-emerald-300'
-              }`}
+            } ${!filter.enabled ? 'opacity-50 cursor-not-allowed hover:text-slate-500' : ''}`}
           >
-            {filter.charAt(0).toUpperCase() + filter.slice(1)}
+            <span className="flex items-center gap-2">
+              {filter.label}
+              {!filter.enabled && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/10">
+                  Coming soon
+                </span>
+              )}
+            </span>
           </button>
         ))}
       </div>
@@ -135,7 +158,7 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
           <h3 className="text-lg font-medium text-white">No feedback items found</h3>
           <p className="mt-2 text-sm text-slate-400 max-w-sm mx-auto">
             {sourceFilter === 'all'
-              ? 'Start by submitting manual feedback or configuring Reddit sources.'
+              ? 'Start by submitting manual feedback or syncing GitHub issues.'
               : `No ${sourceFilter} feedback items yet.`}
           </p>
         </div>

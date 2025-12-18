@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { requireProjectId } from '@/lib/project';
+import { getGitHubToken } from '@/lib/auth';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 
@@ -11,88 +13,50 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    const projectId = await requireProjectId(request);
+    const githubToken = await getGitHubToken();
 
     // Validate ID format (UUID or numeric)
     if (!id || !/^[a-zA-Z0-9-]+$/.test(id)) {
       return NextResponse.json({ error: 'Invalid cluster ID' }, { status: 400 });
     }
 
-    // Fetch cluster details to get context
-    const clusterResponse = await fetch(`${BACKEND_URL}/clusters/${encodeURIComponent(id)}`);
-    if (!clusterResponse.ok) {
-      return NextResponse.json({ error: 'Failed to load cluster' }, { status: 502 });
-    }
-    const clusterData = await clusterResponse.json();
-
-    // Determine repo based on cluster data
-    let repoOwner = process.env.GITHUB_OWNER;
-    let repoName = process.env.GITHUB_REPO;
-
-    const repoFromCluster = clusterData?.github_repo_url
-      ? clusterData.github_repo_url.match(/github\.com\/([^/]+)\/([^/]+)/)
-      : null;
-    if (repoFromCluster) {
-      repoOwner = repoFromCluster[1];
-      repoName = repoFromCluster[2].replace(/\.git$/, '');
-    }
-
-    if (clusterData && clusterData.feedback_items) {
-      const hasManualFeedback = clusterData.feedback_items.some(
-        (item: any) => item.source === 'manual'
+    // Check if user has GitHub token
+    if (!githubToken) {
+      return NextResponse.json(
+        { error: 'GitHub authentication required. Please sign in with GitHub to create PRs.' },
+        { status: 401 }
       );
-      if (hasManualFeedback && (!repoOwner || !repoName)) {
-        repoOwner = 'naga-k';
-        repoName = 'bad-ux-mart';
-      }
     }
 
-    // Trigger the agent
-    try {
-      const triggerUrl = new URL('/api/trigger-agent', new URL(request.url).origin).toString();
-      console.log(`Triggering agent at ${triggerUrl} for ${repoOwner}/${repoName}`);
+    // Direct proxy to backend
+    // Backend expects optional project_id query param
+    const backendUrl = `${BACKEND_URL}/clusters/${encodeURIComponent(id)}/start_fix?project_id=${encodeURIComponent(projectId)}`;
 
-      const triggerResponse = await fetch(triggerUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          issue_url: clusterData?.github_pr_url || undefined,
-          context:
-            clusterData?.issue_description || clusterData?.summary || `Fix for cluster ${id}`,
-          issue_description: clusterData?.issue_description || clusterData?.summary,
-          issue_title: clusterData?.issue_title || clusterData?.title,
-          owner: repoOwner,
-          repo: repoName,
-          repo_url: clusterData?.github_repo_url,
-          cluster_id: id,
-        }),
-      });
-
-      if (!triggerResponse.ok) {
-        const errorText = await triggerResponse.text();
-        throw new Error(`Trigger agent responded with ${triggerResponse.status}: ${errorText}`);
-      }
-
-      const triggerData = await triggerResponse.json();
-      console.log('Agent triggered successfully:', triggerData);
-    } catch (triggerError) {
-      console.error('Error calling trigger-agent:', triggerError);
-      return NextResponse.json({ error: 'Failed to trigger agent' }, { status: 502 });
-    }
-
-    const response = await fetch(`${BACKEND_URL}/clusters/${encodeURIComponent(id)}/start_fix`, {
+    const response = await fetch(backendUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-GitHub-Token': githubToken, // Pass user's token to backend
       },
     });
 
     if (!response.ok) {
-      throw new Error(`Backend responded with ${response.status}`);
+      const errorText = await response.text();
+      try {
+        const json = JSON.parse(errorText);
+        return NextResponse.json(json, { status: response.status });
+      } catch {
+        return NextResponse.json({ error: errorText }, { status: response.status });
+      }
     }
 
     const data = await response.json();
     return NextResponse.json(data);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'project_id is required') {
+      return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+    }
     console.error('Error starting fix:', error);
     return NextResponse.json({ error: 'Failed to start fix' }, { status: 500 });
   }
