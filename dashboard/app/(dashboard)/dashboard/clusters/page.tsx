@@ -14,10 +14,13 @@ type ClusterJobStatus = {
   stats?: Record<string, number>;
 };
 
+type ErrorType = 'connection' | 'auth' | 'generic';
+
 export default function ClustersListPage() {
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<ErrorType | null>(null);
   const [latestJob, setLatestJob] = useState<ClusterJobStatus | null>(null);
 
   const extractJobsFromPayload = (payload: unknown): ClusterJobStatus[] => {
@@ -48,14 +51,24 @@ export default function ClustersListPage() {
     try {
       setLoading(true);
       setError(null);
+      setErrorType(null);
       const response = await fetch('/api/clusters');
       if (!response.ok) {
-        throw new Error('Failed to fetch clusters');
+        if (response.status === 401 || response.status === 403) {
+          setError('Authentication failed. Please sign in again.');
+          setErrorType('auth');
+          return;
+        }
+        setError('Failed to fetch clusters');
+        setErrorType('generic');
+        return;
       }
       const data = await response.json();
       setClusters(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      // Network errors (fetch failed, connection refused, etc.) end up here
+      setErrorType('connection');
+      setError(err instanceof Error ? err.message : 'Connection error');
     } finally {
       setLoading(false);
     }
@@ -112,14 +125,27 @@ export default function ClustersListPage() {
   }
 
   if (error) {
+    const errorTitle = errorType === 'connection'
+      ? 'Connection Error'
+      : errorType === 'auth'
+        ? 'Authentication Error'
+        : 'Error loading clusters';
+
+    const errorHint = errorType === 'connection'
+      ? 'Please check your network connection and try again.'
+      : errorType === 'auth'
+        ? 'Your session may have expired.'
+        : null;
+
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
-          <h3 className="text-sm font-medium text-red-400">Error loading clusters</h3>
+        <div role="alert" className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
+          <h3 className="text-sm font-medium text-red-400">{errorTitle}</h3>
           <div className="mt-2 text-sm text-red-300">{error}</div>
+          {errorHint && <div className="mt-1 text-xs text-red-300/70">{errorHint}</div>}
           <button
             onClick={fetchClusters}
-            className="mt-3 text-sm font-medium text-red-400 hover:text-red-300"
+            className="mt-3 px-4 py-2 text-sm font-medium text-white bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg transition-colors"
           >
             Try again
           </button>
