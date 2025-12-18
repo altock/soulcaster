@@ -1433,21 +1433,86 @@ class RedisStore:
                 if len(parts) >= 2:
                     pid = parts[1]
                     # Get cluster IDs for this project
-                    cluster_ids = self._smembers(self._cluster_all_key(pid))
-                    # Load each cluster
-                    for cid in cluster_ids:
-                        cluster = self.get_cluster(pid, cid)
-                        if cluster:
-                            clusters.append(cluster)
+                    # Recursive call with project_id will use the optimized path
+                    project_clusters = self.get_all_clusters(pid)
+                    clusters.extend(project_clusters)
             return clusters
 
         ids = self._smembers(self._cluster_all_key(project_id))
+        if not ids:
+            return []
+
+        # OPTIMIZATION: Batch fetch all clusters in one pipeline
+        # We need HGETALL for cluster data and SMEMBERS for feedback_ids
+        keys_hgetall = [self._cluster_key(project_id, cid) for cid in ids]
+        keys_smembers = [self._cluster_items_key(project_id, cid) for cid in ids]
+        
+        cluster_data_list = []
+        feedback_ids_list = []
+        
+        if self.mode == "redis":
+            pipe = self.client.pipeline()
+            for k in keys_hgetall:
+                pipe.hgetall(k)
+            for k in keys_smembers:
+                pipe.smembers(k)
+            results = pipe.execute()
+            
+            mid = len(keys_hgetall)
+            cluster_data_list = results[:mid]
+            # Redis py returns sets for smembers
+            feedback_ids_list = [list(s) if s else [] for s in results[mid:]]
+            
+        else:
+            # REST client
+            commands = []
+            for k in keys_hgetall:
+                commands.append(["HGETALL", k])
+            for k in keys_smembers:
+                commands.append(["SMEMBERS", k])
+            
+            results = self.client.pipeline_exec(commands)
+            
+            mid = len(keys_hgetall)
+            raw_hashes = results[:mid]
+            raw_sets = results[mid:]
+            
+            for r in raw_hashes:
+                if r and isinstance(r, list):
+                     cluster_data_list.append(dict(zip(r[0::2], r[1::2])))
+                else:
+                     cluster_data_list.append({})
+            
+            feedback_ids_list = raw_sets
+        
         clusters: List[IssueCluster] = []
-        for cid in ids:
-            # ids are stored as strings in redis (can be UUID or custom format)
-            cluster = self.get_cluster(project_id, cid)
-            if cluster:
-                clusters.append(cluster)
+        for i, cid in enumerate(ids):
+            data = cluster_data_list[i]
+            if not data:
+                continue
+            
+            # Parse fields
+            for field in ("created_at", "updated_at"):
+                if isinstance(data.get(field), str):
+                    data[field] = _iso_to_dt(data[field])
+            
+            if isinstance(data.get("centroid"), str):
+                try:
+                    data["centroid"] = json.loads(data["centroid"])
+                except json.JSONDecodeError:
+                    data["centroid"] = []
+            
+            # Use fetched feedback ids
+            fids = feedback_ids_list[i]
+            # Ensure we have a list of strings
+            data["feedback_ids"] = list(fids) if fids else []
+            
+            try:
+                clusters.append(IssueCluster(**data))
+            except Exception as e:
+                logger.debug(f"Failed to parse cluster {cid}: {e}")
+                continue
+
         return clusters
 
     def update_cluster(self, project_id: str, cluster_id: str, **updates) -> IssueCluster:

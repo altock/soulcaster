@@ -942,14 +942,20 @@ def list_clusters(project_id: Optional[str] = Query(None)):
     pid = _require_project_id(project_id)
     pid_str = str(pid)
     clusters = get_all_clusters(pid_str)
+    
+    # Optimization: Batch fetch all feedback items for the project
+    # to avoid N+1 lookups within the loop.
+    all_feedback = get_all_feedback_items(pid_str)
+    feedback_map = {item.id: item for item in all_feedback}
+    
     results = []
     for cluster in clusters:
         feedback_items = []
-        for fid in cluster.feedback_ids:
+        for fid_str in cluster.feedback_ids:
             try:
-                item = get_feedback_item(pid_str, UUID(fid))
-                if item:
-                    feedback_items.append(item)
+                fid = UUID(fid_str)
+                if fid in feedback_map:
+                    feedback_items.append(feedback_map[fid])
             except (ValueError, AttributeError):
                 continue
         
