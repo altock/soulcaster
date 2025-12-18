@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { useState } from 'react';
 
-type ActivePage = 'overview' | 'feedback' | 'clusters' | 'prs' | 'billing';
+type ActivePage = 'overview' | 'feedback' | 'clusters' | 'prs' | 'billing' | 'settings';
 
 interface DashboardHeaderProps {
   activePage?: ActivePage;
@@ -79,6 +79,15 @@ export default function DashboardHeader({
                 }`}
             >
               PRs
+            </Link>
+            <Link
+              href="/settings/integrations"
+              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/settings') || activePage === 'settings'
+                ? 'bg-white/5 text-emerald-400'
+                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                }`}
+            >
+              Settings
             </Link>
             <span
               aria-disabled="true"
