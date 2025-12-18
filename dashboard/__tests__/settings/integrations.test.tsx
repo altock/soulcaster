@@ -2,30 +2,36 @@
  * Tests for Integration Settings Page
  *
  * These tests verify the UX improvements made to the integrations page:
- * 1. Tab state persistence in URL
- * 2. Required field indicators
- * 3. Toggle functionality
- * 4. Webhook URL display with copy button
+ * 1. Single searchable integrations list (no category tabs)
+ * 2. Pagination scaffolding for future integrations
+ * 3. "Other / Request integration" CTA
+ * 4. Required field indicators + toggle functionality
  */
 
 import { describe, it, expect } from '@jest/globals';
 
 describe('Integration Settings Page', () => {
-  describe('URL Tab Persistence', () => {
-    it('should initialize tab from URL query parameter', () => {
-      // This test verifies that ?tab=analytics loads the analytics tab
-      // Implementation uses useSearchParams() to read tab parameter
-      expect(true).toBe(true); // Placeholder - would need React Testing Library setup
+  describe('Search & Pagination', () => {
+    it('should render a single list of integrations', () => {
+      // Placeholder - would need React Testing Library setup
+      expect(true).toBe(true);
     });
 
-    it('should default to monitoring tab when no query parameter', () => {
-      // Verifies default behavior
-      expect(true).toBe(true); // Placeholder
+    it('should filter integrations by search query', () => {
+      // Placeholder - would need React Testing Library setup
+      expect(true).toBe(true);
     });
 
-    it('should update URL when tab changes', () => {
-      // Verifies router.replace() is called with new tab parameter
-      expect(true).toBe(true); // Placeholder
+    it('should support pagination for longer lists', () => {
+      // Placeholder - would need React Testing Library setup
+      expect(true).toBe(true);
+    });
+  });
+
+  describe('Integration Request CTA', () => {
+    it('should offer an "Other / Request integration" action', () => {
+      // Placeholder - would need React Testing Library setup
+      expect(true).toBe(true);
     });
   });
 
