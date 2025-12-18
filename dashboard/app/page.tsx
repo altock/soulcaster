@@ -10,16 +10,6 @@ export default function Home() {
         <div className="pointer-events-none absolute -top-24 left-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-[100px] opacity-50"></div>
 
         <div className="z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-          <div className="inline-flex bg-emerald-500/5 border-emerald-500/20 border rounded-full mb-6 pt-1 pr-3 pb-1 pl-3 backdrop-blur-md gap-x-2 gap-y-2 items-center transition-all hover:bg-emerald-500/10 hover:border-emerald-500/30 cursor-default">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-            </span>
-            <span className="text-xs font-normal tracking-tight text-emerald-300">System Operational</span>
-            <span className="mx-1 text-emerald-500/30">|</span>
-            <span className="text-xs tracking-tight text-slate-400">v3.4.0 Active</span>
-          </div>
-
           <h1 className="text-5xl font-normal tracking-tight text-white sm:text-6xl">
             <span className="block text-slate-400">Self-Healing Dev Loop</span>
             <span className="block bg-gradient-to-r from-emerald-200 via-emerald-400 to-emerald-100 bg-clip-text text-transparent animate-gradient-text">
