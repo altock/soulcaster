@@ -1,26 +1,18 @@
 import Link from 'next/link';
-import StatsCards from '@/components/StatsCards';
+import LandingHeader from '@/components/LandingHeader';
 
 export default function Home() {
   return (
-    <div className="flex flex-col items-center justify-center min-h-[80vh]">
-      {/* Hero Section */}
-      <section className="animate-in delay-0 z-10 mt-24 mb-24 relative">
-        {/* Glow Effect */}
-        <div className="pointer-events-none absolute -top-24 left-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-[100px] opacity-50"></div>
+    <>
+      <LandingHeader />
+      <div className="flex flex-col items-center justify-center min-h-[80vh]">
+        {/* Hero Section */}
+        <section className="animate-in delay-0 z-10 mt-16 mb-24 relative">
+          {/* Glow Effect */}
+          <div className="pointer-events-none absolute -top-24 left-0 h-96 w-96 rounded-full bg-emerald-500/10 blur-[100px] opacity-50"></div>
 
-        <div className="z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
-          <div className="inline-flex bg-emerald-500/5 border-emerald-500/20 border rounded-full mb-6 pt-1 pr-3 pb-1 pl-3 backdrop-blur-md gap-x-2 gap-y-2 items-center transition-all hover:bg-emerald-500/10 hover:border-emerald-500/30 cursor-default">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-            </span>
-            <span className="text-xs font-normal tracking-tight text-emerald-300">System Operational</span>
-            <span className="mx-1 text-emerald-500/30">|</span>
-            <span className="text-xs tracking-tight text-slate-400">v3.4.0 Active</span>
-          </div>
-
-          <h1 className="text-5xl font-normal tracking-tight text-white sm:text-6xl">
+          <div className="z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative">
+            <h1 className="text-5xl font-normal tracking-tight text-white sm:text-6xl">
             <span className="block text-slate-400">Self-Healing Dev Loop</span>
             <span className="block bg-gradient-to-r from-emerald-200 via-emerald-400 to-emerald-100 bg-clip-text text-transparent animate-gradient-text">
               Powered by AI Agents
@@ -34,11 +26,11 @@ export default function Home() {
 
           <div className="mt-8 flex flex-wrap items-center gap-4">
             <Link
-              href="/clusters"
+              href="/dashboard"
               className="group relative inline-flex h-10 min-w-[140px] items-center justify-center gap-2 overflow-hidden rounded-full border-none bg-emerald-500 px-5 text-sm font-medium tracking-tight text-black outline-none transition-all duration-200 active:scale-95 hover:scale-105 hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)]"
             >
               <span className="relative z-10 flex items-center gap-2">
-                Enter Dashboard
+                Get Started
                 <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img" width="16" height="16" viewBox="0 0 24 24" className="text-black/70 transition-transform duration-300 group-hover:translate-x-1 group-hover:text-black">
                   <path fill="currentColor" fillRule="evenodd" d="M3.25 12a.75.75 0 0 1 .75-.75h9.25v1.5H4a.75.75 0 0 1-.75-.75" clipRule="evenodd" opacity=".5"></path>
                   <path fill="currentColor" d="M13.25 12.75V18a.75.75 0 0 0 1.28.53l6-6a.75.75 0 0 0 0-1.06l-6-6a.75.75 0 0 0-1.28.53z"></path>
@@ -56,13 +48,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Divider */}
-      <div className="h-px animate-in delay-100 bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent w-full mb-12"></div>
-
-      {/* Dashboard Grid */}
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <StatsCards />
-      </div>
+      {/* Feature Cards */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Feature 1: Listen */}
@@ -102,6 +88,7 @@ export default function Home() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
