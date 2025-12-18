@@ -24,7 +24,7 @@ export default function FeedbackPage() {
             className="group relative inline-flex h-9 items-center justify-center gap-2 overflow-hidden rounded-full border-none bg-emerald-500 px-4 text-sm font-medium tracking-tight text-black outline-none transition-all duration-200 active:scale-95 hover:scale-105 hover:bg-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.6)]"
           >
             <span className="relative z-10 flex items-center gap-2">
-              {showAddSource ? 'Hide Sources' : '+ Add Source'}
+              {showAddSource ? 'Hide Sources' : 'Configure Sources'}
             </span>
           </button>
         </div>
