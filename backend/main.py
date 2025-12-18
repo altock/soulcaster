@@ -1741,7 +1741,7 @@ def list_clusters(project_id: Optional[str] = Query(None)):
 
     pid = _require_project_id(project_id)
     pid_str = str(pid)
-    clusters = get_all_clusters(pid_str)  # Already sorted by created_at desc from store
+    clusters = get_all_clusters(pid_str)  # Already sorted by created_at desc from ZSET
     results = []
     for cluster in clusters:
         # Use cached sources from cluster (populated at creation time)

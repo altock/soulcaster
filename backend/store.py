@@ -1662,6 +1662,13 @@ class RedisStore:
                 data["centroid"] = json.loads(data["centroid"])
             except json.JSONDecodeError:
                 data["centroid"] = []
+
+        # Parse sources (stored as string representation of list)
+        if isinstance(data.get("sources"), str):
+            try:
+                data["sources"] = json.loads(data["sources"])
+            except json.JSONDecodeError:
+                data["sources"] = []
         
         # Fetch feedback_ids from set if not present (Hash doesn't have it, JSON does)
         if "feedback_ids" not in data or not data["feedback_ids"]:
@@ -1690,11 +1697,10 @@ class RedisStore:
                             clusters.append(cluster)
             return clusters
 
-        # Use ZRANGE with rev=True to get clusters sorted by created_at descending (newest first)
+        # Use ZRANGE with rev=True to get clusters sorted by created_at descending
         ids = self._zrange(self._cluster_all_key(project_id), 0, -1, rev=True)
         clusters: List[IssueCluster] = []
         for cid in ids:
-            # ids are stored as strings in redis (can be UUID or custom format)
             cluster = self.get_cluster(project_id, cid)
             if cluster:
                 clusters.append(cluster)
