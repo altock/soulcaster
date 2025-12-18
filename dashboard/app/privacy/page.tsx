@@ -236,12 +236,12 @@ export default function PrivacyPage() {
                 <br />
                 <strong>GitHub:</strong>{' '}
                 <a
-                  href="https://github.com/naga-k/soulcaster/issues"
+                  href="https://github.com/altock/soulcaster/issues"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-600 hover:underline"
                 >
-                  github.com/naga-k/soulcaster/issues
+                  github.com/altock/soulcaster/issues
                 </a>
               </p>
             </section>

@@ -421,7 +421,7 @@ def main():
             log(out)
 
         # Try to extract URL from output or "already exists" message
-        match = re.search(r"https://github\\.com/[\\w\\-_]+/[\\w\\-_]+/pull/\\d+", out)
+        match = re.search(r"https://github\.com/[\w\-_]+/[\w\-_]+/pull/\d+", out)
         if match:
             pr_url = match.group(0)
             log(f"Draft PR URL extracted: {pr_url}")
@@ -514,7 +514,7 @@ def main():
                 if out:
                     log(out)
                 # Try to find PR URL from output or "already exists" message
-                match = re.search(r"https://github\\.com/[\\w\\-_]+/[\\w\\-_]+/pull/\\d+", out)
+                match = re.search(r"https://github\.com/[\w\-_]+/[\w\-_]+/pull/\d+", out)
                 if match:
                     pr_url = match.group(0)
                     log(f"PR URL extracted: {pr_url}")

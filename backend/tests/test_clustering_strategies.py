@@ -63,7 +63,7 @@ def test_vector_like_smoke():
     assert labels[2] != labels[0]
 
 
-def test_cluster_issues_uses_embed_fn(monkeypatch):
+def test_cluster_issues_uses_embed_fn():
     mock_embeddings = np.asarray(
         [
             [1.0, 0.0, 0.0],

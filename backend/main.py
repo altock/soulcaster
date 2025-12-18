@@ -282,7 +282,7 @@ def ingest_sentry(payload: dict, project_id: Optional[str] = Query(None)):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to process Sentry payload: {str(e)}"
-        )
+        ) from e
 
 
 class ManualIngestRequest(BaseModel):
@@ -1034,13 +1034,13 @@ def get_cluster_job_status(job_id: str, project_id: Optional[str] = Query(None))
 
 
 @app.get("/cluster-jobs")
-def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int = Query(20, ge=1, le=50)):
+def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int = Query(20, ge=1, le=50)):  # noqa: E501
     """
     Retrieve recent clustering jobs for the given project.
     
     Parameters:
         project_id: Project identifier to scope the returned jobs.
-        limit: Maximum number of jobs to return (1–50).
+        limit: Maximum number of jobs to return (1-50).
     
     Returns:
         dict: {"jobs": list of ClusterJob objects, "project_id": project id string}
@@ -1106,7 +1106,7 @@ def generate_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(Non
     """
     pid = _require_project_id(project_id)
 
-    # 1. Valdiate cluster
+    # 1. Validate cluster
     cluster = get_cluster(pid, cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
