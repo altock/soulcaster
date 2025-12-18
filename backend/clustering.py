@@ -176,6 +176,10 @@ def cluster_agglomerative(embeddings: np.ndarray, sim_threshold: float = DEFAULT
     if embeddings.size == 0:
         return np.array([], dtype=int)
 
+    # AgglomerativeClustering requires at least 2 samples
+    if len(embeddings) == 1:
+        return np.array([0], dtype=int)
+
     dist_threshold = 1.0 - float(sim_threshold)
     kwargs = dict(n_clusters=None, linkage="average", distance_threshold=dist_threshold)
     if version.parse(sklearn.__version__) >= version.parse("1.2"):
