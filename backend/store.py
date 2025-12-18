@@ -441,6 +441,34 @@ class InMemoryStore:
             self.external_index.clear()
             self.unclustered_feedback_ids.clear()
 
+    def delete_feedback_item(self, project_id: str, item_id: UUID) -> bool:
+        """
+        Delete a feedback item and remove it from all indexes.
+
+        Parameters:
+            project_id (str): ID of the project the item belongs to.
+            item_id (UUID): ID of the feedback item to delete.
+
+        Returns:
+            bool: True if item was deleted, False if not found.
+        """
+        item = self.feedback_items.get(item_id)
+        if not item or str(item.project_id) != str(project_id):
+            return False
+
+        # Remove from main store
+        del self.feedback_items[item_id]
+
+        # Remove from external index
+        if item.external_id:
+            key = (str(project_id), item.source, item.external_id)
+            self.external_index.pop(key, None)
+
+        # Remove from unclustered set
+        self.remove_from_unclustered(item_id, project_id)
+
+        return True
+
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
         """
@@ -1452,6 +1480,92 @@ class RedisStore:
         key = self._feedback_key(project_id, item_id)
         self._hset(key, hash_payload)
         return updated
+
+    def delete_feedback_item(self, project_id: str, item_id: UUID) -> bool:
+        """
+        Delete a feedback item and remove it from all indexes.
+
+        Parameters:
+            project_id: Project ID that owns the feedback item.
+            item_id: UUID of the feedback item to delete.
+
+        Returns:
+            bool: True if item was deleted, False if not found.
+        """
+        existing = self.get_feedback_item(project_id, item_id)
+        if not existing:
+            return False
+
+        # Delete main feedback hash
+        key = self._feedback_key(project_id, item_id)
+        self._delete(key)
+
+        # Remove from created sorted set
+        if self.mode == "redis":
+            self.client.zrem(self._feedback_created_key(project_id), str(item_id))
+        else:
+            self.client.zrem(self._feedback_created_key(project_id), str(item_id))
+
+        # Remove from source sorted set
+        if self.mode == "redis":
+            self.client.zrem(self._feedback_source_key(project_id, existing.source), str(item_id))
+        else:
+            self.client.zrem(self._feedback_source_key(project_id, existing.source), str(item_id))
+
+        # Remove from unclustered set
+        self.remove_from_unclustered(item_id, project_id)
+
+        # Delete external ID mapping if present
+        if existing.external_id:
+            ext_key = self._feedback_external_key(project_id, existing.source, existing.external_id)
+            self._delete(ext_key)
+
+        return True
+
+    def delete_feedback_items_batch(self, items: List[Tuple[str, UUID, FeedbackItem]]) -> int:
+        """
+        Batch delete feedback items and their indexes.
+
+        Parameters:
+            items: List of (project_id, item_id, FeedbackItem) tuples.
+
+        Returns:
+            int: Number of items deleted.
+        """
+        if not items:
+            return 0
+
+        deleted = 0
+        if self.mode == "redis":
+            pipe = self.client.pipeline()
+            for project_id, item_id, item in items:
+                # Delete main hash
+                pipe.delete(self._feedback_key(project_id, item_id))
+                # Remove from sorted sets
+                pipe.zrem(self._feedback_created_key(project_id), str(item_id))
+                pipe.zrem(self._feedback_source_key(project_id, item.source), str(item_id))
+                # Remove from unclustered set
+                pipe.srem(self._feedback_unclustered_key(project_id), str(item_id))
+                # Delete external ID mapping
+                if item.external_id:
+                    pipe.delete(self._feedback_external_key(project_id, item.source, item.external_id))
+                deleted += 1
+            pipe.execute()
+        else:
+            # REST mode - build commands list
+            commands = []
+            for project_id, item_id, item in items:
+                commands.append(["DEL", self._feedback_key(project_id, item_id)])
+                commands.append(["ZREM", self._feedback_created_key(project_id), str(item_id)])
+                commands.append(["ZREM", self._feedback_source_key(project_id, item.source), str(item_id)])
+                commands.append(["SREM", self._feedback_unclustered_key(project_id), str(item_id)])
+                if item.external_id:
+                    commands.append(["DEL", self._feedback_external_key(project_id, item.source, item.external_id)])
+                deleted += 1
+            if commands:
+                self.client.pipeline_exec(commands)
+
+        return deleted
 
     def clear_feedback_items(self, project_id: Optional[str] = None):
         # Remove keys matching feedback:* and related sorted sets
@@ -2812,6 +2926,26 @@ def remove_from_unclustered_batch(pairs: List[Tuple[UUID, str]]):
         return _STORE.remove_from_unclustered_batch(pairs)
     for fid, project_id in pairs:
         remove_from_unclustered(fid, project_id)
+
+
+def delete_feedback_items_batch(items: List[Tuple[str, UUID, FeedbackItem]]) -> int:
+    """
+    Batch delete feedback items and their indexes.
+
+    Parameters:
+        items: List of (project_id, item_id, FeedbackItem) tuples.
+
+    Returns:
+        int: Number of items deleted.
+    """
+    if hasattr(_STORE, "delete_feedback_items_batch"):
+        return _STORE.delete_feedback_items_batch(items)
+    # Fallback to individual deletes
+    deleted = 0
+    for project_id, item_id, _ in items:
+        if _STORE.delete_feedback_item(project_id, item_id):
+            deleted += 1
+    return deleted
 
 
 # User / Project API

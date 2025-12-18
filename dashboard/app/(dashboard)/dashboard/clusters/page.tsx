@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
-import SourceConfig from '@/components/SourceConfig';
 
 type ClusterJobStatus = {
   id: string;
@@ -15,23 +14,11 @@ type ClusterJobStatus = {
   stats?: Record<string, number>;
 };
 
-/**
- * Renders the Issue Clusters page and manages loading, error, empty, and populated UI states.
- *
- * Manages cluster data, unclustered item count, latest clustering job state, and user actions such as
- * triggering a clustering run and toggling source configuration.
- *
- * @returns The React element for the Issue Clusters page
- */
 export default function ClustersListPage() {
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [unclusteredCount, setUnclusteredCount] = useState(0);
-  const [showConfig, setShowConfig] = useState(false);
   const [latestJob, setLatestJob] = useState<ClusterJobStatus | null>(null);
-  const [jobActionError, setJobActionError] = useState<string | null>(null);
-  const [jobActionLoading, setJobActionLoading] = useState(false);
 
   const extractJobsFromPayload = (payload: unknown): ClusterJobStatus[] => {
     if (!payload) {
@@ -47,16 +34,15 @@ export default function ClustersListPage() {
   };
 
   const jobIsRunning = latestJob?.status === 'running';
-  const isClustering = unclusteredCount > 0 || jobIsRunning;
 
   useEffect(() => {
-    loadClustersAndAutoCluster();
+    const loadData = async () => {
+      await fetchClusters();
+      // Parallelize with Promise.all since these fetches are independent
+      await Promise.all([fetchLatestJob()]);
+    };
+    loadData();
   }, []);
-
-  const loadClustersAndAutoCluster = async () => {
-    await fetchClusters();
-    await Promise.all([fetchUnclusteredCount(), fetchLatestJob()]);
-  };
 
   const fetchClusters = async () => {
     try {
@@ -73,20 +59,6 @@ export default function ClustersListPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fetchUnclusteredCount = async (): Promise<number> => {
-    try {
-      const response = await fetch('/api/clusters/unclustered');
-      if (response.ok) {
-        const data = await response.json();
-        setUnclusteredCount(data.count);
-        return data.count;
-      }
-    } catch (err) {
-      console.error('Failed to fetch unclustered count:', err);
-    }
-    return 0;
   };
 
   const fetchLatestJob = async () => {
@@ -109,24 +81,6 @@ export default function ClustersListPage() {
     return null;
   };
 
-  const triggerClustering = async () => {
-    setJobActionError(null);
-    setJobActionLoading(true);
-    try {
-      const response = await fetch('/api/clusters/jobs', { method: 'POST' });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error || 'Failed to start clustering');
-      }
-      await Promise.all([fetchUnclusteredCount(), fetchLatestJob()]);
-    } catch (err) {
-      console.error('Failed to trigger clustering:', err);
-      setJobActionError(err instanceof Error ? err.message : 'Failed to start clustering');
-    } finally {
-      setJobActionLoading(false);
-    }
-  };
-
   const formatTimestamp = (value?: string | null) => {
     if (!value) return 'unknown time';
     try {
@@ -147,15 +101,11 @@ export default function ClustersListPage() {
     return `Last job ${latestJob.status} @ ${formatTimestamp(finishedAt)}`;
   };
 
-  // Clustering is backend-owned and runs automatically after ingestion. The UI keeps a lightweight
-  // `isClustering` view state derived from unclustered item count so we can communicate when work
-  // is still happening in the background.
-
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-center py-12">
-          <div className="text-gray-500">Loading clusters...</div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
         </div>
       </div>
     );
@@ -164,19 +114,15 @@ export default function ClustersListPage() {
   if (error) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="rounded-md bg-red-50 p-4">
-          <div className="flex">
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-red-800">Error loading clusters</h3>
-              <div className="mt-2 text-sm text-red-700">{error}</div>
-              <button
-                onClick={fetchClusters}
-                className="mt-3 text-sm font-medium text-red-800 hover:text-red-900"
-              >
-                Try again
-              </button>
-            </div>
-          </div>
+        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
+          <h3 className="text-sm font-medium text-red-400">Error loading clusters</h3>
+          <div className="mt-2 text-sm text-red-300">{error}</div>
+          <button
+            onClick={fetchClusters}
+            className="mt-3 text-sm font-medium text-red-400 hover:text-red-300"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
@@ -185,56 +131,67 @@ export default function ClustersListPage() {
   if (clusters.length === 0) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-center py-12 bg-purple-50 border border-purple-200 rounded-lg">
-          <h3 className="text-lg font-medium text-purple-900 mb-2">🔍 No clusters found</h3>
-          <p className="mt-2 text-sm text-purple-700 mb-4">
-            We didn&apos;t receive any clusters from the backend. Ensure the ingestion API is
-            running and BACKEND_URL points at it.
-          </p>
-          <p className="text-sm text-purple-700">
-            You can still browse individual feedback in the{' '}
-            <Link href="/feedback" className="font-semibold underline">
-              Feedback tab
-            </Link>
-            .
-          </p>
-          <p className="mt-4 text-sm text-purple-700">
-            {unclusteredCount > 0
-              ? `${unclusteredCount} unclustered feedback item${unclusteredCount === 1 ? '' : 's'} ready to group.`
-              : 'No unclustered feedback detected yet.'}
-          </p>
-          <p className="mt-2 text-xs uppercase tracking-wide text-purple-600">
-            {isClustering
-              ? 'Clustering job running automatically...'
-              : 'Clustering runs automatically right after you sync sources.'}
-          </p>
-          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-            {unclusteredCount > 0 && (
-              <button
-                onClick={triggerClustering}
-                disabled={jobActionLoading || jobIsRunning}
-                className={`w-full sm:w-auto px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${jobActionLoading || jobIsRunning ? 'animate-pulse' : ''
-                  }`}
-              >
-                {jobIsRunning ? 'Clustering in progress…' : jobActionLoading ? 'Starting clustering…' : 'Retry Clustering'}
-              </button>
+        <div className="bg-emerald-950/20 rounded-3xl border border-white/10 backdrop-blur-sm p-16 text-center relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent pointer-events-none" />
+          <div className="relative z-10">
+            {jobIsRunning ? (
+              <>
+                <div className="mx-auto w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mb-6 border border-emerald-500/30">
+                  <svg
+                    className="animate-spin h-8 w-8 text-emerald-400"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                </div>
+                <h2 className="text-xl font-medium text-white mb-3">Clustering in Progress</h2>
+                <p className="text-slate-400 max-w-sm mx-auto leading-relaxed">
+                  Your feedback is being analyzed and grouped into clusters. This may take a moment.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="mx-auto w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-6 border border-white/10">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-8 w-8 text-emerald-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                    />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-medium text-white mb-3">No Clusters Yet</h2>
+                <p className="text-slate-400 max-w-sm mx-auto leading-relaxed">
+                  Clusters will appear here once you sync feedback sources.{' '}
+                  <Link href="/dashboard/feedback" className="text-emerald-400 hover:text-emerald-300 underline">
+                    Add sources in Feedback
+                  </Link>{' '}
+                  to get started.
+                </p>
+              </>
             )}
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className={`w-full sm:w-auto px-6 py-3 border border-purple-200 text-sm font-semibold rounded-full text-purple-900 bg-white hover:bg-purple-50 transition-all ${showConfig ? 'ring-2 ring-purple-200' : ''
-                }`}
-            >
-              {showConfig ? 'Hide Source Settings' : 'Configure Sources'}
-            </button>
           </div>
-          {jobActionError && (
-            <p className="mt-3 text-sm text-red-600">{jobActionError}</p>
-          )}
-          {showConfig && (
-            <div className="mt-6 text-left">
-              <SourceConfig />
-            </div>
-          )}
         </div>
       </div>
     );
@@ -249,54 +206,8 @@ export default function ClustersListPage() {
             <p className="mt-2 text-gray-400">
               Grouped feedback items ready for analysis and action.
             </p>
-            <p className="mt-1 text-sm text-gray-500">
-              {unclusteredCount > 0
-                ? `${unclusteredCount} unclustered item${unclusteredCount === 1 ? '' : 's'} waiting to process.`
-                : 'No unclustered feedback detected.'}
-            </p>
-          </div>
-          <div className="flex gap-3">
-            {unclusteredCount > 0 && (
-              <button
-                onClick={triggerClustering}
-                disabled={jobActionLoading || jobIsRunning}
-                className={`px-6 py-3 border border-transparent text-sm font-bold rounded-full shadow-neon-green text-black bg-matrix-green hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-matrix-green disabled:opacity-50 disabled:cursor-not-allowed transition-all uppercase tracking-wide ${jobActionLoading || jobIsRunning ? 'animate-pulse' : ''
-                  }`}
-              >
-                {jobIsRunning ? 'Clustering in progress…' : jobActionLoading ? 'Starting clustering…' : 'Retry Clustering'}
-              </button>
-            )}
-            <button
-              onClick={() => setShowConfig(!showConfig)}
-              className={`px-4 py-3 border border-white/10 text-sm font-medium rounded-full text-slate-300 hover:bg-white/5 transition-all ${showConfig ? 'bg-white/10 text-white' : ''}`}
-            >
-              {showConfig ? 'Hide Sources' : 'Configure Sources'}
-            </button>
           </div>
         </div>
-        {jobActionError && (
-          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            {jobActionError}
-          </div>
-        )}
-
-        {showConfig && (
-          <div className="mb-8 animate-in slide-in-from-top-4 fade-in duration-300">
-            <SourceConfig />
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-lg bg-red-900/20 p-4 mb-6 border border-red-900/50">
-            <div className="flex">
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-red-400">Error</h3>
-                <div className="mt-2 text-sm text-red-300">{error}</div>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="animate-in delay-200 overflow-hidden sm:p-8 hover-card-effect group bg-gradient-to-br from-emerald-500/5 to-emerald-600/10 rounded-3xl pt-6 pr-6 pb-6 pl-6 relative shadow-[0_0_60px_rgba(16,185,129,0.1)] border border-white/10">
           <div className="pointer-events-none absolute inset-0 opacity-30">
             <div className="absolute right-0 top-0 h-96 w-96 -translate-y-10 translate-x-10 rounded-full bg-emerald-500/10 blur-3xl"></div>
@@ -339,14 +250,7 @@ export default function ClustersListPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {clusters.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
-                        No clusters yet. They will appear once backend clustering completes after ingestion.
-                      </td>
-                    </tr>
-                  ) : (
-                    clusters.map((cluster) => (
+                  {clusters.map((cluster) => (
                       <tr key={cluster.id} className="group transition-colors hover:bg-white/5">
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
@@ -402,7 +306,7 @@ export default function ClustersListPage() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <Link
-                            href={`/clusters/${cluster.id}`}
+                            href={`/dashboard/clusters/${cluster.id}`}
                             className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-emerald-500 hover:text-black hover:border-emerald-500"
                           >
                             View Details
@@ -413,8 +317,7 @@ export default function ClustersListPage() {
                           </Link>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    ))}
                 </tbody>
               </table>
             </div>

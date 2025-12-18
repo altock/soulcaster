@@ -52,6 +52,7 @@ def test_issue_to_feedback_item_shape(project_context):
 
 
 def test_sync_github_repo_first_sync(project_context, monkeypatch):
+    """First sync (no since param) only fetches open issues - closed issues are not ingested."""
     pid = project_context["project_id"]
     monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
 
@@ -68,38 +69,41 @@ def test_sync_github_repo_first_sync(project_context, monkeypatch):
         "user": {"login": "alice"},
         "assignees": [],
     }
-    issue_closed = issue_open | {
+    issue_open2 = issue_open | {
         "id": 2,
         "number": 11,
-        "title": "Closed issue",
-        "state": "closed",
+        "title": "Another open issue",
         "html_url": "https://github.com/org/repo/issues/11",
     }
 
-    monkeypatch.setattr(
-        "main.fetch_repo_issues",
-        lambda owner, repo, since=None, **kwargs: [issue_open, issue_closed],
-    )
+    # For first sync (no since), API is called with state="open"
+    # So we mock returning only open issues
+    def mock_fetch(owner, repo, since=None, **kwargs):
+        # First sync should use state="open"
+        assert kwargs.get("state") == "open"
+        return [issue_open, issue_open2]
+
+    monkeypatch.setattr("main.fetch_repo_issues", mock_fetch)
 
     resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
     assert resp.status_code == 200
     data = resp.json()
     assert data["new_issues"] == 2
-    assert data["closed_issues"] == 1
+    assert data["archived_issues"] == 0
 
-    # Ensure feedback stored
+    # Ensure only open feedback stored
     items = get_all_feedback_items()
     assert len(items) == 2
 
-    # Closed issue should not remain in unclustered
+    # All items should be in unclustered
     unclustered = get_unclustered_feedback(pid)
-    assert len(unclustered) == 1
-    assert unclustered[0].title == "Open issue"
+    assert len(unclustered) == 2
 
 
 def test_sync_github_repo_incremental(project_context, monkeypatch):
+    """Incremental sync (with since param) uses state='all' to detect closed issues."""
     pid = project_context["project_id"]
-    calls = {"first_since": None, "second_since": None}
+    calls = {"first_since": None, "second_since": None, "first_state": None, "second_state": None}
 
     issue_open = {
         "id": 3,
@@ -117,10 +121,12 @@ def test_sync_github_repo_incremental(project_context, monkeypatch):
 
     def first_fetch(owner, repo, since=None, **kwargs):
         calls["first_since"] = since
+        calls["first_state"] = kwargs.get("state")
         return [issue_open]
 
     def second_fetch(owner, repo, since=None, **kwargs):
         calls["second_since"] = since
+        calls["second_state"] = kwargs.get("state")
         return []
 
     monkeypatch.setattr("main.fetch_repo_issues", first_fetch)
@@ -131,8 +137,78 @@ def test_sync_github_repo_incremental(project_context, monkeypatch):
     second_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
     assert second_resp.status_code == 200
 
+    # First sync (no since) should use state="open"
     assert calls["first_since"] is None
+    assert calls["first_state"] == "open"
+    # Second sync (with since) should use state="all" to detect closed issues
     assert calls["second_since"] is not None
+    assert calls["second_state"] == "all"
+
+
+def test_sync_github_repo_archives_closed_issues(project_context, monkeypatch):
+    """When an issue is closed after first sync, incremental sync should archive it."""
+    pid = project_context["project_id"]
+    monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
+
+    issue_open = {
+        "id": 500,
+        "number": 50,
+        "title": "Issue that will be closed",
+        "body": "Will be closed later",
+        "state": "open",
+        "html_url": "https://github.com/org/repo/issues/50",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-02T00:00:00Z",
+        "labels": [],
+        "user": {"login": "alice"},
+        "assignees": [],
+    }
+    issue_closed = issue_open | {
+        "state": "closed",
+        "updated_at": "2024-01-03T00:00:00Z",
+    }
+
+    # First sync: issue is open
+    def first_fetch(owner, repo, since=None, **kwargs):
+        return [issue_open]
+
+    monkeypatch.setattr("main.fetch_repo_issues", first_fetch)
+    first_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert first_resp.status_code == 200
+    first_data = first_resp.json()
+    assert first_data["new_issues"] == 1
+    assert first_data["archived_issues"] == 0
+
+    # Verify issue was stored and is open
+    items = get_all_feedback_items(pid)
+    assert len(items) == 1
+    assert items[0].title == "Issue that will be closed"
+    assert items[0].status == "open"
+
+    # Verify issue is in unclustered set
+    unclustered = get_unclustered_feedback(pid)
+    assert len(unclustered) == 1
+
+    # Second sync: issue is now closed
+    def second_fetch(owner, repo, since=None, **kwargs):
+        return [issue_closed]
+
+    monkeypatch.setattr("main.fetch_repo_issues", second_fetch)
+    second_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert second_resp.status_code == 200
+    second_data = second_resp.json()
+    assert second_data["new_issues"] == 0
+    assert second_data["updated_issues"] == 0
+    assert second_data["archived_issues"] == 1
+
+    # Verify issue is still stored but now marked as closed
+    items = get_all_feedback_items(pid)
+    assert len(items) == 1
+    assert items[0].status == "closed"
+
+    # Verify issue is removed from unclustered set
+    unclustered = get_unclustered_feedback(pid)
+    assert len(unclustered) == 0
 
 
 def test_sync_github_repo_dedup_and_update_counts(project_context, monkeypatch):
@@ -207,6 +283,14 @@ class _FakeRedisPipeline:
         self._commands.append(("srem", key, member))
         return self
 
+    def zrem(self, key, member):
+        self._commands.append(("zrem", key, member))
+        return self
+
+    def delete(self, key):
+        self._commands.append(("delete", key))
+        return self
+
     def set(self, key, value):
         self._commands.append(("set", key, value))
         return self
@@ -231,6 +315,12 @@ class _FakeRedisPipeline:
                 results.append(True)
             elif cmd == "srem":
                 self._fake.srem(args[0], args[1])
+                results.append(True)
+            elif cmd == "zrem":
+                self._fake.zrem(args[0], args[1])
+                results.append(True)
+            elif cmd == "delete":
+                self._fake.delete(args[0])
                 results.append(True)
             elif cmd == "set":
                 self._fake.set(args[0], args[1])
@@ -289,6 +379,10 @@ class _FakeRedis:
             self._zsets[key] = [(s, m) for (s, m) in self._zsets[key] if m != member]
             self._zsets[key].append((score, member))
         self._zsets[key].sort(key=lambda x: x[0])
+
+    def zrem(self, key, member):
+        if key in self._zsets:
+            self._zsets[key] = [(s, m) for (s, m) in self._zsets[key] if m != member]
 
     def zrange(self, key, start, stop, desc=False):
         items = self._zsets.get(key, [])

@@ -67,15 +67,19 @@ def fetch_repo_issues(
     token: Optional[str] = None,
     max_pages: int = 20,
     max_issues: int = 2000,
+    state: str = "open",
 ) -> List[Dict[str, Any]]:
     """
-    Fetch all issues (excluding pull requests) for a repository.
+    Fetch issues (excluding pull requests) for a repository.
 
     Args:
         owner: GitHub repo owner.
         repo: Repository name.
         since: Optional ISO 8601 timestamp (e.g., "2024-01-01T00:00:00Z") to fetch issues updated since then.
         token: Optional GitHub access token (from user OAuth session).
+        max_pages: Maximum number of pages to fetch.
+        max_issues: Maximum number of issues to fetch.
+        state: Issue state filter - "open", "closed", or "all". Defaults to "open".
 
     Returns:
         List of issue dicts (pull requests filtered out).
@@ -85,7 +89,7 @@ def fetch_repo_issues(
     """
     url = f"{GITHUB_API_URL}/repos/{owner}/{repo}/issues"
     params = {
-        "state": "all",
+        "state": state,
         "per_page": 100,
         "sort": "updated",
         "direction": "desc",

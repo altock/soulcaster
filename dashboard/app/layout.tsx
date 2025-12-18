@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import UnicornBackground from '@/components/UnicornBackground';
-import DashboardHeader from '@/components/DashboardHeader';
 import SessionProvider from '@/components/SessionProvider';
 import './globals.css';
 
@@ -38,10 +37,7 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased text-white font-sans`}>
         <SessionProvider>
           <UnicornBackground />
-          <div className="min-h-screen relative z-10">
-            <DashboardHeader />
-            {children}
-          </div>
+          <div className="min-h-screen relative z-10">{children}</div>
         </SessionProvider>
       </body>
     </html>

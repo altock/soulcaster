@@ -717,27 +717,31 @@ async def ingest_github_sync(
 ):
     """
     Synchronize GitHub issues for a repository into project-scoped FeedbackItems.
-    
-    Fetches issues from the specified GitHub repository, creates or updates FeedbackItems in the target project using each issue's external ID, removes closed issues from the unclustered set, and triggers asynchronous clustering when there are items to cluster. Pull requests are ignored. The in-memory sync state for the (project, repo) pair is updated with `last_synced` and `issue_count`.
-    
+
+    Only ingests open issues. For initial sync, fetches only open issues to avoid
+    historical closed issues. For incremental sync, fetches all updated issues
+    to detect newly closed ones and archives them (marks status as "closed" and
+    removes from unclustered set). Pull requests are ignored. The in-memory sync
+    state for the (project, repo) pair is updated with `last_synced` and `issue_count`.
+
     Parameters:
         request: FastAPI request object (headers inspected for debugging).
         repo_name: GitHub repository in the form "owner/repo".
         project_id: Project identifier; required.
         x_github_token: Optional OAuth token supplied via the X-GitHub-Token header.
-    
+
     Returns:
         dict: Summary of the sync with keys:
             - success (bool): True when sync completed.
             - repo (str): repository full name ("owner/repo").
             - new_issues (int): number of newly created feedback items.
             - updated_issues (int): number of updated feedback items.
-            - closed_issues (int): number of issues marked closed and removed from unclustered.
+            - archived_issues (int): number of previously open issues that were archived because they're now closed.
             - total_issues (int): total issues fetched from GitHub.
             - last_synced (str): ISO 8601 UTC timestamp when the sync finished.
             - project_id (str): the project_id used for the sync.
             - synced_ids (List[str]): UUIDs of feedback items created or updated.
-    
+
     Raises:
         HTTPException: if project_id is missing, repo_name is invalid, or fetching issues from GitHub fails (returns 502).
     """
@@ -765,13 +769,18 @@ async def ingest_github_sync(
 
     overall_start = time.monotonic()
 
+    # For initial sync (no since), only fetch open issues to avoid ingesting historical closed issues.
+    # For incremental sync (since is set), fetch all updated issues to detect newly closed ones.
+    issue_state = "all" if since else "open"
+
     try:
         fetch_start = time.monotonic()
-        logger.info(f"Fetching issues from GitHub API for {owner}/{repo}...")
+        logger.info(f"Fetching issues from GitHub API for {owner}/{repo} (state={issue_state})...")
         fetch_kwargs = {
             "since": since,
             "max_pages": int(os.getenv("GITHUB_SYNC_MAX_PAGES", "20")),
             "max_issues": int(os.getenv("GITHUB_SYNC_MAX_ISSUES", "2000")),
+            "state": issue_state,
         }
         if x_github_token:
             fetch_kwargs["token"] = x_github_token
@@ -790,7 +799,7 @@ async def ingest_github_sync(
             "repo": repo_full_name,
             "new_issues": 0,
             "updated_issues": 0,
-            "closed_issues": 0,
+            "archived_issues": 0,
             "total_issues": 0,
             "last_synced": datetime.now(timezone.utc).isoformat(),
             "project_id": project_id,
@@ -799,20 +808,30 @@ async def ingest_github_sync(
 
     new_count = 0
     updated_count = 0
-    closed_count = 0
+    archived_count = 0
     synced_ids: List[str] = []
 
     external_ids = [str(issue.get("id")) for issue in issues if issue.get("id") is not None]
     existing_feedback_map = get_feedback_by_external_ids_batch(project_id, "github", external_ids)
 
     feedback_items: List[FeedbackItem] = []
-    closed_pairs: List[Tuple[UUID, str]] = []
+    to_archive: List[Tuple[UUID, str]] = []  # (feedback_id, project_id) pairs to archive
     to_cluster: List[FeedbackItem] = []
 
     for issue in issues:
         external_id = str(issue.get("id"))
         existing = existing_feedback_map.get(external_id)
+        is_closed = issue.get("state") == "closed"
 
+        if is_closed:
+            # For closed issues: archive if they exist in our store, skip if they don't
+            if existing:
+                to_archive.append((existing.id, project_id))
+                archived_count += 1
+            # Don't add closed issues that aren't already in our store
+            continue
+
+        # Open issue: add or update
         if existing:
             # Refresh fields while preserving the stored UUID
             feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id).model_copy(
@@ -824,32 +843,29 @@ async def ingest_github_sync(
             new_count += 1
 
         feedback_items.append(feedback_item)
-
-        if issue.get("state") == "closed":
-            closed_pairs.append((feedback_item.id, project_id))
-            closed_count += 1
-        else:
-            to_cluster.append(feedback_item)
-
+        to_cluster.append(feedback_item)
         synced_ids.append(str(feedback_item.id))
 
-    # Batch write all feedback items
-    write_start = time.monotonic()
-    add_feedback_items_batch(feedback_items)
-    logger.info(
-        "Wrote %d feedback items (%.2fs)",
-        len(feedback_items),
-        time.monotonic() - write_start,
-    )
-
-    # Batch remove closed items from unclustered
-    if closed_pairs:
-        prune_start = time.monotonic()
-        remove_from_unclustered_batch(closed_pairs)
+    # Batch write all open feedback items
+    if feedback_items:
+        write_start = time.monotonic()
+        add_feedback_items_batch(feedback_items)
         logger.info(
-            "Removed %d closed items from unclustered (%.2fs)",
-            len(closed_pairs),
-            time.monotonic() - prune_start,
+            "Wrote %d feedback items (%.2fs)",
+            len(feedback_items),
+            time.monotonic() - write_start,
+        )
+
+    # Archive closed items: update status to "closed" and remove from unclustered
+    if to_archive:
+        archive_start = time.monotonic()
+        for feedback_id, pid in to_archive:
+            update_feedback_item(pid, feedback_id, status="closed")
+        remove_from_unclustered_batch(to_archive)
+        logger.info(
+            "Archived %d closed issues (%.2fs)",
+            len(to_archive),
+            time.monotonic() - archive_start,
         )
 
     if to_cluster:
@@ -858,23 +874,23 @@ async def ingest_github_sync(
     now_iso = datetime.now(timezone.utc).isoformat()
     GITHUB_SYNC_STATE[state_key] = {
         "last_synced": now_iso,
-        "issue_count": str(len(issues)),
+        "issue_count": str(len(feedback_items)),
     }
 
     logger.info(
-        "Sync complete: %d new, %d updated, %d closed in %.2fs",
+        "Sync complete: %d new, %d updated, %d archived in %.2fs",
         new_count,
         updated_count,
-        closed_count,
+        archived_count,
         time.monotonic() - overall_start,
     )
-    
+
     return {
         "success": True,
         "repo": repo_full_name,
         "new_issues": new_count,
         "updated_issues": updated_count,
-        "closed_issues": closed_count,
+        "archived_issues": archived_count,
         "total_issues": len(issues),
         "last_synced": now_iso,
         "project_id": project_id,
