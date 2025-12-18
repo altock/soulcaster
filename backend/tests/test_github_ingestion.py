@@ -380,6 +380,10 @@ class _FakeRedis:
             self._zsets[key].append((score, member))
         self._zsets[key].sort(key=lambda x: x[0])
 
+    def zrem(self, key, member):
+        if key in self._zsets:
+            self._zsets[key] = [(s, m) for (s, m) in self._zsets[key] if m != member]
+
     def zrange(self, key, start, stop, desc=False):
         items = self._zsets.get(key, [])
         if desc:

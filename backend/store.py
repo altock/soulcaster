@@ -437,6 +437,34 @@ class InMemoryStore:
             self.external_index.clear()
             self.unclustered_feedback_ids.clear()
 
+    def delete_feedback_item(self, project_id: str, item_id: UUID) -> bool:
+        """
+        Delete a feedback item and remove it from all indexes.
+
+        Parameters:
+            project_id (str): ID of the project the item belongs to.
+            item_id (UUID): ID of the feedback item to delete.
+
+        Returns:
+            bool: True if item was deleted, False if not found.
+        """
+        item = self.feedback_items.get(item_id)
+        if not item or str(item.project_id) != str(project_id):
+            return False
+
+        # Remove from main store
+        del self.feedback_items[item_id]
+
+        # Remove from external index
+        if item.external_id:
+            key = (str(project_id), item.source, item.external_id)
+            self.external_index.pop(key, None)
+
+        # Remove from unclustered set
+        self.remove_from_unclustered(item_id, project_id)
+
+        return True
+
     # Clusters
     def add_cluster(self, cluster: IssueCluster) -> IssueCluster:
         """

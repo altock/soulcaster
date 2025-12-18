@@ -550,7 +550,7 @@ async def ingest_github_sync(
     now_iso = datetime.now(timezone.utc).isoformat()
     GITHUB_SYNC_STATE[state_key] = {
         "last_synced": now_iso,
-        "issue_count": str(len(feedback_items) - archived_count),
+        "issue_count": str(len(feedback_items)),
     }
 
     logger.info(
