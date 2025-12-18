@@ -129,6 +129,8 @@ class IssueCluster(BaseModel):
     issue_title: Optional[str] = None
     issue_description: Optional[str] = None
     github_repo_url: Optional[str] = None
+    # Cached list of distinct sources for feedback items in this cluster
+    sources: Optional[List[str]] = None
 
 
 class User(BaseModel):

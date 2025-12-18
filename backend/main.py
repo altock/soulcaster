@@ -944,16 +944,9 @@ def list_clusters(project_id: Optional[str] = Query(None)):
     clusters = get_all_clusters(pid_str)
     results = []
     for cluster in clusters:
-        feedback_items = []
-        for fid in cluster.feedback_ids:
-            try:
-                item = get_feedback_item(pid_str, UUID(fid))
-                if item:
-                    feedback_items.append(item)
-            except (ValueError, AttributeError):
-                continue
-        
-        sources = sorted({item.source for item in feedback_items})
+        # Use cached sources from cluster (populated at creation time)
+        # Fallback to empty list for clusters created before this optimization
+        sources = cluster.sources if cluster.sources else []
         results.append(
             {
                 "id": cluster.id,

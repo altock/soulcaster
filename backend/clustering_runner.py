@@ -110,12 +110,12 @@ def _prepare_issue_payloads(items: Sequence[FeedbackItem]) -> List[dict]:
 def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
     """
     Builds a new IssueCluster from a non-empty list of FeedbackItem objects.
-    
+
     The returned cluster groups the provided feedback items: it assigns a new UUID as the cluster id, sets the cluster's project_id from the first item, derives and truncates the title/summary from the first item (summary limited to 300 characters), collects the feedback item ids, sets status to "new", and sets created_at/updated_at to the current UTC time.
-    
+
     Parameters:
         item_group (List[FeedbackItem]): A non-empty list of feedback items to include in the cluster.
-    
+
     Returns:
         IssueCluster: A newly constructed IssueCluster representing the grouped feedback items.
     """
@@ -127,6 +127,8 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
     summary = raw_summary[:300]
     feedback_ids = [str(item.id) for item in item_group]
     github_repo_url = _derive_github_repo_url(item_group)
+    # Cache distinct sources to avoid expensive per-item lookups in /clusters endpoint
+    sources = sorted({item.source for item in item_group})
     return IssueCluster(
         id=str(uuid4()),
         project_id=first.project_id,
@@ -137,6 +139,7 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
         created_at=now,
         updated_at=now,
         github_repo_url=github_repo_url,
+        sources=sources,
     )
 
 
@@ -242,6 +245,8 @@ async def run_clustering_job(project_id: str, job_id: str):
                 title = f"Reddit: r/{subreddit}" if subreddit else first.title
                 summary = first.body[:200] if first.body else "Feedback cluster"
                 github_repo_url = _derive_github_repo_url(items)
+                # Cache distinct sources to avoid expensive per-item lookups in /clusters endpoint
+                sources = sorted({item.source for item in items})
                 cluster = IssueCluster(
                     id=str(uuid4()),
                     project_id=first.project_id,
@@ -252,6 +257,7 @@ async def run_clustering_job(project_id: str, job_id: str):
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),
                     github_repo_url=github_repo_url,
+                    sources=sources,
                 )
                 grouped_clusters = [cluster]
                 for cluster in grouped_clusters:
