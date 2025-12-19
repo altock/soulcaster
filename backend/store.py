@@ -312,6 +312,15 @@ class InMemoryStore:
         # Generic key-value config storage
         self.config: Dict[str, str] = {}
 
+    def ping(self) -> bool:
+        """
+        Health check for in-memory store.
+
+        Returns:
+            bool: Always True since in-memory store is always available.
+        """
+        return True
+
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
         """
@@ -1114,6 +1123,28 @@ class RedisStore:
     def _coding_plan_key(cluster_id: str) -> str:
         """Match dashboard: coding_plan:{clusterId}"""
         return f"coding_plan:{cluster_id}"
+
+    def ping(self) -> bool:
+        """
+        Health check for Redis connection.
+
+        Returns:
+            bool: True if connection is healthy, False otherwise.
+
+        Raises:
+            Exception: If Redis connection fails.
+        """
+        try:
+            if self.mode == "redis":
+                # Use redis-py's ping
+                self.client.ping()
+            else:
+                # Use REST API ping
+                self.client._cmd("PING")
+            return True
+        except Exception as e:
+            logger.error(f"Redis ping failed: {e}")
+            raise
 
     def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
         """
@@ -2627,6 +2658,19 @@ _STORE = _select_store()
 
 
 # Public API (delegates to current store)
+def ping() -> bool:
+    """
+    Health check for the storage backend.
+
+    Returns:
+        bool: True if the store is healthy and accessible.
+
+    Raises:
+        Exception: If the store is not accessible.
+    """
+    return _STORE.ping()
+
+
 def add_feedback_item(item: FeedbackItem) -> FeedbackItem:
     return _STORE.add_feedback_item(item)
 

@@ -80,6 +80,7 @@ from store import (
     set_datadog_config as set_datadog_config_value,
     get_posthog_config as get_posthog_config_value,
     set_posthog_config as set_posthog_config_value,
+    ping,
 )
 from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
@@ -146,8 +147,45 @@ GITHUB_SYNC_STATE: Dict[Tuple[str, str], Dict[str, str]] = {}
 
 @app.get("/")
 def read_root():
-    """Health check endpoint."""
+    """Basic root endpoint."""
     return {"status": "ok", "service": "soulcaster-ingestion"}
+
+
+@app.get("/health")
+def health_check():
+    """
+    Health check endpoint for monitoring and load balancers.
+
+    Checks:
+    - Service is running
+    - Storage backend (Redis/in-memory) is accessible
+
+    Returns:
+        200 OK if healthy
+        503 Service Unavailable if storage is down
+    """
+    try:
+        environment = os.getenv("ENVIRONMENT", "development")
+        store_healthy = ping()
+
+        return {
+            "status": "healthy",
+            "service": "soulcaster-backend",
+            "environment": environment,
+            "storage": "connected" if store_healthy else "disconnected",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "service": "soulcaster-backend",
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
 
 def _require_project_id(project_id: Optional[UUID | str]) -> str:
