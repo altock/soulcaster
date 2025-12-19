@@ -849,9 +849,9 @@ async def ingest_github_sync(
     external_ids = [str(issue.get("id")) for issue in issues if issue.get("id") is not None]
     existing_feedback_map = get_feedback_by_external_ids_batch(project_id, "github", external_ids)
 
-    feedback_items: List[FeedbackItem] = []
+    new_items: List[FeedbackItem] = []  # Truly new items (will be added to unclustered set)
+    items_to_update: List[FeedbackItem] = []  # Existing items to update (won't touch unclustered)
     to_archive: List[Tuple[UUID, str]] = []  # (feedback_id, project_id) pairs to archive
-    to_cluster: List[FeedbackItem] = []
 
     for issue in issues:
         external_id = str(issue.get("id"))
@@ -872,23 +872,40 @@ async def ingest_github_sync(
             feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id).model_copy(
                 update={"id": existing.id}
             )
+            items_to_update.append(feedback_item)
             updated_count += 1
         else:
             feedback_item = issue_to_feedback_item(issue, repo_full_name, project_id)
+            new_items.append(feedback_item)
             new_count += 1
 
-        feedback_items.append(feedback_item)
-        to_cluster.append(feedback_item)
         synced_ids.append(str(feedback_item.id))
 
-    # Batch write all open feedback items
-    if feedback_items:
+    # Batch write new items (adds to unclustered set for clustering)
+    if new_items:
         write_start = time.monotonic()
-        add_feedback_items_batch(feedback_items)
+        add_feedback_items_batch(new_items)
         logger.info(
-            "Wrote %d feedback items (%.2fs)",
-            len(feedback_items),
+            "Wrote %d new feedback items (%.2fs)",
+            len(new_items),
             time.monotonic() - write_start,
+        )
+
+    # Update existing items without re-adding to unclustered set (prevents duplicate clusters)
+    if items_to_update:
+        update_start = time.monotonic()
+        for item in items_to_update:
+            update_feedback_item(
+                project_id,
+                item.id,
+                title=item.title,
+                body=item.body,
+                metadata=item.metadata,
+            )
+        logger.info(
+            "Updated %d existing feedback items (%.2fs)",
+            len(items_to_update),
+            time.monotonic() - update_start,
         )
 
     # Archive closed items: update status to "closed" and remove from unclustered
@@ -903,13 +920,14 @@ async def ingest_github_sync(
             time.monotonic() - archive_start,
         )
 
-    if to_cluster:
+    # Only trigger clustering if there are truly new items (not updates)
+    if new_items:
         _kickoff_clustering(project_id)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     GITHUB_SYNC_STATE[state_key] = {
         "last_synced": now_iso,
-        "issue_count": str(len(feedback_items)),
+        "issue_count": str(len(new_items) + len(items_to_update)),
     }
 
     logger.info(
@@ -1741,7 +1759,7 @@ def list_clusters(project_id: Optional[str] = Query(None)):
 
     pid = _require_project_id(project_id)
     pid_str = str(pid)
-    clusters = get_all_clusters(pid_str)  # Already sorted by created_at desc from store
+    clusters = get_all_clusters(pid_str)  # Already sorted by created_at desc from ZSET
     results = []
     for cluster in clusters:
         # Use cached sources from cluster (populated at creation time)

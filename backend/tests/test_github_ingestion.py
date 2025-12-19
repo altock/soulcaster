@@ -12,6 +12,7 @@ from store import (
     get_unclustered_feedback,
     add_feedback_items_batch,
     get_feedback_by_external_ids_batch,
+    remove_from_unclustered,
     remove_from_unclustered_batch,
     RedisStore,
 )
@@ -252,6 +253,72 @@ def test_sync_github_repo_dedup_and_update_counts(project_context, monkeypatch):
     # Still only one feedback item stored
     items = get_all_feedback_items(pid)
     assert len(items) == 1
+
+
+def test_sync_update_does_not_readd_to_unclustered(project_context, monkeypatch):
+    """
+    Test that updating an existing feedback item does NOT re-add it to the unclustered set.
+    This prevents duplicate clusters from being created during subsequent syncs.
+    Fixes issue #93.
+    """
+    pid = project_context["project_id"]
+    # Mock clustering kickoff to prevent actual clustering
+    monkeypatch.setattr("main._kickoff_clustering", lambda project_id: None)
+
+    issue_open = {
+        "id": 500,
+        "number": 50,
+        "title": "Original title",
+        "body": "Original body",
+        "state": "open",
+        "html_url": "https://github.com/org/repo/issues/50",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-02T00:00:00Z",
+        "labels": [],
+        "user": {"login": "alice"},
+        "assignees": [],
+    }
+
+    # First sync - item should be added to unclustered set
+    monkeypatch.setattr(
+        "main.fetch_repo_issues", lambda owner, repo, since=None, **kwargs: [issue_open]
+    )
+    first_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert first_resp.status_code == 200
+    assert first_resp.json()["new_issues"] == 1
+
+    # Verify item is in unclustered set
+    unclustered = get_unclustered_feedback(pid)
+    assert len(unclustered) == 1
+    feedback_id = unclustered[0].id
+
+    # Simulate clustering by removing from unclustered set
+    remove_from_unclustered(feedback_id, pid)
+    unclustered_after_cluster = get_unclustered_feedback(pid)
+    assert len(unclustered_after_cluster) == 0
+
+    # Second sync with updated issue - should NOT re-add to unclustered set
+    updated_issue = issue_open | {"title": "Updated title", "updated_at": "2024-01-03T00:00:00Z"}
+    monkeypatch.setattr(
+        "main.fetch_repo_issues",
+        lambda owner, repo, since=None, **kwargs: [updated_issue],
+    )
+    second_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    assert second_resp.status_code == 200
+    assert second_resp.json()["new_issues"] == 0
+    assert second_resp.json()["updated_issues"] == 1
+
+    # CRITICAL: Unclustered set should still be empty (item was not re-added)
+    unclustered_after_update = get_unclustered_feedback(pid)
+    assert len(unclustered_after_update) == 0, (
+        "Updated feedback should NOT be re-added to unclustered set. "
+        "This would cause duplicate clusters to be created."
+    )
+
+    # Verify the item was still updated
+    items = get_all_feedback_items(pid)
+    assert len(items) == 1
+    assert items[0].title == "Updated title"
 
 
 class _FakeRedisPipeline:
