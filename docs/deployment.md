@@ -73,9 +73,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install Vercel CLI (optional, for manual deployments)
 npm install -g vercel
 
-# Install jq (for JSON parsing in Makefile)
+# Install Just (modern command runner)
+brew install just  # macOS
+# or: cargo install just
+
+# Install jq (for JSON parsing)
 brew install jq  # macOS
-# or apt-get install jq  # Linux
+# or: apt-get install jq  # Linux
 ```
 
 ---
@@ -357,8 +361,8 @@ nano dashboard/.env.local
 ### 6.2 Install Dependencies
 
 ```bash
-# Using Makefile (recommended)
-make install
+# Using just (recommended)
+just install
 
 # Or manually:
 cd backend && uv sync
@@ -369,11 +373,11 @@ cd dashboard && npm install && npx prisma generate
 
 ```bash
 # Terminal 1: Backend
-make dev-backend
+just dev-backend
 # or: cd backend && uv run uvicorn main:app --reload --port 8000
 
 # Terminal 2: Dashboard
-make dev-dashboard
+just dev-dashboard
 # or: cd dashboard && npm run dev
 
 # Access:
@@ -438,10 +442,10 @@ Expected response:
 
 ```bash
 # Interactive (asks for confirmation)
-make dev-reset
+just dev-reset
 
 # Force (no confirmation)
-make dev-reset-force
+just dev-reset-force
 
 # Or directly:
 python scripts/reset_dev_data.py
@@ -577,24 +581,27 @@ npx prisma generate
 ### Useful Commands
 
 ```bash
+# Show all available commands
+just
+
 # Development
-make dev-backend              # Run backend locally
-make dev-dashboard            # Run dashboard locally
-make dev-reset               # Reset DEV data
-make install                 # Install all dependencies
+just dev-backend              # Run backend locally
+just dev-dashboard            # Run dashboard locally
+just dev-reset               # Reset DEV data
+just install                 # Install all dependencies
 
 # Testing
-make test                    # Run all tests
-make test-backend            # Backend tests only
-make lint                    # Run linters
+just test                    # Run all tests
+just test-backend            # Backend tests only
+just lint                    # Run linters
 
 # Production
-make prod-health             # Check PROD health
-make prod-deploy-dashboard   # Deploy to Vercel
+just prod-health             # Check PROD health
+just prod-deploy-dashboard   # Deploy to Vercel
 
 # Database
-make db-migrate              # Run Prisma migrations
-make db-studio              # Open Prisma Studio
+just db-migrate              # Run Prisma migrations
+just db-studio              # Open Prisma Studio
 ```
 
 ### Important URLs

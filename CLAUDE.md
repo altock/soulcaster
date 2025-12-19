@@ -25,33 +25,46 @@ Three components sharing Upstash Redis:
 
 ## Development Commands
 
+**Quick Start:**
+```bash
+just                # Show all available commands
+just install        # Install all dependencies
+just dev-backend    # Run backend (localhost:8000)
+just dev-dashboard  # Run dashboard (localhost:3000)
+```
+
 ### Backend (from project root)
 
 ```bash
-pip install -r backend/requirements.txt
+# Modern (recommended)
+just dev-backend                  # Run with uv
+just test-backend                 # Run tests
+just install-backend              # Install dependencies
 
-uvicorn backend.main:app --reload --port 8000   # API server
-python -m backend.reddit_poller                  # Reddit poller (separate process)
-
-pytest backend/tests -v                          # All tests
-pytest backend/tests/test_clusters.py -v         # Single test file
-pytest backend/tests/test_clusters.py::test_list_clusters -v  # Specific test
+# Manual
+cd backend && uv sync             # Install dependencies
+cd backend && uv run uvicorn main:app --reload --port 8000
+cd backend && uv run pytest -v    # All tests
 ```
 
 ### Dashboard (from `/dashboard`)
 
 ```bash
-npm install
-npx prisma migrate dev        # Setup/migrate database
-npx prisma generate           # Regenerate Prisma client
+# Modern (recommended)
+just dev-dashboard                # Run dev server
+just test-dashboard               # Run tests
+just install-dashboard            # Install dependencies
 
-npm run dev                   # Development server (port 3000)
-npm run build                 # Production build (runs prisma generate first)
-npm run lint                  # ESLint
-npm run format                # Prettier
-npm run type-check            # TypeScript check
-npm test                      # Jest tests
-npm run test:watch            # Jest watch mode
+# Manual
+npm install
+npx prisma migrate dev            # Setup/migrate database
+npx prisma generate               # Regenerate Prisma client
+npm run dev                       # Development server (port 3000)
+npm run build                     # Production build
+npm run lint                      # ESLint
+npm run format                    # Prettier
+npm run type-check                # TypeScript check
+npm test                          # Jest tests
 ```
 
 ### Coding Agent
