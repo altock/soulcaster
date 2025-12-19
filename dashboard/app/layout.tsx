@@ -15,12 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'FeedbackAgent Dashboard',
+  title: 'Soulcaster Dashboard',
   description: 'Self-healing dev loop triage dashboard',
 };
 
 /**
- * Provides the root HTML layout for the FeedbackAgent dashboard.
+ * Provides the root HTML layout for the Soulcaster dashboard.
  *
  * Renders the document scaffold including <html lang="en">, a styled <body>, a header with the dashboard title, and a main content area that hosts `children`.
  *

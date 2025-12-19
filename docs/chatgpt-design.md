@@ -1,4 +1,4 @@
-# FeedbackAgent Productionization Design (Product Hunt beta)
+# Soulcaster Productionization Design (Product Hunt beta)
 
 ## Goal and guardrails
 - Ship a resilient “good enough” loop for Product Hunt/early users while keeping costs and complexity low.

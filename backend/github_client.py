@@ -31,7 +31,7 @@ def _auth_headers(token: Optional[str] = None) -> Dict[str, str]:
     """
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "FeedbackAgent/1.0",
+        "User-Agent": "Soulcaster/1.0",
     }
     # Use provided token, or fall back to env var
     auth_token = token or os.getenv("GITHUB_TOKEN")

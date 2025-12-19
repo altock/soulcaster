@@ -1,6 +1,6 @@
 # CI/CD Setup
 
-This document describes the CI/CD setup for the FeedbackAgent dashboard.
+This document describes the CI/CD setup for the Soulcaster dashboard.
 
 ## What's Configured
 

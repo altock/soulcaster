@@ -1,4 +1,4 @@
-// Shared TypeScript types for FeedbackAgent dashboard
+// Shared TypeScript types for Soulcaster dashboard
 
 export type FeedbackSource = 'reddit' | 'manual' | 'github';
 

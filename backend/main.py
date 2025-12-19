@@ -1,4 +1,4 @@
-"""FastAPI application for FeedbackAgent data ingestion.
+"""FastAPI application for Soulcaster data ingestion.
 
 This module provides HTTP endpoints for ingesting feedback from multiple sources:
 - Reddit posts (normalized via reddit_poller)
@@ -115,7 +115,7 @@ import agent_runner.sandbox
 import agent_runner.aws
 
 app = FastAPI(
-    title="FeedbackAgent Ingestion API",
+    title="Soulcaster Ingestion API",
     description="API for ingesting user feedback from multiple sources",
     version="0.1.0",
 )
@@ -147,7 +147,7 @@ GITHUB_SYNC_STATE: Dict[Tuple[str, str], Dict[str, str]] = {}
 @app.get("/")
 def read_root():
     """Health check endpoint."""
-    return {"status": "ok", "service": "feedbackagent-ingestion"}
+    return {"status": "ok", "service": "soulcaster-ingestion"}
 
 
 def _require_project_id(project_id: Optional[UUID | str]) -> str:
