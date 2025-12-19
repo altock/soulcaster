@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import type { AgentJob, ClusterDetail, CodingPlan } from '@/types';
@@ -48,42 +48,8 @@ export default function ClusterDetailPage() {
   const [logCursor, setLogCursor] = useState(0);
   const [isTailingLogs, setIsTailingLogs] = useState(false);
 
-  // Initial data fetch
-  useEffect(() => {
-    fetchCluster();
-    fetchPlan();
-    fetchFixJobs();
-  }, [clusterId]);
-
-  // Poll cluster status when fixing
-  useEffect(() => {
-    if (cluster?.status === 'fixing' && !isFixing) {
-      const interval = setInterval(fetchCluster, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [cluster?.status, isFixing]);
-
-  // Poll jobs when running
-  useEffect(() => {
-    const jobIsRunning = fixJobs.some(
-      (job) => job.status === 'running' || job.status === 'pending'
-    );
-    if (!jobIsRunning) return;
-    const interval = setInterval(fetchFixJobs, 5000);
-    return () => clearInterval(interval);
-  }, [fixJobs]);
-
-  // Poll logs when tailing
-  useEffect(() => {
-    if (!selectedJobForLogs?.id || !isTailingLogs) return;
-    const interval = setInterval(
-      () => fetchJobLogs(selectedJobForLogs.id, { append: true }),
-      2000
-    );
-    return () => clearInterval(interval);
-  }, [selectedJobForLogs?.id, isTailingLogs, logCursor]);
-
-  const fetchCluster = async () => {
+  // Fetch functions (defined before effects that use them)
+  const fetchCluster = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -98,9 +64,9 @@ export default function ClusterDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [clusterId]);
 
-  const fetchPlan = async () => {
+  const fetchPlan = useCallback(async () => {
     try {
       const response = await fetch(`/api/clusters/${clusterId}/plan`);
       if (response.ok) {
@@ -112,9 +78,9 @@ export default function ClusterDetailPage() {
     } catch (err) {
       console.error('Failed to fetch plan:', err);
     }
-  };
+  }, [clusterId]);
 
-  const fetchFixJobs = async () => {
+  const fetchFixJobs = useCallback(async () => {
     try {
       setJobsError(null);
       const response = await fetch(`/api/clusters/${clusterId}/jobs`);
@@ -126,34 +92,72 @@ export default function ClusterDetailPage() {
     } catch (err) {
       setJobsError(err instanceof Error ? err.message : 'Failed to fetch fix jobs');
     }
-  };
+  }, [clusterId]);
 
-  const fetchJobLogs = async (jobId: string, opts?: { append?: boolean }) => {
-    const append = opts?.append ?? false;
-    const cursor = append ? logCursor : 0;
-    const response = await fetch(
-      `/api/jobs/${encodeURIComponent(jobId)}/job-logs?cursor=${cursor}&limit=200`
-    );
-    if (!response.ok) {
-      throw new Error('Failed to fetch logs');
+  const fetchJobLogs = useCallback(
+    async (jobId: string, opts?: { append?: boolean }) => {
+      const append = opts?.append ?? false;
+      const cursor = append ? logCursor : 0;
+      const response = await fetch(
+        `/api/jobs/${encodeURIComponent(jobId)}/job-logs?cursor=${cursor}&limit=200`
+      );
+      if (!response.ok) {
+        throw new Error('Failed to fetch logs');
+      }
+      const payload = await response.json();
+      const chunks = (payload?.chunks as string[]) || [];
+      const nextCursor =
+        typeof payload?.next_cursor === 'number'
+          ? payload.next_cursor
+          : cursor + chunks.length;
+      if (append) {
+        setLogText((prev) => prev + chunks.join(''));
+      } else {
+        setLogText(chunks.join(''));
+      }
+      setLogCursor(nextCursor);
+      setIsTailingLogs(
+        Boolean(payload?.has_more) ||
+          fixJobs.some((j) => j.id === jobId && j.status === 'running')
+      );
+    },
+    [logCursor, fixJobs]
+  );
+
+  // Initial data fetch
+  useEffect(() => {
+    fetchCluster();
+    fetchPlan();
+    fetchFixJobs();
+  }, [fetchCluster, fetchPlan, fetchFixJobs]);
+
+  // Poll cluster status when fixing
+  useEffect(() => {
+    if (cluster?.status === 'fixing' && !isFixing) {
+      const interval = setInterval(fetchCluster, 3000);
+      return () => clearInterval(interval);
     }
-    const payload = await response.json();
-    const chunks = (payload?.chunks as string[]) || [];
-    const nextCursor =
-      typeof payload?.next_cursor === 'number'
-        ? payload.next_cursor
-        : cursor + chunks.length;
-    if (append) {
-      setLogText((prev) => prev + chunks.join(''));
-    } else {
-      setLogText(chunks.join(''));
-    }
-    setLogCursor(nextCursor);
-    setIsTailingLogs(
-      Boolean(payload?.has_more) ||
-        fixJobs.some((j) => j.id === jobId && j.status === 'running')
+  }, [cluster?.status, isFixing, fetchCluster]);
+
+  // Poll jobs when running
+  useEffect(() => {
+    const jobIsRunning = fixJobs.some(
+      (job) => job.status === 'running' || job.status === 'pending'
     );
-  };
+    if (!jobIsRunning) return;
+    const interval = setInterval(fetchFixJobs, 5000);
+    return () => clearInterval(interval);
+  }, [fixJobs, fetchFixJobs]);
+
+  // Poll logs when tailing
+  useEffect(() => {
+    if (!selectedJobForLogs?.id || !isTailingLogs) return;
+    const interval = setInterval(
+      () => fetchJobLogs(selectedJobForLogs.id, { append: true }),
+      2000
+    );
+    return () => clearInterval(interval);
+  }, [selectedJobForLogs?.id, isTailingLogs, fetchJobLogs]);
 
   const handleGeneratePlan = async () => {
     try {
