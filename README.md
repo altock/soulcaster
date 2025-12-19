@@ -229,6 +229,7 @@ soulcaster/
 │   └── __tests__/     # Dashboard tests
 ├── coding-agent/      # Standalone coding agent service
 └── documentation/     # Additional documentation
+    └── operations/    # Runbooks, monitoring, and backups
 ```
 
 ## How It Works
@@ -266,3 +267,10 @@ Contributions are welcome! Please read the project guidelines and submit pull re
 ## Support
 
 For issues, questions, or contributions, please open an issue on GitHub.
+
+## Operations
+
+For operational guides, see:
+- [Monitoring and Alerting](documentation/operations/monitoring_alerting.md)
+- [Backup and Restore](documentation/operations/backup_restore.md)
+- [Runbook](documentation/operations/runbook_stub.md)
