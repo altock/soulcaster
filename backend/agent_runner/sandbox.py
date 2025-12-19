@@ -15,6 +15,7 @@ except ImportError:
 from models import AgentJob, CodingPlan, IssueCluster
 from store import append_job_log, get_job, update_job, update_cluster
 from agent_runner import AgentRunner, register_runner
+from file_utils import chunk_file_content
 
 logger = logging.getLogger(__name__)
 
@@ -711,13 +712,18 @@ class SandboxKilocodeRunner(AgentRunner):
 
              async def buffered_log(message: str) -> None:
                  nonlocal buffer_chars
-                 line = message if message.endswith("\n") else f"{message}\n"
-                 async with buffer_lock:
-                     buffer_lines.append(line)
-                     buffer_chars += len(line)
-                 if mirror:
-                     logger.info("[sandbox_kilo][job=%s] %s", job.id, message.rstrip())
-                 await flush_logs(force=False)
+                 
+                 # Break down potentially large messages
+                 message_chunks = chunk_file_content(message, max_chunk_size=4096)
+                 
+                 for chunk in message_chunks:
+                     line = chunk if chunk.endswith("\n") else f"{chunk}\n"
+                     async with buffer_lock:
+                         buffer_lines.append(line)
+                         buffer_chars += len(line)
+                     if mirror:
+                         logger.info("[sandbox_kilo][job=%s] %s", job.id, line.rstrip())
+                     await flush_logs(force=False)
 
              # Upload Agent Script and Plan
              await buffered_log("Uploading context...")
