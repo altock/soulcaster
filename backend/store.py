@@ -1614,6 +1614,10 @@ class RedisStore:
         # Serialize centroid if present
         if isinstance(payload.get("centroid"), list):
             payload["centroid"] = json.dumps(payload["centroid"])
+        
+        # Serialize sources if present
+        if isinstance(payload.get("sources"), list):
+            payload["sources"] = json.dumps(payload["sources"])
             
         # Exclude feedback_ids from Hash (stored in set)
         if "feedback_ids" in payload:

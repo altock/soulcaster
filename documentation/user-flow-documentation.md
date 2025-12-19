@@ -20,6 +20,7 @@ Soulcaster is a self-healing development loop that automatically ingests feedbac
 ## 2. Feedback Ingestion Flow
 
 ### Sources
+
 | Source | Endpoint | Trigger |
 |--------|----------|---------|
 | Reddit | `POST /ingest/reddit` | Automatic polling (configurable subreddits) |
@@ -96,7 +97,7 @@ Clustering is **automatically triggered** after each feedback ingestion.
 
 ## 6. Cluster Status Lifecycle
 
-```
+```plaintext
 new (Initial)
  ↓ User clicks "Start Fix"
 fixing (Agent Running)
