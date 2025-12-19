@@ -13,7 +13,7 @@ except ImportError:
     AsyncSandbox = None
 
 from models import AgentJob, CodingPlan, IssueCluster
-from store import append_job_log, get_job, update_job, update_cluster
+from store import append_job_log, get_job, update_job, update_cluster, get_feedback_item
 from agent_runner import AgentRunner, register_runner
 
 logger = logging.getLogger(__name__)
@@ -667,6 +667,26 @@ class SandboxKilocodeRunner(AgentRunner):
              if not env_vars["REPO_URL"]:
                   await self._fail_job(job.id, "Missing REPO_URL for sandbox run")
                   return
+
+             # Collect GitHub issue numbers from cluster feedback items
+             issue_numbers = []
+             if cluster.feedback_ids:
+                 for fid in cluster.feedback_ids:
+                     try:
+                         item = await asyncio.to_thread(get_feedback_item, str(job.project_id), UUID(fid))
+                         if item and item.github_issue_number:
+                             issue_numbers.append(item.github_issue_number)
+                     except Exception as e:
+                         logger.warning(f"Failed to resolve feedback item {fid}: {e}")
+
+             if issue_numbers:
+                 unique_issues = sorted(list(set(issue_numbers)))
+                 fixes_line = "Fixes " + ", ".join(f"#{num}" for num in unique_issues)
+                 # Append to plan description so it appears in the PR body
+                 if plan.description:
+                     plan.description += f"\n\n{fixes_line}"
+                 else:
+                     plan.description = fixes_line
              
              logger.info(f"Preparing environment for job {job.id}...")
              # Create Sandbox

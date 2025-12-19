@@ -477,7 +477,7 @@ def _run_agent_logic(issue_url):
 This PR addresses issue #{issue_num}: **{issue_title}**
 
 ### 📋 Issue Reference
-Closes #{issue_num}
+Fixes #{issue_num}
 Original issue: {issue_url_full}
 
 ### 🤖 How This Was Generated
