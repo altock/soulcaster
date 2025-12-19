@@ -1,4 +1,4 @@
-"""Domain models for FeedbackAgent data ingestion layer."""
+"""Domain models for Soulcaster data ingestion layer."""
 
 from datetime import datetime
 from typing import Dict, List, Literal, Optional, Union
@@ -71,7 +71,7 @@ class FeedbackItem(BaseModel):
     Represents a single piece of user feedback from any source.
 
     This model normalizes feedback from different sources (Reddit, Sentry, manual, GitHub, Splunk, PostHog, Datadog)
-    into a consistent schema for processing by the FeedbackAgent system.
+    into a consistent schema for processing by the Soulcaster system.
 
     Attributes:
         id: Unique identifier for this feedback item

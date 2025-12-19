@@ -15,26 +15,26 @@ export default function PrsPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<string | null>(null);
 
+  const fetchJobs = async () => {
+    try {
+      const res = await fetch('/api/jobs');
+      if (res.ok) {
+        const data = await res.json();
+        setJobs(data);
+        setError(null);
+      } else {
+        setError('Failed to fetch jobs');
+      }
+    } catch (err) {
+      console.error('Failed to fetch jobs:', err);
+      setError('Failed to fetch jobs. Check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
-
-    const fetchJobs = async () => {
-      try {
-        const res = await fetch('/api/jobs');
-        if (res.ok) {
-          const data = await res.json();
-          setJobs(data);
-          setError(null);
-        } else {
-          setError('Failed to fetch jobs');
-        }
-      } catch (err) {
-        console.error('Failed to fetch jobs:', err);
-        setError('Failed to fetch jobs. Check your connection.');
-      } finally {
-        setLoading(false);
-      }
-    };
 
     // Await initial fetch before starting interval to avoid race conditions
     const init = async () => {
@@ -97,12 +97,30 @@ export default function PrsPage() {
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-sm text-red-300">{error}</p>
+          <div
+            className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3"
+            role="alert"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm text-red-300">{error}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setLoading(true);
+                  setError(null);
+                  fetchJobs();
+                }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg border border-red-500/30 transition-colors text-xs font-medium"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Retry
+              </button>
             </div>
           </div>
         )}

@@ -24,7 +24,7 @@ try:
 except ImportError:
     _store_get_reddit_subreddits = None
 
-USER_AGENT = "Mozilla/5.0 (FeedbackAgentHackathon/0.1)"
+USER_AGENT = "Mozilla/5.0 (SoulcasterHackathon/0.1)"
 SUPPORTED_SORTS = {"new", "hot", "top"}
 DEFAULT_SORTS = ["new"]
 DEFAULT_POLL_INTERVAL = 300  # seconds

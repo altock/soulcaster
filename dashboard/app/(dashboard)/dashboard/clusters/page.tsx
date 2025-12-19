@@ -112,17 +112,86 @@ export default function ClustersListPage() {
   }
 
   if (error) {
+    const getErrorDetails = (errorMsg: string) => {
+      if (errorMsg.includes('fetch') || errorMsg.includes('network')) {
+        return {
+          title: 'Connection Error',
+          description: 'Could not connect to the API server.',
+          hint: 'Check that the backend is running on localhost:8000',
+        };
+      }
+      if (errorMsg.includes('401') || errorMsg.includes('unauthorized')) {
+        return {
+          title: 'Authentication Error',
+          description: 'Your session may have expired.',
+          hint: 'Try signing out and back in',
+        };
+      }
+      return {
+        title: 'Error Loading Clusters',
+        description: errorMsg,
+        hint: 'If this persists, check the browser console for details',
+      };
+    };
+
+    const errorDetails = getErrorDetails(error);
+
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
-          <h3 className="text-sm font-medium text-red-400">Error loading clusters</h3>
-          <div className="mt-2 text-sm text-red-300">{error}</div>
-          <button
-            onClick={fetchClusters}
-            className="mt-3 text-sm font-medium text-red-400 hover:text-red-300"
-          >
-            Try again
-          </button>
+        <div
+          className="rounded-xl bg-red-500/10 border border-red-500/30 p-6"
+          role="alert"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-6 w-6 text-red-400 flex-shrink-0 mt-0.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <div className="flex-1">
+              <h3 className="text-sm font-medium text-red-400">
+                {errorDetails.title}
+              </h3>
+              <p className="mt-1 text-sm text-red-300">
+                {errorDetails.description}
+              </p>
+              <p className="mt-2 text-xs text-red-300/70">
+                {errorDetails.hint}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={fetchClusters}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg border border-red-500/30 transition-colors text-sm font-medium"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Try Again
+            </button>
+          </div>
         </div>
       </div>
     );

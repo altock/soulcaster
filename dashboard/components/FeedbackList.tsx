@@ -6,6 +6,7 @@ import type { FeedbackItem, FeedbackSource, GitHubRepo } from '@/types';
 
 interface FeedbackListProps {
   refreshTrigger?: number;
+  onRequestShowSources?: () => void;
 }
 
 /**
@@ -14,7 +15,7 @@ interface FeedbackListProps {
  * @param refreshTrigger - Optional external numeric trigger; changing this value forces the list to re-fetch feedback.
  * @returns The component's rendered JSX containing filters, a loading indicator, an empty-state message, or a grid of feedback cards.
  */
-export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
+export default function FeedbackList({ refreshTrigger, onRequestShowSources }: FeedbackListProps) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [sourceFilter, setSourceFilter] = useState<FeedbackSource | 'all'>('all');
@@ -158,9 +159,33 @@ export default function FeedbackList({ refreshTrigger }: FeedbackListProps) {
           <h3 className="text-lg font-medium text-white">No feedback items found</h3>
           <p className="mt-2 text-sm text-slate-400 max-w-sm mx-auto">
             {sourceFilter === 'all'
-              ? 'Start by submitting manual feedback or syncing GitHub issues.'
+              ? 'Get started by connecting a feedback source or submitting manual feedback.'
               : `No ${sourceFilter} feedback items yet.`}
           </p>
+          {sourceFilter === 'all' && onRequestShowSources && (
+            <div className="mt-6">
+              <button
+                onClick={onRequestShowSources}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-500 text-black rounded-full hover:bg-emerald-400 transition-all font-medium shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                  />
+                </svg>
+                Connect GitHub Repository
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

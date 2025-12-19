@@ -3,18 +3,18 @@ import type { FeedbackItem, GitHubRepo } from '@/types';
 import { getGitHubToken } from '@/lib/auth';
 
 /**
- * Create an Octokit client configured with an optional GitHub token and a FeedbackAgent user agent.
+ * Create an Octokit client configured with an optional GitHub token and a Soulcaster user agent.
  *
  * Using a token increases API rate limits (e.g., authenticated requests have higher limits than anonymous requests).
  *
- * @returns An Octokit client configured with `auth` (if a token is available) and `userAgent: 'FeedbackAgent/1.0'`.
+ * @returns An Octokit client configured with `auth` (if a token is available) and `userAgent: 'Soulcaster/1.0'`.
  */
 async function getOctokit() {
   const token = await getGitHubToken();
 
   return new Octokit({
     auth: token,
-    userAgent: 'FeedbackAgent/1.0',
+    userAgent: 'Soulcaster/1.0',
   });
 }
 

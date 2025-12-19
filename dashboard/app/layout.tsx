@@ -37,7 +37,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * Provides the root HTML layout for the FeedbackAgent dashboard.
+ * Provides the root HTML layout for the Soulcaster dashboard.
  *
  * Renders the document scaffold including <html lang="en">, a styled <body>, a header with the dashboard title, and a main content area that hosts `children`.
  *
