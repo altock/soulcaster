@@ -62,12 +62,10 @@ export default function RequestIntegrationDialog({
   const [name, setName] = useState(defaultName);
   const [details, setDetails] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const [portalRoot] = useState<HTMLElement | null>(() =>
+    typeof document !== 'undefined' ? document.body : null
+  );
   const nameInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    setPortalRoot(document.body);
-  }, []);
 
   const requestBody = useMemo(() => {
     const lines = [

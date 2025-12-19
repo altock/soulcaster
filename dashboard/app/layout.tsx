@@ -15,8 +15,25 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Soulcaster Dashboard',
-  description: 'Self-healing dev loop triage dashboard',
+  title: 'Soulcaster',
+  description:
+    'AI-powered feedback triage and automated fix generation. Ingest bug reports, cluster similar issues, and generate PRs automatically.',
+  icons: {
+    icon: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
+  openGraph: {
+    title: 'Soulcaster',
+    description:
+      'AI-powered feedback triage and automated fix generation. Ingest bug reports, cluster similar issues, and generate PRs automatically.',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Soulcaster',
+    description:
+      'AI-powered feedback triage and automated fix generation. Ingest bug reports, cluster similar issues, and generate PRs automatically.',
+  },
 };
 
 /**

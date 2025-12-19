@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   try {
     const projectId = await requireProjectId(request);
     const response = await fetch(`${backendUrl}/clusters?project_id=${projectId}`, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     });
     if (!response.ok) {
       console.error(`Backend returned ${response.status} for clusters GET`);

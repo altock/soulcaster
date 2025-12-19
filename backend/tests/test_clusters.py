@@ -72,6 +72,7 @@ def _seed_cluster_with_feedback(project_id):
         status="new",
         created_at=now,
         updated_at=now,
+        sources=["reddit", "sentry"],
     )
     add_cluster(cluster)
     return cluster, [feedback_one, feedback_two]

@@ -52,39 +52,69 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Feature 1: Listen */}
-          <div className="bg-matrix-card p-8 rounded-2xl shadow-lg border border-matrix-border hover:border-matrix-green transition-all group hover:shadow-card-hover">
-            <div className="w-14 h-14 bg-matrix-green-dim rounded-xl flex items-center justify-center mb-6 text-3xl group-hover:shadow-neon-green transition-shadow border border-matrix-green/20">
-              👂
+          <div className="relative ring-1 ring-white/10 p-6 md:p-8 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] overflow-hidden rounded-2xl group hover:ring-emerald-500/30 transition-all">
+            <div className="absolute -left-10 -top-16 h-64 w-64 bg-gradient-to-tr from-emerald-400/20 to-emerald-300/5 rounded-full blur-2xl group-hover:opacity-80 opacity-50 transition-opacity" />
+            <div className="relative">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="h-10 w-10 rounded-xl bg-white/5 ring-1 ring-white/10 flex items-center justify-center group-hover:ring-emerald-500/30 transition-all">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-300">
+                    <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                    <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                    <circle cx="12" cy="12" r="2" />
+                    <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                    <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">Listen</h3>
+              </div>
+              <p className="text-white/70 leading-relaxed">
+                Automatically ingests feedback from Reddit communities and GitHub issues in real-time.
+              </p>
             </div>
-            <h3 className="text-xl font-bold text-white mb-3 group-hover:text-matrix-green transition-colors">Listen</h3>
-            <p className="text-gray-400 leading-relaxed">
-              Automatically ingests feedback from Reddit communities and GitHub issues in
-              real-time.
-            </p>
           </div>
 
           {/* Feature 2: Think */}
-          <div className="bg-matrix-card p-8 rounded-2xl shadow-lg border border-matrix-border hover:border-matrix-green transition-all group hover:shadow-card-hover">
-            <div className="w-14 h-14 bg-matrix-green-dim rounded-xl flex items-center justify-center mb-6 text-3xl group-hover:shadow-neon-green transition-shadow border border-matrix-green/20">
-              🧠
+          <div className="relative ring-1 ring-white/10 p-6 md:p-8 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] overflow-hidden rounded-2xl group hover:ring-emerald-500/30 transition-all">
+            <div className="absolute -right-10 -top-16 h-64 w-64 bg-gradient-to-tl from-emerald-400/20 to-emerald-300/5 rounded-full blur-2xl group-hover:opacity-80 opacity-50 transition-opacity" />
+            <div className="relative">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="h-10 w-10 rounded-xl bg-white/5 ring-1 ring-white/10 flex items-center justify-center group-hover:ring-emerald-500/30 transition-all">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-300">
+                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+                    <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+                    <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+                    <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+                    <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+                    <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+                    <path d="M6 18a4 4 0 0 1-1.967-.516" />
+                    <path d="M19.967 17.484A4 4 0 0 1 18 18" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">Think</h3>
+              </div>
+              <p className="text-white/70 leading-relaxed">
+                Intelligent agents cluster related issues, summarize the problem, and identify the root cause.
+              </p>
             </div>
-            <h3 className="text-xl font-bold text-white mb-3 group-hover:text-matrix-green transition-colors">Think</h3>
-            <p className="text-gray-400 leading-relaxed">
-              Intelligent agents cluster related issues, summarize the problem, and identify the
-              root cause.
-            </p>
           </div>
 
           {/* Feature 3: Act */}
-          <div className="bg-matrix-card p-8 rounded-2xl shadow-lg border border-matrix-border hover:border-matrix-green transition-all group hover:shadow-card-hover">
-            <div className="w-14 h-14 bg-matrix-green-dim rounded-xl flex items-center justify-center mb-6 text-3xl group-hover:shadow-neon-green transition-shadow border border-matrix-green/20">
-              ⚡
+          <div className="relative ring-1 ring-white/10 p-6 md:p-8 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.6)] overflow-hidden rounded-2xl group hover:ring-emerald-500/30 transition-all">
+            <div className="absolute -left-10 -bottom-16 h-64 w-64 bg-gradient-to-tr from-emerald-400/20 to-emerald-300/5 rounded-full blur-2xl group-hover:opacity-80 opacity-50 transition-opacity" />
+            <div className="relative">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="h-10 w-10 rounded-xl bg-white/5 ring-1 ring-white/10 flex items-center justify-center group-hover:ring-emerald-500/30 transition-all">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-300">
+                    <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl md:text-3xl font-semibold tracking-tight text-white">Act</h3>
+              </div>
+              <p className="text-white/70 leading-relaxed">
+                Generates code fixes and opens Pull Requests automatically. Review and merge with confidence.
+              </p>
             </div>
-            <h3 className="text-xl font-bold text-white mb-3 group-hover:text-matrix-green transition-colors">Act</h3>
-            <p className="text-gray-400 leading-relaxed">
-              Generates code fixes and opens Pull Requests automatically. Review and merge with
-              confidence.
-            </p>
           </div>
         </div>
       </div>
