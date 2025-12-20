@@ -11,4 +11,5 @@ scikit-learn
 packaging
 google-genai
 e2b-code-interpreter
-e2b 
+e2b
+vercel-blob

@@ -166,16 +166,16 @@ def test_get_job_details(project_context):
 def test_get_cluster_jobs(project_context):
     """
     Verify that the cluster jobs endpoint returns all jobs for a given cluster and project.
-    
+
     Creates a cluster for the provided project, inserts two jobs tied to that cluster and project, calls GET /clusters/{cluster.id}/jobs with the project's query parameter, and asserts the response is HTTP 200 and contains both job IDs.
-    
+
     Parameters:
         project_context (dict): Test fixture providing at least a "project_id" key used to scope created resources and the request.
     """
     pid = project_context["project_id"]
     cluster = _seed_cluster(pid)
     now = datetime.now(timezone.utc)
-    
+
     # Create 2 jobs
     job1 = AgentJob(
         id=uuid4(),
@@ -186,7 +186,7 @@ def test_get_cluster_jobs(project_context):
         updated_at=now,
     )
     add_job(job1)
-    
+
     job2 = AgentJob(
         id=uuid4(),
         project_id=pid,
@@ -205,3 +205,134 @@ def test_get_cluster_jobs(project_context):
     ids = {item["id"] for item in data}
     assert str(job1.id) in ids
     assert str(job2.id) in ids
+
+
+# ----- Job Logs Endpoint Tests -----
+
+def test_get_job_logs_from_memory(project_context):
+    """Test fetching logs from in-memory storage for a running job."""
+    import job_logs_manager
+
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
+    now = datetime.now(timezone.utc)
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster.id,
+        status="running",
+        created_at=now,
+        updated_at=now,
+    )
+    add_job(job)
+
+    # Add logs to memory
+    job_logs_manager.append_log(job.id, "Line 1\n")
+    job_logs_manager.append_log(job.id, "Line 2\n")
+
+    try:
+        response = client.get(f"/jobs/{job.id}/logs?project_id={pid}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "memory"
+        assert "Line 1" in data["chunks"][0]
+        assert "Line 2" in data["chunks"][0]
+    finally:
+        # Cleanup
+        job_logs_manager.clear_logs(job.id)
+
+
+def test_get_job_logs_from_blob(project_context):
+    """Test fetching logs from Blob storage for a completed job."""
+    from unittest.mock import patch
+
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
+    now = datetime.now(timezone.utc)
+    blob_url = "https://blob.vercel-storage.com/logs/test.txt"
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster.id,
+        status="success",
+        blob_url=blob_url,
+        created_at=now,
+        updated_at=now,
+    )
+    add_job(job)
+
+    with patch("blob_storage.fetch_job_logs_from_blob") as mock_fetch:
+        mock_fetch.return_value = "Archived log content\n"
+
+        response = client.get(f"/jobs/{job.id}/logs?project_id={pid}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "blob"
+        assert "Archived log content" in data["chunks"][0]
+        mock_fetch.assert_called_once_with(blob_url)
+
+
+def test_get_job_logs_empty_for_pending_job(project_context):
+    """Test that pending jobs with no logs return empty chunks."""
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
+    now = datetime.now(timezone.utc)
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster.id,
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    add_job(job)
+
+    response = client.get(f"/jobs/{job.id}/logs?project_id={pid}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source"] == "memory"
+    assert data["chunks"] == []
+
+
+def test_get_job_logs_nonexistent_job(project_context):
+    """Test that fetching logs for a nonexistent job returns 404."""
+    pid = project_context["project_id"]
+    fake_id = uuid4()
+
+    response = client.get(f"/jobs/{fake_id}/logs?project_id={pid}")
+
+    assert response.status_code == 404
+
+
+def test_get_job_logs_blob_fetch_error_falls_back_to_memory(project_context):
+    """Test that Blob fetch errors fall back to memory source."""
+    from unittest.mock import patch
+
+    pid = project_context["project_id"]
+    cluster = _seed_cluster(pid)
+    now = datetime.now(timezone.utc)
+    blob_url = "https://blob.vercel-storage.com/logs/test.txt"
+    job = AgentJob(
+        id=uuid4(),
+        project_id=pid,
+        cluster_id=cluster.id,
+        status="success",
+        blob_url=blob_url,
+        created_at=now,
+        updated_at=now,
+    )
+    add_job(job)
+
+    with patch("blob_storage.fetch_job_logs_from_blob") as mock_fetch:
+        mock_fetch.side_effect = Exception("Blob fetch failed")
+
+        response = client.get(f"/jobs/{job.id}/logs?project_id={pid}")
+
+        # Should fall back to memory source instead of failing
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "memory"
+        assert data["chunks"] == []  # Empty since job logs not in memory

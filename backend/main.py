@@ -2312,26 +2312,42 @@ def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
 def get_job_log_lines(
     job_id: UUID,
     project_id: Optional[str] = Query(None),
-    cursor: int = Query(0, ge=0),
-    limit: int = Query(200, ge=1, le=1000),
 ):
     """
-    Retrieve persisted log chunks for a job.
+    Retrieve logs for a job from memory (if running) or Blob (if completed).
 
-    This endpoint is designed for UI log tailing without forcing the backend to print logs to stdout.
+    Returns logs from in-memory buffer for running jobs, or from Vercel Blob for completed jobs.
     """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
     if not job or str(job.project_id) != pid:
         raise HTTPException(status_code=404, detail="Job not found for project")
-    chunks, next_cursor, has_more = get_job_logs(job_id, cursor=cursor, limit=limit)
+
+    # For completed jobs with blob_url, fetch from Blob
+    if job.blob_url and job.status in ("success", "failed"):
+        try:
+            from blob_storage import fetch_job_logs_from_blob
+            logs = fetch_job_logs_from_blob(job.blob_url)
+            return {
+                "job_id": str(job_id),
+                "project_id": str(pid),
+                "source": "blob",
+                "chunks": [logs],
+            }
+        except Exception:
+            logger.exception(f"Failed to fetch logs from Blob for job {job_id}")
+            # Fall through to memory as fallback
+
+    # For running jobs or fallback, fetch from memory
+    import job_logs_manager
+    logs = job_logs_manager.get_logs(job_id)
+    full_logs = "".join(logs) if logs else ""
+
     return {
         "job_id": str(job_id),
         "project_id": str(pid),
-        "cursor": cursor,
-        "next_cursor": next_cursor,
-        "has_more": has_more,
-        "chunks": chunks,
+        "source": "memory",
+        "chunks": [full_logs] if full_logs else [],
     }
 
 

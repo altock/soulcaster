@@ -11,16 +11,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const { id } = await params;
     const projectId = await requireProjectId(request);
-    const { searchParams } = new URL(request.url);
-    const cursor = searchParams.get('cursor') || '0';
-    const limit = searchParams.get('limit') || '200';
 
-    const backendParams = new URLSearchParams();
-    backendParams.set('project_id', projectId);
-    backendParams.set('cursor', cursor);
-    backendParams.set('limit', limit);
-
-    const backendRequestUrl = `${backendUrl}/jobs/${encodeURIComponent(id)}/logs?${backendParams.toString()}`;
+    // Backend handles routing between memory and Blob
+    const backendRequestUrl = `${backendUrl}/jobs/${encodeURIComponent(id)}/logs?project_id=${projectId}`;
     console.log('[logs] Fetching from backend:', backendRequestUrl);
 
     const response = await fetch(backendRequestUrl, {
@@ -37,7 +30,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         debug: { status: response.status, url: backendRequestUrl, response: errorText }
       }, { status: backendError(response.status) });
     }
+
     const data = await response.json();
+    console.log(`[logs] Fetched from ${data.source || 'unknown'}`);
     return NextResponse.json(data, { status: response.status });
   } catch (error: any) {
     if (error?.message === 'project_id is required') {
