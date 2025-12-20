@@ -201,7 +201,7 @@ export default function ClusterDetailPage() {
     setLogText('');
     setLogDrawerOpen(true);
     try {
-      await fetchJobLogs(job.id, { append: false });
+      await fetchJobLogs(job.id);
     } catch (err) {
       console.error('Failed to fetch logs:', err);
     }
@@ -375,9 +375,7 @@ export default function ClusterDetailPage() {
         onToggleTail={() => setIsTailingLogs((v) => !v)}
         onLoadMore={() => {
           if (selectedJobForLogs) {
-            fetchJobLogs(selectedJobForLogs.id, { append: true }).catch(
-              console.error
-            );
+            fetchJobLogs(selectedJobForLogs.id).catch(console.error);
           }
         }}
       />
