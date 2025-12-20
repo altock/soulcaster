@@ -616,8 +616,12 @@ if __name__ == "__main__":
 """
 
 class SandboxKilocodeRunner(AgentRunner):
-    async def _archive_logs_to_blob(self, job_id: UUID) -> None:
-        """Archive job logs from memory to Blob storage."""
+    async def _archive_logs_to_blob(self, job_id: UUID) -> bool:
+        """Archive job logs from memory to Blob storage.
+
+        Returns:
+            bool: True if archival succeeded, False otherwise.
+        """
         try:
             logs = job_logs_manager.get_logs(job_id)
             if logs:
@@ -626,10 +630,13 @@ class SandboxKilocodeRunner(AgentRunner):
                 await asyncio.to_thread(update_job, job_id, blob_url=blob_url)
                 job_logs_manager.clear_logs(job_id)
                 logger.info(f"Job {job_id} logs archived to Blob: {blob_url}")
+                return True
             else:
                 logger.warning(f"No logs found in memory for job {job_id}")
+                return False
         except Exception:
             logger.exception(f"Failed to archive logs for job {job_id}")
+            return False
 
     async def start(
         self,
@@ -818,7 +825,8 @@ class SandboxKilocodeRunner(AgentRunner):
                       logger.warning("Failed to update cluster %s on success: %s", job.cluster_id, e)
 
                   # Archive logs to Blob
-                  await self._archive_logs_to_blob(job.id)
+                  if not await self._archive_logs_to_blob(job.id):
+                      logger.warning(f"Job {job.id} completed but log archival failed")
              else:
                   await self._fail_job(job.id, f"Agent script exited with code {proc.exit_code}")
 
@@ -894,6 +902,7 @@ class SandboxKilocodeRunner(AgentRunner):
                 logger.error(f"Failed to update cluster status: {e}")
 
         # Archive logs to Blob
-        await self._archive_logs_to_blob(job_id)
+        if not await self._archive_logs_to_blob(job_id):
+            logger.warning(f"Job {job_id} failed but log archival also failed")
 
 register_runner("sandbox_kilo", SandboxKilocodeRunner)
