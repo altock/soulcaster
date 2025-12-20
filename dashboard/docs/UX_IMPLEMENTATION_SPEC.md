@@ -51,11 +51,18 @@ Show specific error context based on error type, with troubleshooting hints and 
 // Replace lines 114-129 with:
 if (error) {
   const getErrorDetails = (errorMsg: string) => {
+    if (errorMsg.includes('502') || errorMsg.includes('Backend service unavailable')) {
+      return {
+        title: 'Backend Unavailable',
+        description: 'The backend service is temporarily unavailable.',
+        hint: 'Please try again in a few moments.',
+      };
+    }
     if (errorMsg.includes('fetch') || errorMsg.includes('network')) {
       return {
         title: 'Connection Error',
         description: 'Could not connect to the API server.',
-        hint: 'Check that the backend is running on localhost:8000',
+        hint: 'Check your internet connection and try again.',
       };
     }
     if (errorMsg.includes('401') || errorMsg.includes('unauthorized')) {
@@ -144,9 +151,16 @@ When user views /dashboard/clusters
 Then error banner shows:
   - Title: "Connection Error"
   - Description: "Could not connect to the API server."
-  - Hint: "Check that the backend is running on localhost:8000"
+  - Hint: "Check your internet connection and try again."
   - "Try Again" button with refresh icon
 And error has role="alert" for screen readers
+
+Given the clusters API returns 502
+When user views /dashboard/clusters
+Then error banner shows:
+  - Title: "Backend Unavailable"
+  - Description: "The backend service is temporarily unavailable."
+  - Hint: "Please try again in a few moments."
 And clicking "Try Again" shows loading state and retries fetch
 
 Given the clusters API returns 401

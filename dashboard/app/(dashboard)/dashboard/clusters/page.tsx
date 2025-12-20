@@ -50,6 +50,9 @@ export default function ClustersListPage() {
       setError(null);
       const response = await fetch('/api/clusters');
       if (!response.ok) {
+        if (response.status === 502) {
+          throw new Error('Backend service unavailable (502)');
+        }
         throw new Error('Failed to fetch clusters');
       }
       const data = await response.json();
@@ -113,11 +116,18 @@ export default function ClustersListPage() {
 
   if (error) {
     const getErrorDetails = (errorMsg: string) => {
+      if (errorMsg.includes('502') || errorMsg.includes('Backend service unavailable')) {
+        return {
+          title: 'Backend Unavailable',
+          description: 'The backend service is temporarily unavailable.',
+          hint: 'Please try again in a few moments.',
+        };
+      }
       if (errorMsg.includes('fetch') || errorMsg.includes('network')) {
         return {
           title: 'Connection Error',
           description: 'Could not connect to the API server.',
-          hint: 'Check that the backend is running on localhost:8000',
+          hint: 'Check your internet connection and try again.',
         };
       }
       if (errorMsg.includes('401') || errorMsg.includes('unauthorized')) {
