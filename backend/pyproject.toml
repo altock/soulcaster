@@ -23,6 +23,7 @@ dependencies = [
     "google-genai>=0.1.0",
     "e2b-code-interpreter>=0.0.1",
     "e2b>=0.17.0",
+    "vercel-blob>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
 
 [tool.uv]
 # UV-specific configuration
