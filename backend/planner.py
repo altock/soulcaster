@@ -100,13 +100,17 @@ Output requirements:
         )
 
     except Exception as e:
-        logger.exception(f"Failed to generate plan for cluster {cluster.id}")
-        # Return a fallback plan indicating failure
+        logger.exception(f"Failed to generate plan for cluster {cluster.id}: {e}")
+        # Return a fallback plan indicating failure, but hide raw error details from the user
         return CodingPlan(
             id=str(uuid4()),
             cluster_id=cluster.id,
             title=f"Error planning fix for: {cluster.title}",
-            description=f"Plan generation failed: {str(e)}",
+            description=(
+                "Plan generation failed. Please try again later.\n\n"
+                "The system encountered an issue while generating the implementation plan. "
+                "No technical details are available to display."
+            ),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
