@@ -172,6 +172,14 @@ class UpstashRESTClient:
         # Convert list to dict
         return dict(zip(result[0::2], result[1::2]))
 
+    def hdel(self, key: str, *fields: str) -> int:
+        """
+        Delete one or more hash fields.
+        """
+        if not fields:
+            return 0
+        return int(self._cmd("HDEL", key, *fields) or 0)
+
     def zadd(self, key: str, score: float, member: str):
         return self._cmd("ZADD", key, str(score), member)
 
@@ -1485,8 +1493,11 @@ class RedisStore:
             payload["metadata"] = json.dumps(payload["metadata"])
 
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        fields_to_delete = [k for k, v in payload.items() if v is None]
         key = self._feedback_key(project_id, item_id)
         self._hset(key, hash_payload)
+        if fields_to_delete:
+            self._hdel(key, *fields_to_delete)
         return updated
 
     def delete_feedback_item(self, project_id: str, item_id: UUID) -> bool:
@@ -1625,8 +1636,12 @@ class RedisStore:
 
         # Use HSET (Hash)
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        fields_to_delete = [k for k, v in payload.items() if v is None]
+        
         key = self._cluster_key(project_id, cluster.id)
         self._hset(key, hash_payload)
+        if fields_to_delete:
+            self._hdel(key, *fields_to_delete)
         
         # Use ZSET with created_at timestamp as score for sorted retrieval
         score = cluster.created_at.timestamp() if cluster.created_at else 0.0
@@ -2061,15 +2076,20 @@ class RedisStore:
             raise KeyError(f"Job {job_id} not found")
         # Only update provided fields (avoid re-writing + re-indexing on every log line).
         payload = {}
+        fields_to_delete = []
         for k, v in updates.items():
             if isinstance(v, datetime):
                 payload[k] = _dt_to_iso(v)
             elif v is None:
-                continue
+                fields_to_delete.append(k)
             else:
                 payload[k] = str(v)
+        
         if payload:
             self._hset(key, payload)
+        if fields_to_delete:
+            self._hdel(key, *fields_to_delete)
+            
         return self.get_job(job_id)  # type: ignore[return-value]
 
     def append_job_log(self, job_id: UUID, message: str) -> None:
@@ -2159,7 +2179,12 @@ class RedisStore:
             payload["stats"] = json.dumps(payload["stats"])
         key = self._cluster_job_key(str(job.project_id), job.id)
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
+        fields_to_delete = [k for k, v in payload.items() if v is None]
+        
         self._hset(key, hash_payload)
+        if fields_to_delete:
+            self._hdel(key, *fields_to_delete)
+
         ts = job.created_at.timestamp()
         self._zadd(self._cluster_jobs_recent_key(str(job.project_id)), ts, job.id)
         return job
@@ -2515,10 +2540,20 @@ class RedisStore:
             yield from self.client.scan_iter(pattern)
 
     def _hset(self, key: str, mapping: Dict[str, Any]):
+        if not mapping:
+            return
         if self.mode == "redis":
             self.client.hset(key, mapping=mapping)
         else:
             self.client.hset(key, mapping)
+
+    def _hdel(self, key: str, *fields: str):
+        if not fields:
+            return
+        if self.mode == "redis":
+            self.client.hdel(key, *fields)
+        else:
+            self.client.hdel(key, *fields)
 
     def _hgetall(self, key: str) -> Dict[str, str]:
         if self.mode == "redis":
