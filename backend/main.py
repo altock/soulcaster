@@ -50,6 +50,7 @@ from store import (
     remove_from_unclustered,
     remove_from_unclustered_batch,
     clear_clusters,
+    delete_cluster,
     set_reddit_subreddits_for_project,
     get_reddit_subreddits_for_project,
     get_datadog_webhook_secret_for_project,
@@ -1940,6 +1941,157 @@ def clustering_status(project_id: Optional[str] = Query(None)):
     last_job = recent[0] if recent else None
     is_clustering = any(job.status == "running" for job in recent)
     return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
+
+
+@app.post("/clusters/cleanup")
+def cleanup_duplicate_clusters(project_id: Optional[str] = Query(None)):
+    """
+    Merge similar clusters based on centroid similarity.
+
+    Uses Union-Find to group similar clusters transitively,
+    then merges feedback IDs into the kept cluster.
+
+    Threshold: 0.65 (from vector_store.CLEANUP_MERGE_THRESHOLD)
+    """
+    from vector_store import find_similar_clusters, CLEANUP_MERGE_THRESHOLD
+    import json
+    import numpy as np
+
+    pid = _require_project_id(project_id)
+    clusters = get_all_clusters(pid)
+
+    if not clusters:
+        return {
+            "success": True,
+            "message": "No clusters to clean up",
+            "total_clusters": 0,
+            "duplicate_groups": 0,
+            "merged_groups": 0,
+            "deleted_clusters": 0,
+            "remaining_clusters": 0,
+        }
+
+    # Build centroid map
+    cluster_centroids = {}
+    cluster_info = {}
+    for cluster in clusters:
+        cluster_info[cluster.id] = {
+            "id": cluster.id,
+            "title": cluster.title,
+            "status": cluster.status,
+            "feedback_ids": cluster.feedback_ids or [],
+            "centroid": cluster.centroid or [],
+        }
+        if cluster.centroid:
+            cluster_centroids[cluster.id] = cluster.centroid
+
+    # Find similar clusters
+    merge_candidates = find_similar_clusters(cluster_centroids, CLEANUP_MERGE_THRESHOLD)
+
+    if not merge_candidates:
+        return {
+            "success": True,
+            "message": "No duplicate clusters found",
+            "total_clusters": len(clusters),
+            "duplicate_groups": 0,
+            "merged_groups": 0,
+            "deleted_clusters": 0,
+            "remaining_clusters": len(clusters),
+        }
+
+    # Use Union-Find to group transitively
+    n = len(clusters)
+    cluster_ids = [c.id for c in clusters]
+    id_to_idx = {cid: i for i, cid in enumerate(cluster_ids)}
+    parent = list(range(n))
+
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Union similar clusters
+    for candidate in merge_candidates:
+        idx1 = id_to_idx.get(candidate["cluster1"])
+        idx2 = id_to_idx.get(candidate["cluster2"])
+        if idx1 is not None and idx2 is not None:
+            union(idx1, idx2)
+
+    # Group by parent
+    groups = {}
+    for i in range(n):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(cluster_ids[i])
+
+    # Filter to only groups with duplicates
+    duplicate_groups = [g for g in groups.values() if len(g) > 1]
+
+    merged_count = 0
+    deleted_count = 0
+
+    for group in duplicate_groups:
+        group_clusters = [cluster_info[cid] for cid in group]
+
+        # Keep cluster with most feedback items, or prefer "fixing" status
+        group_clusters.sort(key=lambda c: (
+            0 if c["status"] == "fixing" else 1,
+            -len(c["feedback_ids"]),
+        ))
+
+        keep = group_clusters[0]
+        duplicates = group_clusters[1:]
+
+        # Collect all feedback IDs
+        all_feedback_ids = set(keep["feedback_ids"])
+        all_centroids = [keep["centroid"]] if keep["centroid"] else []
+
+        for dup in duplicates:
+            for fid in dup["feedback_ids"]:
+                all_feedback_ids.add(fid)
+            if dup["centroid"]:
+                all_centroids.append(dup["centroid"])
+
+        # Update kept cluster with merged feedback IDs
+        new_feedback_ids = list(all_feedback_ids)
+
+        # Calculate new centroid as average
+        new_centroid = None
+        if len(all_centroids) > 1:
+            new_centroid = np.mean(all_centroids, axis=0).tolist()
+        elif len(all_centroids) == 1:
+            new_centroid = all_centroids[0]
+
+        # Update the kept cluster
+        update_cluster(
+            pid,
+            keep["id"],
+            feedback_ids=new_feedback_ids,
+            centroid=new_centroid,
+        )
+
+        # Delete duplicate clusters
+        for dup in duplicates:
+            delete_cluster(pid, dup["id"])
+            deleted_count += 1
+
+        merged_count += 1
+
+    return {
+        "success": True,
+        "message": "Duplicate clusters cleaned up successfully",
+        "total_clusters": len(clusters),
+        "duplicate_groups": len(duplicate_groups),
+        "merged_groups": merged_count,
+        "deleted_clusters": deleted_count,
+        "remaining_clusters": len(clusters) - deleted_count,
+    }
 
 
 @app.get("/clusters/{cluster_id}/plan")

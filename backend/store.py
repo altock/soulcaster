@@ -520,6 +520,22 @@ class InMemoryStore:
         self.issue_clusters[cluster_id] = updated_cluster
         return updated_cluster
 
+    def add_feedback_to_cluster(self, project_id: str, cluster_id: str, feedback_id: str) -> None:
+        """Add a feedback ID to an existing cluster's feedback_ids list."""
+        cluster = self.issue_clusters.get(cluster_id)
+        if not cluster:
+            raise KeyError(f"Cluster {cluster_id} not found")
+        if project_id and str(cluster.project_id) != str(project_id):
+            raise KeyError(f"Cluster {cluster_id} not found for project {project_id}")
+        if feedback_id not in cluster.feedback_ids:
+            cluster.feedback_ids.append(feedback_id)
+
+    def delete_cluster(self, project_id: str, cluster_id: str) -> None:
+        """Delete a cluster by ID."""
+        cluster = self.issue_clusters.get(cluster_id)
+        if cluster and (not project_id or str(cluster.project_id) == str(project_id)):
+            del self.issue_clusters[cluster_id]
+
     def clear_clusters(self, project_id: Optional[str] = None):
         """
         Remove stored issue clusters. If project_id is provided, remove clusters for that project;
@@ -1723,22 +1739,72 @@ class RedisStore:
                 parts = key.split(":")
                 if len(parts) >= 2:
                     pid = parts[1]
-                    # Get cluster IDs for this project (sorted by created_at desc)
-                    cluster_ids = self._zrange(self._cluster_all_key(pid), 0, -1, rev=True)
-                    # Load each cluster
-                    for cid in cluster_ids:
-                        cluster = self.get_cluster(pid, cid)
-                        if cluster:
-                            clusters.append(cluster)
+                    # Recursively call with specific project_id to use batching
+                    clusters.extend(self.get_all_clusters(pid))
             return clusters
 
         # Use ZRANGE with rev=True to get clusters sorted by created_at descending
         ids = self._zrange(self._cluster_all_key(project_id), 0, -1, rev=True)
+        if not ids:
+            return []
+
+        # Batch fetch all cluster hashes using pipelining
+        hash_keys = [self._cluster_key(project_id, cid) for cid in ids]
+        items_keys = [self._cluster_items_key(project_id, cid) for cid in ids]
+
+        # Fetch all hashes in one batch
+        hash_results = self._hgetall_batch(hash_keys)
+
+        # Batch fetch feedback_ids from all cluster item sets
+        if self.mode == "redis":
+            pipe = self.client.pipeline()
+            for items_key in items_keys:
+                pipe.smembers(items_key)
+            items_results = pipe.execute()
+        else:
+            # For REST API, use pipeline_exec with SMEMBERS
+            commands = [["SMEMBERS", key] for key in items_keys]
+            items_results = self.client.pipeline_exec(commands)
+
+        # Parse results into IssueCluster objects
         clusters: List[IssueCluster] = []
-        for cid in ids:
-            cluster = self.get_cluster(project_id, cid)
-            if cluster:
-                clusters.append(cluster)
+        for i, (cid, data) in enumerate(zip(ids, hash_results)):
+            if not data:
+                continue
+
+            # Parse date fields
+            for field in ("created_at", "updated_at"):
+                if isinstance(data.get(field), str):
+                    data[field] = _iso_to_dt(data[field])
+
+            # Parse centroid
+            if isinstance(data.get("centroid"), str):
+                try:
+                    data["centroid"] = json.loads(data["centroid"])
+                except json.JSONDecodeError:
+                    data["centroid"] = []
+
+            # Parse sources
+            if isinstance(data.get("sources"), str):
+                try:
+                    data["sources"] = json.loads(data["sources"])
+                except json.JSONDecodeError:
+                    data["sources"] = []
+
+            # Use batched feedback_ids
+            feedback_ids = items_results[i] if i < len(items_results) else []
+            if isinstance(feedback_ids, set):
+                feedback_ids = list(feedback_ids)
+            elif feedback_ids is None:
+                feedback_ids = []
+            data["feedback_ids"] = feedback_ids
+
+            try:
+                clusters.append(IssueCluster(**data))
+            except Exception:
+                # Skip malformed clusters
+                continue
+
         return clusters
 
     def update_cluster(self, project_id: str, cluster_id: str, **updates) -> IssueCluster:
@@ -1747,6 +1813,19 @@ class RedisStore:
             raise KeyError(f"Cluster {cluster_id} not found")
         updated = cluster.model_copy(update=updates)
         return self.add_cluster(updated)
+
+    def add_feedback_to_cluster(self, project_id: str, cluster_id: str, feedback_id: str) -> None:
+        """Add a feedback ID to an existing cluster's items set."""
+        items_key = self._cluster_items_key(project_id, cluster_id)
+        self._sadd(items_key, str(feedback_id))
+
+    def delete_cluster(self, project_id: str, cluster_id: str) -> None:
+        """Delete a cluster and its items set."""
+        cluster_key = self._cluster_key(project_id, cluster_id)
+        items_key = self._cluster_items_key(project_id, cluster_id)
+        all_key = self._cluster_all_key(project_id)
+        self._delete(cluster_key, items_key)
+        self._zrem(all_key, cluster_id)
 
     def clear_clusters(self, project_id: Optional[str] = None):
         """
@@ -2269,15 +2348,16 @@ class RedisStore:
     def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
         """
         Retrieve recent cluster jobs for a project in newest-first order.
-        
+
         Parameters:
             project_id (str): Project identifier to list cluster jobs for.
             limit (int): Maximum number of jobs to return; defaults to 20.
-        
+
         Returns:
             List[ClusterJob]: List of ClusterJob objects ordered from newest to oldest; may contain fewer than `limit` if not enough jobs exist.
         """
-        ids = self._zrange(self._cluster_jobs_recent_key(project_id), -limit, -1, rev=True)
+        # Use ZRANGE 0 limit-1 REV to get top N items by score (newest first)
+        ids = self._zrange(self._cluster_jobs_recent_key(project_id), 0, limit - 1, rev=True)
         jobs: List[ClusterJob] = []
         for jid in ids:
             job = self.get_cluster_job(project_id, jid)
@@ -2567,6 +2647,12 @@ class RedisStore:
             return self.client.zrange(key, start, stop, desc=rev)
         return self.client.zrange(key, start, stop, rev=rev)
 
+    def _zrem(self, key: str, member: str):
+        if self.mode == "redis":
+            self.client.zrem(key, member)
+        else:
+            self.client.zrem(key, member)
+
     def _sadd(self, key: str, member: str):
         if self.mode == "redis":
             self.client.sadd(key, member)
@@ -2835,6 +2921,23 @@ def get_all_clusters(project_id: Optional[str] = None) -> List[IssueCluster]:
 
 def update_cluster(project_id: str, cluster_id: str, **updates) -> IssueCluster:
     return _STORE.update_cluster(project_id, cluster_id, **updates)
+
+
+def add_feedback_to_cluster(cluster_id: str, feedback_id: str, project_id: Optional[str] = None) -> None:
+    """Add a feedback ID to an existing cluster."""
+    if project_id is None:
+        # Try to find the cluster's project_id
+        cluster = get_cluster_by_id(cluster_id)
+        if cluster:
+            project_id = str(cluster.project_id)
+        else:
+            raise KeyError(f"Cluster {cluster_id} not found")
+    _STORE.add_feedback_to_cluster(project_id, cluster_id, feedback_id)
+
+
+def delete_cluster(project_id: str, cluster_id: str) -> None:
+    """Delete a cluster by ID."""
+    _STORE.delete_cluster(project_id, cluster_id)
 
 
 def clear_clusters(project_id: Optional[str] = None):

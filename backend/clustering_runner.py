@@ -19,7 +19,9 @@ from store import (
     add_cluster,
     add_cluster_job,
     acquire_cluster_lock,
+    add_feedback_to_cluster,
     get_all_clusters,
+    get_cluster,
     get_unclustered_feedback,
     list_cluster_jobs,
     release_cluster_lock,
@@ -28,6 +30,12 @@ from store import (
 )
 # Import local clustering module (same package)
 import clustering
+from vector_store import (
+    VectorStore,
+    FeedbackVectorMetadata,
+    cluster_with_vector_db,
+    VECTOR_CLUSTERING_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -146,13 +154,13 @@ def _build_cluster(item_group: List[FeedbackItem]) -> IssueCluster:
 def _split_clusters(items: Sequence[FeedbackItem], labels, clusters, singletons) -> List[IssueCluster]:
     """
     Convert clustering results into IssueCluster models.
-    
+
     Parameters:
         items (Sequence[FeedbackItem]): Source feedback items referenced by index.
         labels: Unused placeholder for per-item labels (accepted but ignored).
         clusters: Iterable of iterables of integer indices; each iterable identifies items that form a cluster.
         singletons: Iterable of integer indices representing individual-item clusters.
-    
+
     Returns:
         List[IssueCluster]: IssueCluster objects created from the provided index groups; multi-item clusters (from `clusters`) appear first in the returned list followed by singletons.
     """
@@ -162,6 +170,124 @@ def _split_clusters(items: Sequence[FeedbackItem], labels, clusters, singletons)
     for idx in singletons:
         grouped.append(_build_cluster([items[idx]]))
     return grouped
+
+
+def _run_vector_clustering(
+    items: List[FeedbackItem],
+    project_id: str,
+) -> dict:
+    """
+    Run vector-based clustering using Upstash Vector for ANN search.
+
+    Algorithm:
+    1. Generate embeddings for all items (with batching)
+    2. For each item, query vector DB for similar items
+    3. If similar item is already clustered -> join that cluster
+    4. If similar items are unclustered -> create new cluster with all of them
+    5. If no similar items -> create new single-item cluster
+    6. Store embeddings in vector DB with cluster assignments
+
+    Returns:
+        dict with keys:
+        - new_clusters: list of newly created IssueCluster objects
+        - updated_clusters: list of cluster IDs that had items added
+        - items_clustered: total items processed
+    """
+    if not items:
+        return {"new_clusters": [], "updated_clusters": [], "items_clustered": 0}
+
+    # Initialize vector store
+    try:
+        vector_store = VectorStore()
+    except Exception as e:
+        logger.error("Failed to initialize VectorStore: %s", e)
+        raise
+
+    # Prepare texts and generate embeddings
+    issues_payload = _prepare_issue_payloads(items)
+    texts = clustering.prepare_issue_texts(issues_payload)
+    embeddings = clustering.embed_texts_gemini(texts)
+
+    new_clusters: List[IssueCluster] = []
+    updated_cluster_ids: set = set()
+
+    # Track cluster assignments for batch vector store update
+    vector_upserts = []
+    cluster_assignments = []  # For grouped items
+
+    for i, item in enumerate(items):
+        embedding = embeddings[i].tolist()
+
+        # Use vector DB to find cluster assignment
+        result = cluster_with_vector_db(
+            feedback_id=str(item.id),
+            embedding=embedding,
+            source=item.source,
+            title=item.title or "",
+            threshold=VECTOR_CLUSTERING_THRESHOLD,
+            vector_store=vector_store,
+        )
+
+        if result.is_new_cluster:
+            # Create new cluster
+            cluster_items = [item]
+
+            # If there are grouped items, we need to find them and include them
+            # But they should already be in the vector DB from previous iterations
+            # or will be processed in this batch
+
+            cluster = _build_cluster(cluster_items)
+            cluster.id = result.cluster_id  # Use the ID from vector clustering
+            new_clusters.append(cluster)
+            add_cluster(cluster)
+
+            # Also update grouped items' cluster assignments in vector DB
+            if result.grouped_feedback_ids:
+                for grouped_id in result.grouped_feedback_ids:
+                    cluster_assignments.append({
+                        "feedback_id": grouped_id,
+                        "cluster_id": result.cluster_id,
+                    })
+                    # Also add to Redis cluster
+                    add_feedback_to_cluster(result.cluster_id, grouped_id, project_id)
+        else:
+            # Join existing cluster - but verify it exists in Redis first
+            existing_cluster = get_cluster(project_id, result.cluster_id)
+            if existing_cluster:
+                updated_cluster_ids.add(result.cluster_id)
+                add_feedback_to_cluster(result.cluster_id, str(item.id), project_id)
+            else:
+                # Cluster exists in vector DB but not in Redis - create it
+                cluster = _build_cluster([item])
+                cluster.id = result.cluster_id
+                new_clusters.append(cluster)
+                add_cluster(cluster)
+
+        # Prepare vector store upsert
+        vector_upserts.append({
+            "id": str(item.id),
+            "embedding": embedding,
+            "metadata": FeedbackVectorMetadata(
+                title=item.title or "",
+                source=item.source,
+                cluster_id=result.cluster_id,
+                created_at=item.created_at.isoformat() if item.created_at else None,
+            ),
+        })
+
+    # Batch upsert to vector store
+    if vector_upserts:
+        vector_store.upsert_feedback_batch(vector_upserts)
+
+    # Update cluster assignments for grouped items
+    if cluster_assignments:
+        vector_store.update_cluster_assignment_batch(cluster_assignments)
+
+    return {
+        "new_clusters": new_clusters,
+        "updated_clusters": list(updated_cluster_ids),
+        "items_clustered": len(items),
+    }
 
 
 async def maybe_start_clustering(project_id: str) -> ClusterJob:
@@ -270,31 +396,17 @@ async def run_clustering_job(project_id: str, job_id: str):
                 "singletons": 0,
             }
         else:
-            issues_payload = _prepare_issue_payloads(items)
-            result = clustering.cluster_issues(
-                issues_payload,
-                method=clustering.DEFAULT_METHOD,
-                sim_threshold=clustering.DEFAULT_SIM_THRESHOLD,
-                min_cluster_size=clustering.DEFAULT_MIN_CLUSTER_SIZE,
-                truncate_body_chars=clustering.DEFAULT_TRUNCATE_BODY_CHARS,
-                embed_fn=clustering.embed_texts_gemini,
-            )
-
-            grouped_clusters = _split_clusters(
-                items, result["labels"], result["clusters"], result["singletons"]
-            )
-
-            for cluster in grouped_clusters:
-                add_cluster(cluster)
+            # Use vector-based clustering with Upstash Vector
+            result = _run_vector_clustering(items, project_id)
 
             # Remove processed items from unclustered
             processed_pairs = [(item.id, project_id) for item in items]
             remove_from_unclustered_batch(processed_pairs)
 
             stats = {
-                "clustered": len(items),
-                "new_clusters": len(grouped_clusters),
-                "singletons": len(result["singletons"]),
+                "clustered": result["items_clustered"],
+                "new_clusters": len(result["new_clusters"]),
+                "updated_clusters": len(result["updated_clusters"]),
             }
 
         update_cluster_job(
