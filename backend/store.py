@@ -277,20 +277,25 @@ def _upstash_rest_client_from_env():
 class InMemoryStore:
     def __init__(self):
         """
-        Create an in-memory storage backend for feedback, clusters, jobs, projects, users, and related indices.
+        Initialize the in-memory storage backend for feedback, clusters, jobs, projects, users, and related indices.
         
         Attributes:
-            feedback_items: dict mapping feedback UUID -> FeedbackItem.
-            issue_clusters: dict mapping cluster ID (str) -> IssueCluster.
-            agent_jobs: dict mapping job UUID -> AgentJob.
-            projects: dict mapping project ID (str) -> Project.
-            users: dict mapping user ID (str) -> User.
-            reddit_subreddits: dict mapping project ID (str) -> list of subreddit names.
-            external_index: dict mapping (project_id, source, external_id) -> feedback UUID for deduplication/lookup.
-            unclustered_feedback_ids: dict mapping project ID (str) -> set of feedback UUIDs not assigned to any cluster.
-            cluster_jobs: dict mapping cluster job ID (str) -> ClusterJob.
-            cluster_job_index: dict mapping project ID (str) -> list of cluster job IDs (recent ordering).
-            cluster_locks: dict mapping project ID (str) -> lock owner/job ID (str) for in-memory lock tracking.
+            feedback_items: Mapping from feedback UUID to FeedbackItem.
+            issue_clusters: Mapping from cluster ID (str) to IssueCluster.
+            coding_plans: Mapping from cluster ID (str) to CodingPlan.
+            agent_jobs: Mapping from job UUID to AgentJob.
+            job_logs: Mapping from job UUID to list of log lines.
+            projects: Mapping from project ID (str) to Project.
+            users: Mapping from user ID (str) to User.
+            reddit_subreddits: Mapping from project ID (str) to list of subreddit names.
+            datadog_webhook_secrets: Mapping from project ID (str) to Datadog webhook secret.
+            datadog_monitors: Mapping from project ID (str) to list of Datadog monitor IDs.
+            external_index: Mapping from (project_id, source, external_id) to feedback UUID for deduplication/lookup.
+            unclustered_feedback_ids: Mapping from project ID (str) to set of feedback UUIDs not assigned to any cluster.
+            cluster_jobs: Mapping from cluster job ID (str) to ClusterJob.
+            cluster_job_index: Mapping from project ID (str) to list of cluster job IDs in recent order.
+            cluster_locks: Mapping from project ID (str) to lock owner/job ID (str) for in-memory lock tracking.
+            config: Generic key-value configuration storage.
         """
         self.feedback_items: Dict[UUID, FeedbackItem] = {}
         self.issue_clusters: Dict[str, IssueCluster] = {}
@@ -311,6 +316,15 @@ class InMemoryStore:
         self.cluster_locks: Dict[str, str] = {}
         # Generic key-value config storage
         self.config: Dict[str, str] = {}
+
+    def ping(self) -> bool:
+        """
+        Health check for in-memory store.
+
+        Returns:
+            bool: Always True since in-memory store is always available.
+        """
+        return True
 
     # Feedback
     def add_feedback_item(self, item: FeedbackItem) -> FeedbackItem:
@@ -504,6 +518,20 @@ class InMemoryStore:
         return [c for c in self.issue_clusters.values() if str(c.project_id) == str(project_id)]
 
     def update_cluster(self, project_id: Optional[str], cluster_id: str, **updates) -> IssueCluster:
+        """
+        Update fields of an existing IssueCluster and replace the stored cluster with the updated version.
+        
+        Parameters:
+            project_id (Optional[str]): If provided, validates that the cluster belongs to this project.
+            cluster_id (str): Identifier of the cluster to update.
+            **updates: Field names and values to apply to the cluster (merged into the existing cluster).
+        
+        Returns:
+            IssueCluster: The updated cluster instance stored in the backend.
+        
+        Raises:
+            KeyError: If no cluster exists with `cluster_id`, or if `project_id` is provided and does not match the cluster's project.
+        """
         cluster = self.issue_clusters[cluster_id]
         if project_id is not None and str(cluster.project_id) != str(project_id):
             raise KeyError(f"Cluster {cluster_id} not found for project {project_id}")
@@ -511,10 +539,47 @@ class InMemoryStore:
         self.issue_clusters[cluster_id] = updated_cluster
         return updated_cluster
 
+    def add_feedback_to_cluster(self, project_id: str, cluster_id: str, feedback_id: str) -> None:
+        """
+        Add a feedback ID to a cluster's feedback_ids list.
+        
+        Parameters:
+            project_id (str): Project identifier used to validate the cluster's ownership.
+            cluster_id (str): Identifier of the cluster to modify.
+            feedback_id (str): Identifier of the feedback to append.
+        
+        Raises:
+            KeyError: If the cluster does not exist or does not belong to the given project.
+        
+        Notes:
+            If the feedback ID is already present, the method does nothing.
+        """
+        cluster = self.issue_clusters.get(cluster_id)
+        if not cluster:
+            raise KeyError(f"Cluster {cluster_id} not found")
+        if project_id and str(cluster.project_id) != str(project_id):
+            raise KeyError(f"Cluster {cluster_id} not found for project {project_id}")
+        if feedback_id not in cluster.feedback_ids:
+            cluster.feedback_ids.append(feedback_id)
+
+    def delete_cluster(self, project_id: str, cluster_id: str) -> None:
+        """
+        Remove an issue cluster if it exists and matches the given project scope.
+        
+        Parameters:
+            project_id (str): Project identifier used to validate ownership; if falsy, the cluster is removed regardless of its project.
+            cluster_id (str): Identifier of the cluster to remove.
+        """
+        cluster = self.issue_clusters.get(cluster_id)
+        if cluster and (not project_id or str(cluster.project_id) == str(project_id)):
+            del self.issue_clusters[cluster_id]
+
     def clear_clusters(self, project_id: Optional[str] = None):
         """
-        Remove stored issue clusters. If project_id is provided, remove clusters for that project;
-        otherwise remove all clusters (backwards-compatible for tests/cleanup).
+        Remove issue clusters for a specific project or all clusters when no project_id is given.
+        
+        Parameters:
+            project_id (Optional[str]): If provided, only clusters whose project_id matches this value are removed; if omitted, all clusters are removed.
         """
         if project_id:
             ids_to_delete = [
@@ -1112,12 +1177,48 @@ class RedisStore:
 
     @staticmethod
     def _coding_plan_key(cluster_id: str) -> str:
-        """Match dashboard: coding_plan:{clusterId}"""
+        """
+        Get the Redis key for the coding plan of the specified cluster.
+        
+        Parameters:
+            cluster_id (str): Cluster identifier.
+        
+        Returns:
+            str: Redis key in the format "coding_plan:{clusterId}".
+        """
         return f"coding_plan:{cluster_id}"
+
+    def ping(self) -> bool:
+        """
+        Health check for Redis connection.
+
+        Returns:
+            bool: True if connection is healthy, False otherwise.
+
+        Raises:
+            Exception: If Redis connection fails.
+        """
+        try:
+            if self.mode == "redis":
+                # Use redis-py's ping
+                self.client.ping()
+            else:
+                # Use REST API ping
+                self.client._cmd("PING")
+            return True
+        except Exception as e:
+            logger.error(f"Redis ping failed: {e}")
+            raise
 
     def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
         """
-        Store a CodingPlan in Redis.
+        Persist a CodingPlan associated with its cluster.
+        
+        Parameters:
+            plan (CodingPlan): The coding plan to store; its cluster_id is used as the storage key.
+        
+        Returns:
+            CodingPlan: The same CodingPlan that was stored.
         """
         key = self._coding_plan_key(plan.cluster_id)
         self.client.set(key, plan.model_dump_json())
@@ -1683,6 +1784,16 @@ class RedisStore:
         return IssueCluster(**data)
 
     def get_all_clusters(self, project_id: Optional[str] = None) -> List[IssueCluster]:
+        """
+        Retrieve IssueCluster objects for a project or for all projects.
+        
+        Parameters:
+            project_id (Optional[str]): If provided, returns clusters scoped to this project sorted by created_at descending.
+                If omitted, returns clusters across all projects.
+        
+        Returns:
+            List[IssueCluster]: A list of IssueCluster instances for the requested scope. Malformed or unparsable cluster records are skipped.
+        """
         if project_id is None:
             # Compatibility: return all clusters across projects
             clusters: List[IssueCluster] = []
@@ -1692,30 +1803,107 @@ class RedisStore:
                 parts = key.split(":")
                 if len(parts) >= 2:
                     pid = parts[1]
-                    # Get cluster IDs for this project (sorted by created_at desc)
-                    cluster_ids = self._zrange(self._cluster_all_key(pid), 0, -1, rev=True)
-                    # Load each cluster
-                    for cid in cluster_ids:
-                        cluster = self.get_cluster(pid, cid)
-                        if cluster:
-                            clusters.append(cluster)
+                    # Recursively call with specific project_id to use batching
+                    clusters.extend(self.get_all_clusters(pid))
             return clusters
 
         # Use ZRANGE with rev=True to get clusters sorted by created_at descending
         ids = self._zrange(self._cluster_all_key(project_id), 0, -1, rev=True)
+        if not ids:
+            return []
+
+        # Batch fetch all cluster hashes using pipelining
+        hash_keys = [self._cluster_key(project_id, cid) for cid in ids]
+        items_keys = [self._cluster_items_key(project_id, cid) for cid in ids]
+
+        # Fetch all hashes in one batch
+        hash_results = self._hgetall_batch(hash_keys)
+
+        # Batch fetch feedback_ids from all cluster item sets
+        if self.mode == "redis":
+            pipe = self.client.pipeline()
+            for items_key in items_keys:
+                pipe.smembers(items_key)
+            items_results = pipe.execute()
+        else:
+            # For REST API, use pipeline_exec with SMEMBERS
+            commands = [["SMEMBERS", key] for key in items_keys]
+            items_results = self.client.pipeline_exec(commands)
+
+        # Parse results into IssueCluster objects
         clusters: List[IssueCluster] = []
-        for cid in ids:
-            cluster = self.get_cluster(project_id, cid)
-            if cluster:
-                clusters.append(cluster)
+        for i, (cid, data) in enumerate(zip(ids, hash_results)):
+            if not data:
+                continue
+
+            # Parse date fields
+            for field in ("created_at", "updated_at"):
+                if isinstance(data.get(field), str):
+                    data[field] = _iso_to_dt(data[field])
+
+            # Parse centroid
+            if isinstance(data.get("centroid"), str):
+                try:
+                    data["centroid"] = json.loads(data["centroid"])
+                except json.JSONDecodeError:
+                    data["centroid"] = []
+
+            # Parse sources
+            if isinstance(data.get("sources"), str):
+                try:
+                    data["sources"] = json.loads(data["sources"])
+                except json.JSONDecodeError:
+                    data["sources"] = []
+
+            # Use batched feedback_ids
+            feedback_ids = items_results[i] if i < len(items_results) else []
+            if isinstance(feedback_ids, set):
+                feedback_ids = list(feedback_ids)
+            elif feedback_ids is None:
+                feedback_ids = []
+            data["feedback_ids"] = feedback_ids
+
+            try:
+                clusters.append(IssueCluster(**data))
+            except Exception:
+                # Skip malformed clusters
+                continue
+
         return clusters
 
     def update_cluster(self, project_id: str, cluster_id: str, **updates) -> IssueCluster:
+        """
+        Update fields of an existing IssueCluster and persist the change.
+        
+        Parameters:
+            project_id (str): Identifier of the project that owns the cluster.
+            cluster_id (str): Identifier of the cluster to update.
+            **updates: Field names and values to apply to the cluster (partial update).
+        
+        Returns:
+            IssueCluster: The updated and persisted IssueCluster.
+        
+        Raises:
+            KeyError: If no cluster with the given `cluster_id` exists for `project_id`.
+        """
         cluster = self.get_cluster(project_id, cluster_id)
         if not cluster:
             raise KeyError(f"Cluster {cluster_id} not found")
         updated = cluster.model_copy(update=updates)
         return self.add_cluster(updated)
+
+    def add_feedback_to_cluster(self, project_id: str, cluster_id: str, feedback_id: str) -> None:
+        """Add a feedback ID to an existing cluster's items set."""
+        items_key = self._cluster_items_key(project_id, cluster_id)
+        self._sadd(items_key, str(feedback_id))
+
+    def delete_cluster(self, project_id: str, cluster_id: str) -> None:
+        """Delete a cluster and its items set."""
+        cluster_key = self._cluster_key(project_id, cluster_id)
+        items_key = self._cluster_items_key(project_id, cluster_id)
+        all_key = self._cluster_all_key(project_id)
+        self._delete(cluster_key, items_key)
+        self._zrem(all_key, cluster_id)
 
     def clear_clusters(self, project_id: Optional[str] = None):
         """
@@ -2085,6 +2273,20 @@ class RedisStore:
             logger.debug("Failed to set TTL on %s: %s", key, exc)
 
     def get_job_logs(self, job_id: UUID, cursor: int = 0, limit: int = 200) -> tuple[list[str], int, bool]:
+        """
+        Retrieve a page of log lines for a job.
+        
+        Parameters:
+            job_id (UUID): Identifier of the job whose logs are being fetched.
+            cursor (int): Zero-based start index into the log list; values below 0 are treated as 0.
+            limit (int): Maximum number of log lines to return; clamped to the range 1–1000.
+        
+        Returns:
+            tuple[list[str], int, bool]: 
+                - list[str]: Log lines starting at `cursor`, up to `limit` items.
+                - int: `next_cursor` index to use for the following page.
+                - bool: `has_more` is `True` if there are additional log lines after the returned page.
+        """
         key = self._job_logs_key(job_id)
         if cursor < 0:
             cursor = 0
@@ -2096,7 +2298,58 @@ class RedisStore:
         has_more = next_cursor < total
         return (items, next_cursor, has_more)
 
+    def archive_job_logs_to_blob(self, job_id: UUID) -> Optional[str]:
+        """
+        Archive a job's Redis-stored logs to blob storage and update the job record.
+        
+        Fetches all log entries for the given job, uploads the concatenated logs to blob storage, updates the job with the resulting blob URL, and removes the logs from Redis. Upload or job-update failures cause the operation to abort and return None; failure to delete Redis logs is treated as non-fatal.
+        
+        Returns:
+            blob_url (str): URL of the uploaded blob if successful, `None` otherwise.
+        """
+        from blob_storage import upload_job_logs_to_blob
+
+        # Fetch all log chunks from Redis
+        chunks, _, _ = self.get_job_logs(job_id, cursor=0, limit=100000)
+        if not chunks:
+            logger.warning(f"No logs found for job {job_id}")
+            return None
+
+        # Concatenate all chunks (chunks already contain newlines)
+        full_logs = "".join(chunks)
+
+        # Upload to Blob
+        try:
+            blob_url = upload_job_logs_to_blob(job_id, full_logs)
+            logger.info(f"Uploaded logs for job {job_id} to Blob: {blob_url}")
+        except Exception:
+            logger.exception(f"Failed to upload logs to Blob for job {job_id}")
+            return None
+
+        # Update job record with blob_url
+        try:
+            self.update_job(job_id, blob_url=blob_url)
+        except Exception:
+            logger.exception(f"Failed to update job {job_id} with blob_url")
+            return None
+
+        # Delete Redis logs to free memory
+        try:
+            logs_key = self._job_logs_key(job_id)
+            self.client.delete(logs_key)
+            logger.info(f"Deleted Redis logs for job {job_id}")
+        except Exception:
+            logger.warning(f"Failed to delete Redis logs for job {job_id}")
+
+        return blob_url
+
     def get_jobs_by_cluster(self, cluster_id: str) -> List[AgentJob]:
+        """
+        Retrieve all AgentJob objects associated with a cluster, ordered from newest to oldest.
+        
+        Returns:
+            List[AgentJob]: A list of AgentJob instances for the given cluster_id, ordered newest first. Any stored job IDs that are invalid or cannot be parsed are skipped.
+        """
         key = self._cluster_jobs_key(cluster_id)
         ids = self._zrange(key, 0, -1, rev=True)  # Newest first
         jobs: List[AgentJob] = []
@@ -2191,15 +2444,16 @@ class RedisStore:
     def list_cluster_jobs(self, project_id: str, limit: int = 20) -> List[ClusterJob]:
         """
         Retrieve recent cluster jobs for a project in newest-first order.
-        
+
         Parameters:
             project_id (str): Project identifier to list cluster jobs for.
             limit (int): Maximum number of jobs to return; defaults to 20.
-        
+
         Returns:
             List[ClusterJob]: List of ClusterJob objects ordered from newest to oldest; may contain fewer than `limit` if not enough jobs exist.
         """
-        ids = self._zrange(self._cluster_jobs_recent_key(project_id), -limit, -1, rev=True)
+        # Use ZRANGE 0 limit-1 REV to get top N items by score (newest first)
+        ids = self._zrange(self._cluster_jobs_recent_key(project_id), 0, limit - 1, rev=True)
         jobs: List[ClusterJob] = []
         for jid in ids:
             job = self.get_cluster_job(project_id, jid)
@@ -2485,11 +2739,43 @@ class RedisStore:
             self.client.zadd(key, score, member)
 
     def _zrange(self, key: str, start: int, stop: int, rev: bool = False) -> List[str]:
+        """
+        Return the members of a sorted set stored at `key` between `start` and `stop` by index.
+        
+        Parameters:
+            key (str): Redis key of the sorted set.
+            start (int): Start index (inclusive).
+            stop (int): Stop index (inclusive).
+            rev (bool): If True, return members in descending (highest-to-lowest) score order; otherwise ascending.
+        
+        Returns:
+            members (List[str]): List of member strings in the requested range and order.
+        """
         if self.mode == "redis":
             return self.client.zrange(key, start, stop, desc=rev)
         return self.client.zrange(key, start, stop, rev=rev)
 
+    def _zrem(self, key: str, member: str):
+        """
+        Remove a member from the sorted set stored at the given key.
+        
+        Parameters:
+            key (str): Redis key of the sorted set.
+            member (str): The member to remove from the sorted set.
+        """
+        if self.mode == "redis":
+            self.client.zrem(key, member)
+        else:
+            self.client.zrem(key, member)
+
     def _sadd(self, key: str, member: str):
+        """
+        Add a member to the Redis set stored at the given key.
+        
+        Parameters:
+            key (str): Redis key identifying the set.
+            member (str): Value to add to the set.
+        """
         if self.mode == "redis":
             self.client.sadd(key, member)
         else:
@@ -2627,7 +2913,29 @@ _STORE = _select_store()
 
 
 # Public API (delegates to current store)
+def ping() -> bool:
+    """
+    Health check for the storage backend.
+
+    Returns:
+        bool: True if the store is healthy and accessible.
+
+    Raises:
+        Exception: If the store is not accessible.
+    """
+    return _STORE.ping()
+
+
 def add_feedback_item(item: FeedbackItem) -> FeedbackItem:
+    """
+    Add a feedback item to the selected storage backend and return the stored item.
+    
+    Parameters:
+        item (FeedbackItem): Feedback item to persist.
+    
+    Returns:
+        FeedbackItem: The feedback item as stored (may include backend-assigned fields such as ID or normalized timestamps).
+    """
     return _STORE.add_feedback_item(item)
 
 
@@ -2743,10 +3051,62 @@ def get_all_clusters(project_id: Optional[str] = None) -> List[IssueCluster]:
 
 
 def update_cluster(project_id: str, cluster_id: str, **updates) -> IssueCluster:
+    """
+    Update fields of an existing IssueCluster within a project.
+    
+    Parameters:
+        project_id (str): Identifier of the project that owns the cluster.
+        cluster_id (str): Identifier of the cluster to update.
+        **updates: Field names and values to merge into the cluster (e.g., `title`, `description`, `labels`, `centroid`, `metadata`).
+    
+    Returns:
+        IssueCluster: The updated IssueCluster object.
+    """
     return _STORE.update_cluster(project_id, cluster_id, **updates)
 
 
+def add_feedback_to_cluster(cluster_id: str, feedback_id: str, project_id: Optional[str] = None) -> None:
+    """
+    Add a feedback item to a cluster, resolving the cluster's project when necessary.
+    
+    Parameters:
+        cluster_id (str): ID of the target cluster.
+        feedback_id (str): ID of the feedback item to add to the cluster.
+        project_id (Optional[str]): Project ID that scopes the cluster. If omitted, the function will look up the cluster to determine its project.
+    
+    Raises:
+        KeyError: If `project_id` is omitted and the cluster cannot be found.
+    """
+    if project_id is None:
+        # Try to find the cluster's project_id
+        cluster = get_cluster_by_id(cluster_id)
+        if cluster:
+            project_id = str(cluster.project_id)
+        else:
+            raise KeyError(f"Cluster {cluster_id} not found")
+    _STORE.add_feedback_to_cluster(project_id, cluster_id, feedback_id)
+
+
+def delete_cluster(project_id: str, cluster_id: str) -> None:
+    """
+    Delete the specified cluster and its associated feedback items within the given project.
+    
+    Parameters:
+        project_id (str): ID of the project that owns the cluster.
+        cluster_id (str): ID of the cluster to delete.
+    """
+    _STORE.delete_cluster(project_id, cluster_id)
+
+
 def clear_clusters(project_id: Optional[str] = None):
+    """
+    Remove persisted issue clusters.
+    
+    If `project_id` is provided, delete all clusters belonging to that project; if omitted, delete clusters for all projects. This removes cluster records and their associated stored metadata.
+     
+    Parameters:
+        project_id (Optional[str]): Project identifier to scope the deletion, or `None` to clear clusters across all projects.
+    """
     _STORE.clear_clusters(project_id)
 
 
@@ -2805,16 +3165,41 @@ def append_job_log(job_id: UUID, message: str) -> None:
         _STORE.append_job_log(job_id, message)
 
 def get_job_logs(job_id: UUID, cursor: int = 0, limit: int = 200) -> tuple[list[str], int, bool]:
+    """
+    Retrieve a page of logs for a job.
+    
+    Parameters:
+        job_id (UUID): Identifier of the job whose logs are being read.
+        cursor (int): Zero-based index to start reading logs from; use the returned cursor to continue pagination.
+        limit (int): Maximum number of log entries to return.
+    
+    Returns:
+        logs (list[str]): Ordered log lines for this page.
+        next_cursor (int): Cursor position to use for the next page (same as end position).
+        has_more (bool): `true` if more logs are available after this page, `false` otherwise.
+    """
     if hasattr(_STORE, "get_job_logs"):
         return _STORE.get_job_logs(job_id, cursor=cursor, limit=limit)
     return ([], cursor, False)
 
 
+def archive_job_logs_to_blob(job_id: UUID) -> Optional[str]:
+    """
+    Archive job logs to blob storage and associate the resulting archive with the job.
+    
+    Returns:
+        blob_url (str): URL of the uploaded archive if logs were archived, `None` if the configured store does not support archival or no archive was created.
+    """
+    if hasattr(_STORE, "archive_job_logs_to_blob"):
+        return _STORE.archive_job_logs_to_blob(job_id)
+    return None
+
+
 def clear_jobs():
     """
-    Delete all AgentJob records and their related indexes from the active storage backend.
+    Remove all AgentJob records and their related indexes from the currently selected storage backend.
     
-    If the currently selected store does not implement a `clear_jobs` operation, no action is taken.
+    If the selected store does not provide a `clear_jobs` method this function performs no action.
     """
     if hasattr(_STORE, "clear_jobs"):
         _STORE.clear_jobs()

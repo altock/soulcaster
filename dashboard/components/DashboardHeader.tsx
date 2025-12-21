@@ -14,11 +14,11 @@ interface DashboardHeaderProps {
 }
 
 /**
- * Shared header component for dashboard pages with navigation.
- * Highlights the active page in the navigation menu.
+ * Dashboard header that renders navigation, brand, and user session controls while highlighting the active page.
  *
- * @param activePage - The currently active page
- * @param className - Optional additional CSS classes to apply to the outer container
+ * @param activePage - Optional explicit active page identifier to force which nav item is highlighted
+ * @param className - Optional CSS class names added to the outer container
+ * @returns The dashboard header element
  */
 export default function DashboardHeader({
   className = '',
@@ -27,79 +27,47 @@ export default function DashboardHeader({
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navLinks = [
+    { href: '/dashboard', label: 'Dashboard', active: pathname === '/dashboard' || activePage === 'overview' },
+    { href: '/dashboard/clusters', label: 'Clusters', active: pathname.startsWith('/dashboard/clusters') || activePage === 'clusters' },
+    { href: '/dashboard/feedback', label: 'Feedback', active: pathname.startsWith('/dashboard/feedback') || activePage === 'feedback' },
+    { href: '/dashboard/prs', label: 'PRs', active: pathname.startsWith('/dashboard/prs') || activePage === 'prs' },
+    { href: '/settings/integrations', label: 'Settings', active: pathname.startsWith('/settings') || activePage === 'settings' },
+  ];
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black/50 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 h-14 flex justify-between items-center">
-        <div className="flex items-center gap-8">
-          <Link href="/" className="flex items-center gap-2.5">
+        <div className="flex items-center gap-4 md:gap-8">
+          <Link href="/" className="flex items-center gap-2">
             <div className="flex bg-gradient-to-br from-emerald-400 to-emerald-600 w-6 h-6 rounded-full shadow-[0_0_15px_rgba(16,185,129,0.4)] items-center justify-center">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-black">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="currentColor"></path>
               </svg>
             </div>
-            <span className="text-sm font-semibold tracking-tight text-slate-100">Soulcaster</span>
+            <span className="text-sm font-semibold tracking-tight text-slate-100 hidden sm:inline">Soulcaster</span>
           </Link>
 
-          <nav className="flex items-center gap-1">
-            <Link
-              href="/dashboard"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname === '/dashboard' || activePage === 'overview'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+          {/* Desktop nav */}
+          <nav className="hidden md:flex items-center gap-1">
+            {navLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${link.active
+                  ? 'bg-white/5 text-emerald-400'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
                 }`}
-            >
-              Dashboard
-            </Link>
-            <Link
-              href="/dashboard/clusters"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/clusters') || activePage === 'clusters'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`}
-            >
-              Clusters
-            </Link>
-            <Link
-              href="/dashboard/feedback"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/feedback') || activePage === 'feedback'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`}
-            >
-              Feedback
-            </Link>
-            <Link
-              href="/dashboard/prs"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/dashboard/prs') || activePage === 'prs'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`}
-            >
-              PRs
-            </Link>
-            <Link
-              href="/settings/integrations"
-              className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${pathname.startsWith('/settings') || activePage === 'settings'
-                ? 'bg-white/5 text-emerald-400'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-                }`}
-            >
-              Settings
-            </Link>
-            <span
-              aria-disabled="true"
-              className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium bg-white/5 text-slate-500 border border-white/5 cursor-not-allowed select-none"
-            >
-              Billing
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/10">
-                Coming soon
-              </span>
-            </span>
+              >
+                {link.label}
+              </Link>
+            ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {status === 'loading' ? (
             <div className="h-7 w-7 rounded-full border border-white/10 bg-white/5 animate-pulse"></div>
           ) : session ? (
@@ -151,8 +119,49 @@ export default function DashboardHeader({
               Sign in
             </button>
           )}
+
+          {/* Mobile hamburger */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 text-slate-400 hover:text-white transition-colors"
+            aria-label="Toggle menu"
+          >
+            {mobileMenuOpen ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="12" x2="21" y2="12"></line>
+                <line x1="3" y1="6" x2="21" y2="6"></line>
+                <line x1="3" y1="18" x2="21" y2="18"></line>
+              </svg>
+            )}
+          </button>
         </div>
       </div>
+
+      {/* Mobile menu */}
+      {mobileMenuOpen && (
+        <nav className="md:hidden border-t border-white/5 bg-black/90 backdrop-blur-xl">
+          <div className="px-4 py-2 space-y-1">
+            {navLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setMobileMenuOpen(false)}
+                className={`block rounded-md px-3 py-2 text-sm font-medium transition-colors ${link.active
+                  ? 'bg-white/5 text-emerald-400'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                }`}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
+      )}
     </header>
   );
 }

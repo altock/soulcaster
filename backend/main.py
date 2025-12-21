@@ -50,6 +50,7 @@ from store import (
     remove_from_unclustered,
     remove_from_unclustered_batch,
     clear_clusters,
+    delete_cluster,
     set_reddit_subreddits_for_project,
     get_reddit_subreddits_for_project,
     get_datadog_webhook_secret_for_project,
@@ -80,6 +81,7 @@ from store import (
     set_datadog_config as set_datadog_config_value,
     get_posthog_config as get_posthog_config_value,
     set_posthog_config as set_posthog_config_value,
+    ping,
 )
 from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
@@ -112,6 +114,7 @@ from sentry_client import (
 from datadog_client import datadog_event_to_feedback_item, verify_signature
 # Ensure runners are registered
 import agent_runner.sandbox
+import agent_runner.aws
 
 app = FastAPI(
     title="Soulcaster Ingestion API",
@@ -145,8 +148,57 @@ GITHUB_SYNC_STATE: Dict[Tuple[str, str], Dict[str, str]] = {}
 
 @app.get("/")
 def read_root():
-    """Health check endpoint."""
+    """
+    Return a basic service status payload for the root HTTP endpoint.
+    
+    Returns:
+        dict: Payload containing:
+            status (str): "ok" when the service is healthy.
+            service (str): The service identifier ("soulcaster-ingestion").
+    """
     return {"status": "ok", "service": "soulcaster-ingestion"}
+
+
+@app.get("/health")
+def health_check():
+    """
+    Report service and storage connectivity status for health monitoring.
+    
+    When healthy, returns a dictionary with keys:
+    - `status`: "healthy"
+    - `service`: service identifier
+    - `environment`: runtime environment
+    - `storage`: "connected" or "disconnected"
+    - `timestamp`: ISO 8601 UTC timestamp
+    
+    Returns:
+        dict: Health payload described above.
+    
+    Raises:
+        HTTPException: With a 503 status and an error payload when the storage check or other internal check fails.
+    """
+    try:
+        environment = os.getenv("ENVIRONMENT", "development")
+        store_healthy = ping()
+
+        return {
+            "status": "healthy",
+            "service": "soulcaster-backend",
+            "environment": environment,
+            "storage": "connected" if store_healthy else "disconnected",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "service": "soulcaster-backend",
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
 
 def _require_project_id(project_id: Optional[UUID | str]) -> str:
@@ -1879,18 +1931,17 @@ def list_cluster_job_status(project_id: Optional[str] = Query(None), limit: int 
 @app.get("/clustering/status")
 def clustering_status(project_id: Optional[str] = Query(None)):
     """
-    Report clustering queue status for a project.
+    Report clustering queue status for the specified project.
     
     Parameters:
-        project_id (Optional[str]): Project identifier; if omitted or invalid, a 400 HTTPException is raised.
+        project_id (Optional[str]): Project identifier; if omitted or invalid, a 400 HTTPException is raised and the request is rejected.
     
     Returns:
-        dict: {
-            "pending_unclustered": int,   # number of feedback items awaiting clustering
-            "is_clustering": bool,        # `true` if a clustering job is currently running
-            "last_job": ClusterJob|None,  # the most recent cluster job record or `None`
-            "project_id": str             # normalized project id
-        }
+        dict: A mapping with the following keys:
+            - "pending_unclustered" (int): Number of feedback items awaiting clustering.
+            - "is_clustering" (bool): `true` if a clustering job is currently running, `false` otherwise.
+            - "last_job" (ClusterJob|None): The most recent cluster job record, or `None` if none exist.
+            - "project_id" (str): Normalized project id used for the query.
     
     Raises:
         HTTPException: If `project_id` is missing or invalid.
@@ -1903,10 +1954,199 @@ def clustering_status(project_id: Optional[str] = Query(None)):
     return {"pending_unclustered": pending, "is_clustering": is_clustering, "last_job": last_job, "project_id": pid}
 
 
+@app.post("/clusters/cleanup")
+def cleanup_duplicate_clusters(project_id: Optional[str] = Query(None)):
+    """
+    Merge clusters whose centroids are similar and remove duplicate clusters within a project.
+    
+    Groups clusters transitively using centroid similarity (threshold from vector_store.CLEANUP_MERGE_THRESHOLD, currently 0.65), selects a kept cluster per group (preferring clusters with status "fixing" or the largest feedback count), merges feedback IDs and recomputes the centroid for the kept cluster, then deletes the other clusters in each group.
+    
+    Parameters:
+        project_id (Optional[str]): Project identifier taken from the request query; required to scope the cleanup.
+    
+    Returns:
+        dict: Summary of the cleanup operation with the following keys:
+            - success (bool): `True` on successful completion.
+            - message (str): Human-readable status message.
+            - total_clusters (int): Number of clusters examined.
+            - duplicate_groups (int): Number of groups containing more than one cluster.
+            - merged_groups (int): Number of groups that were merged (kept one cluster and removed others).
+            - deleted_clusters (int): Number of clusters deleted.
+            - remaining_clusters (int): Number of clusters remaining after deletions.
+    """
+    from vector_store import find_similar_clusters, CLEANUP_MERGE_THRESHOLD
+    import json
+    import numpy as np
+
+    pid = _require_project_id(project_id)
+    clusters = get_all_clusters(pid)
+
+    if not clusters:
+        return {
+            "success": True,
+            "message": "No clusters to clean up",
+            "total_clusters": 0,
+            "duplicate_groups": 0,
+            "merged_groups": 0,
+            "deleted_clusters": 0,
+            "remaining_clusters": 0,
+        }
+
+    # Build centroid map
+    cluster_centroids = {}
+    cluster_info = {}
+    for cluster in clusters:
+        cluster_info[cluster.id] = {
+            "id": cluster.id,
+            "title": cluster.title,
+            "status": cluster.status,
+            "feedback_ids": cluster.feedback_ids or [],
+            "centroid": cluster.centroid or [],
+        }
+        if cluster.centroid:
+            cluster_centroids[cluster.id] = cluster.centroid
+
+    # Find similar clusters
+    merge_candidates = find_similar_clusters(cluster_centroids, CLEANUP_MERGE_THRESHOLD)
+
+    if not merge_candidates:
+        return {
+            "success": True,
+            "message": "No duplicate clusters found",
+            "total_clusters": len(clusters),
+            "duplicate_groups": 0,
+            "merged_groups": 0,
+            "deleted_clusters": 0,
+            "remaining_clusters": len(clusters),
+        }
+
+    # Use Union-Find to group transitively
+    n = len(clusters)
+    cluster_ids = [c.id for c in clusters]
+    id_to_idx = {cid: i for i, cid in enumerate(cluster_ids)}
+    parent = list(range(n))
+
+    def find(x):
+        """
+        Finds the representative (root) of element x in the disjoint-set forest and compresses the path.
+        
+        Parameters:
+            x (int): Element identifier whose set representative is requested.
+        
+        Returns:
+            int: The representative (root) of the set containing x. The parent links for x (and intermediate nodes) are updated to point directly to this root.
+        """
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(x, y):
+        """
+        Merge the disjoint-set containing x with the disjoint-set containing y.
+        
+        Modifies the union-find parent mapping so that the roots of x and y become part of the same set.
+        
+        Parameters:
+            x: An element (identifier) in the disjoint-set structure.
+            y: Another element (identifier) in the disjoint-set structure.
+        """
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # Union similar clusters
+    for candidate in merge_candidates:
+        idx1 = id_to_idx.get(candidate["cluster1"])
+        idx2 = id_to_idx.get(candidate["cluster2"])
+        if idx1 is not None and idx2 is not None:
+            union(idx1, idx2)
+
+    # Group by parent
+    groups = {}
+    for i in range(n):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(cluster_ids[i])
+
+    # Filter to only groups with duplicates
+    duplicate_groups = [g for g in groups.values() if len(g) > 1]
+
+    merged_count = 0
+    deleted_count = 0
+
+    for group in duplicate_groups:
+        group_clusters = [cluster_info[cid] for cid in group]
+
+        # Keep cluster with most feedback items, or prefer "fixing" status
+        group_clusters.sort(key=lambda c: (
+            0 if c["status"] == "fixing" else 1,
+            -len(c["feedback_ids"]),
+        ))
+
+        keep = group_clusters[0]
+        duplicates = group_clusters[1:]
+
+        # Collect all feedback IDs
+        all_feedback_ids = set(keep["feedback_ids"])
+        all_centroids = [keep["centroid"]] if keep["centroid"] else []
+
+        for dup in duplicates:
+            for fid in dup["feedback_ids"]:
+                all_feedback_ids.add(fid)
+            if dup["centroid"]:
+                all_centroids.append(dup["centroid"])
+
+        # Update kept cluster with merged feedback IDs
+        new_feedback_ids = list(all_feedback_ids)
+
+        # Calculate new centroid as average
+        new_centroid = None
+        if len(all_centroids) > 1:
+            new_centroid = np.mean(all_centroids, axis=0).tolist()
+        elif len(all_centroids) == 1:
+            new_centroid = all_centroids[0]
+
+        # Update the kept cluster
+        update_cluster(
+            pid,
+            keep["id"],
+            feedback_ids=new_feedback_ids,
+            centroid=new_centroid,
+        )
+
+        # Delete duplicate clusters
+        for dup in duplicates:
+            delete_cluster(pid, dup["id"])
+            deleted_count += 1
+
+        merged_count += 1
+
+    return {
+        "success": True,
+        "message": "Duplicate clusters cleaned up successfully",
+        "total_clusters": len(clusters),
+        "duplicate_groups": len(duplicate_groups),
+        "merged_groups": merged_count,
+        "deleted_clusters": deleted_count,
+        "remaining_clusters": len(clusters) - deleted_count,
+    }
+
+
 @app.get("/clusters/{cluster_id}/plan")
 def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
-    Retrieve the latest generated coding plan for a cluster.
+    Retrieve the latest coding plan for a cluster.
+    
+    Parameters:
+    	cluster_id (str): ID of the cluster to fetch the plan for.
+    	project_id (Optional[str]): Project scope to validate access; if not provided, a project id is required via query and validated.
+    
+    Returns:
+    	CodingPlan: The most recently stored coding plan for the specified cluster.
+    
+    Raises:
+    	HTTPException: 404 if the cluster does not exist or if no coding plan has been generated for the cluster.
     """
     pid = _require_project_id(project_id)
 
@@ -2273,26 +2513,50 @@ def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
 def get_job_log_lines(
     job_id: UUID,
     project_id: Optional[str] = Query(None),
-    cursor: int = Query(0, ge=0),
-    limit: int = Query(200, ge=1, le=1000),
 ):
     """
-    Retrieve persisted log chunks for a job.
-
-    This endpoint is designed for UI log tailing without forcing the backend to print logs to stdout.
+    Retrieve logs for a job, preferring blob storage for completed jobs and falling back to in-memory logs.
+    
+    Returns:
+        A dictionary containing:
+        - `job_id` (str): The job UUID as a string.
+        - `project_id` (str): The resolved project id.
+        - `source` (str): `"blob"` if logs were fetched from blob storage, `"memory"` if from the in-memory buffer.
+        - `chunks` (List[str]): A list of log chunks; for blob this contains a single entry with the blob contents, for memory it contains either a single concatenated string or is empty.
+    
+    Raises:
+        HTTPException: 404 if the job does not exist or does not belong to the specified project.
     """
     pid = _require_project_id(project_id)
     job = get_job(job_id)
     if not job or str(job.project_id) != pid:
         raise HTTPException(status_code=404, detail="Job not found for project")
-    chunks, next_cursor, has_more = get_job_logs(job_id, cursor=cursor, limit=limit)
+
+    # For completed jobs with blob_url, fetch from Blob
+    if job.blob_url and job.status in ("success", "failed"):
+        try:
+            from blob_storage import fetch_job_logs_from_blob
+            logs = fetch_job_logs_from_blob(job.blob_url)
+            return {
+                "job_id": str(job_id),
+                "project_id": str(pid),
+                "source": "blob",
+                "chunks": [logs],
+            }
+        except Exception:
+            logger.exception(f"Failed to fetch logs from Blob for job {job_id}")
+            # Fall through to memory as fallback
+
+    # For running jobs or fallback, fetch from memory
+    import job_logs_manager
+    logs = job_logs_manager.get_logs(job_id)
+    full_logs = "".join(logs) if logs else ""
+
     return {
         "job_id": str(job_id),
         "project_id": str(pid),
-        "cursor": cursor,
-        "next_cursor": next_cursor,
-        "has_more": has_more,
-        "chunks": chunks,
+        "source": "memory",
+        "chunks": [full_logs] if full_logs else [],
     }
 
 

@@ -15,6 +15,14 @@ import {
   type TabId,
 } from './components';
 
+/**
+ * Renders the Cluster Detail page and manages its data fetching, user actions, tabs, and job log drawer.
+ *
+ * The component loads cluster details, coding plan, and fix jobs; provides actions to generate a plan and start fixes;
+ * polls cluster and job status while operations are active; and fetches and tails job logs in a drawer.
+ *
+ * @returns The Cluster Detail page UI as a React element
+ */
 export default function ClusterDetailPage() {
   const params = useParams();
   const clusterId = params.id as string;
@@ -45,7 +53,6 @@ export default function ClusterDetailPage() {
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [selectedJobForLogs, setSelectedJobForLogs] = useState<AgentJob | null>(null);
   const [logText, setLogText] = useState<string>('');
-  const [logCursor, setLogCursor] = useState(0);
   const [isTailingLogs, setIsTailingLogs] = useState(false);
 
   // Fetch functions (defined before effects that use them)
@@ -95,33 +102,28 @@ export default function ClusterDetailPage() {
   }, [clusterId]);
 
   const fetchJobLogs = useCallback(
-    async (jobId: string, opts?: { append?: boolean }) => {
-      const append = opts?.append ?? false;
-      const cursor = append ? logCursor : 0;
+    async (jobId: string) => {
       const response = await fetch(
-        `/api/jobs/${encodeURIComponent(jobId)}/job-logs?cursor=${cursor}&limit=200`
+        `/api/jobs/${encodeURIComponent(jobId)}/job-logs`
       );
       if (!response.ok) {
         throw new Error('Failed to fetch logs');
       }
+
       const payload = await response.json();
       const chunks = (payload?.chunks as string[]) || [];
-      const nextCursor =
-        typeof payload?.next_cursor === 'number'
-          ? payload.next_cursor
-          : cursor + chunks.length;
-      if (append) {
-        setLogText((prev) => prev + chunks.join(''));
-      } else {
-        setLogText(chunks.join(''));
+      const source = payload?.source || 'unknown';
+
+      // Update logs
+      setLogText(chunks.join(''));
+
+      // For Blob source (completed jobs), stop tailing
+      if (source === 'blob') {
+        setIsTailingLogs(false);
       }
-      setLogCursor(nextCursor);
-      setIsTailingLogs(
-        Boolean(payload?.has_more) ||
-          fixJobs.some((j) => j.id === jobId && j.status === 'running')
-      );
+      // For memory source, keep current tailing state (controlled by job status polling)
     },
-    [logCursor, fixJobs]
+    []
   );
 
   // Initial data fetch
@@ -153,7 +155,7 @@ export default function ClusterDetailPage() {
   useEffect(() => {
     if (!selectedJobForLogs?.id || !isTailingLogs) return;
     const interval = setInterval(
-      () => fetchJobLogs(selectedJobForLogs.id, { append: true }),
+      () => fetchJobLogs(selectedJobForLogs.id),
       2000
     );
     return () => clearInterval(interval);
@@ -202,11 +204,10 @@ export default function ClusterDetailPage() {
 
   const handleViewLogs = async (job: AgentJob) => {
     setSelectedJobForLogs(job);
-    setLogCursor(0);
     setLogText('');
     setLogDrawerOpen(true);
     try {
-      await fetchJobLogs(job.id, { append: false });
+      await fetchJobLogs(job.id);
     } catch (err) {
       console.error('Failed to fetch logs:', err);
     }
@@ -380,9 +381,7 @@ export default function ClusterDetailPage() {
         onToggleTail={() => setIsTailingLogs((v) => !v)}
         onLoadMore={() => {
           if (selectedJobForLogs) {
-            fetchJobLogs(selectedJobForLogs.id, { append: true }).catch(
-              console.error
-            );
+            fetchJobLogs(selectedJobForLogs.id).catch(console.error);
           }
         }}
       />

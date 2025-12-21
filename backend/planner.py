@@ -28,7 +28,24 @@ def _get_client():
 
 def generate_plan(cluster: IssueCluster, feedback_items: list[FeedbackItem]) -> CodingPlan:
     """
-    Generate a CodingPlan for the given cluster and feedback items using Gemini.
+    Generate a high-level coding plan for an issue cluster from user feedback using Gemini.
+    
+    Parameters:
+        cluster (IssueCluster): The issue cluster to generate a plan for.
+        feedback_items (list[FeedbackItem]): Ordered user feedback entries relevant to the cluster.
+    
+    Returns:
+        CodingPlan: A plan containing a new UUID, the cluster ID, a short product-facing title,
+        a single-block description describing problem, expected behavior, and (optionally)
+        acceptance criteria, and created/updated UTC timestamps.
+    
+    Behavior:
+        - If the Gemini API key is missing, returns a placeholder plan indicating automatic
+          plan generation failed (title prefixed with "Fix:" and a description noting the failure).
+        - If generation succeeds, returns a CodingPlan populated from the model's parsed
+          title and description.
+        - If generation raises an exception, logs the error and returns a fallback plan whose
+          title indicates the error and whose description contains the exception message.
     """
     client = _get_client()
     if not client:
@@ -79,7 +96,7 @@ Output requirements:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -100,17 +117,13 @@ Output requirements:
         )
 
     except Exception as e:
-        logger.exception(f"Failed to generate plan for cluster {cluster.id}: {e}")
-        # Return a fallback plan indicating failure, but hide raw error details from the user
+        logger.exception(f"Failed to generate plan for cluster {cluster.id}")
+        # Return a fallback plan indicating failure
         return CodingPlan(
             id=str(uuid4()),
             cluster_id=cluster.id,
             title=f"Error planning fix for: {cluster.title}",
-            description=(
-                "Plan generation failed. Please try again later.\n\n"
-                "The system encountered an issue while generating the implementation plan. "
-                "No technical details are available to display."
-            ),
+            description=f"Plan generation failed: {str(e)}",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )

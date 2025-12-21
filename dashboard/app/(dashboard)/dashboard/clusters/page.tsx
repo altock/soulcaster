@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
 
@@ -14,11 +15,21 @@ type ClusterJobStatus = {
   stats?: Record<string, number>;
 };
 
+/**
+ * Render the Issue Clusters page, showing clustered feedback, job status, and controls to run clustering.
+ *
+ * Displays loading, empty, and error states; lists clusters with source links, status pills, and item counts;
+ * provides a button to trigger a clustering job and shows the latest job status.
+ *
+ * @returns A React element rendering the Issue Clusters page UI.
+ */
 export default function ClustersListPage() {
+  const router = useRouter();
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [latestJob, setLatestJob] = useState<ClusterJobStatus | null>(null);
+  const [isTriggering, setIsTriggering] = useState(false);
 
   const extractJobsFromPayload = (payload: unknown): ClusterJobStatus[] => {
     if (!payload) {
@@ -35,11 +46,19 @@ export default function ClustersListPage() {
 
   const jobIsRunning = latestJob?.status === 'running';
 
+  const isValidHttpUrl = (url: string): boolean => {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch {
+      return false;
+    }
+  };
+
   useEffect(() => {
     const loadData = async () => {
       await fetchClusters();
-      // Parallelize with Promise.all since these fetches are independent
-      await Promise.all([fetchLatestJob()]);
+      await fetchLatestJob();
     };
     loadData();
   }, []);
@@ -81,10 +100,45 @@ export default function ClustersListPage() {
     return null;
   };
 
+  const triggerClustering = async () => {
+    try {
+      setIsTriggering(true);
+      const response = await fetch('/api/clusters/jobs', {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to start clustering');
+      }
+      const data = await response.json();
+      setLatestJob({
+        id: data.job_id,
+        status: data.status || 'pending',
+        created_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Failed to trigger clustering:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start clustering');
+    } finally {
+      setIsTriggering(false);
+    }
+  };
+
   const formatTimestamp = (value?: string | null) => {
     if (!value) return 'unknown time';
     try {
-      return new Date(value).toLocaleString();
+      const date = new Date(value);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins} min ago`;
+      if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+      if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+      return date.toLocaleDateString();
     } catch {
       return value;
     }
@@ -113,6 +167,13 @@ export default function ClustersListPage() {
 
   if (error) {
     const getErrorDetails = (errorMsg: string) => {
+      if (errorMsg.includes('timeout') || errorMsg.includes('timed out') || errorMsg.includes('503')) {
+        return {
+          title: 'Request Timeout',
+          description: 'The server took too long to respond.',
+          hint: 'Try refreshing the page. If this persists, the server may be overloaded.',
+        };
+      }
       if (errorMsg.includes('fetch') || errorMsg.includes('network')) {
         return {
           title: 'Connection Error',
@@ -269,94 +330,127 @@ export default function ClustersListPage() {
   return (
     <div className="min-h-screen bg-matrix-black pb-12 pt-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
           <div>
-            <h1 className="text-3xl font-bold text-white tracking-tight">Issue Clusters</h1>
-            <p className="mt-2 text-gray-400">
+            <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Issue Clusters</h1>
+            <p className="mt-1 text-sm text-gray-400 hidden sm:block">
               Grouped feedback items ready for analysis and action.
             </p>
           </div>
+          <div className="flex items-center sm:items-end gap-3 sm:gap-2 sm:flex-col">
+            <button
+              onClick={triggerClustering}
+              disabled={isTriggering || jobIsRunning}
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-medium text-emerald-300 transition-colors"
+            >
+              {isTriggering || jobIsRunning ? (
+                <>
+                  <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Running...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Run Clustering
+                </>
+              )}
+            </button>
+            <span className="text-xs text-slate-400">{jobStatusPill()}</span>
+            {latestJob?.error && (
+              <span className="text-xs text-red-300 hidden sm:inline">
+                Error: {latestJob.error}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="animate-in delay-200 overflow-hidden sm:p-8 hover-card-effect group bg-gradient-to-br from-emerald-500/5 to-emerald-600/10 rounded-3xl pt-6 pr-6 pb-6 pl-6 relative shadow-[0_0_60px_rgba(16,185,129,0.1)] border border-white/10">
+        <div className="animate-in delay-200 overflow-hidden hover-card-effect group bg-gradient-to-br from-emerald-500/5 to-emerald-600/10 rounded-2xl relative shadow-[0_0_60px_rgba(16,185,129,0.1)] border border-white/10">
           <div className="pointer-events-none absolute inset-0 opacity-30">
             <div className="absolute right-0 top-0 h-96 w-96 -translate-y-10 translate-x-10 rounded-full bg-emerald-500/10 blur-3xl"></div>
           </div>
 
-          <div className="relative flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-normal uppercase tracking-[0.12em] text-emerald-300/70">
-                  Infrastructure Map
-                </p>
-                <h2 className="mt-1 text-2xl font-medium tracking-tight text-slate-50">
-                  Active Clusters
-                </h2>
-              </div>
-              <div className="flex flex-col gap-2 text-right sm:text-left">
-                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-900/60 bg-emerald-900/20 px-4 py-2 text-xs font-medium text-emerald-200">
-                  Clustering runs automatically after feedback ingestion
-                </span>
-                <span className="text-xs font-medium uppercase tracking-wide text-emerald-200/80">
-                  {jobStatusPill()}
-                </span>
-                {latestJob?.error && (
-                  <span className="text-xs text-red-300">
-                    Last error: {latestJob.error}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="overflow-hidden rounded-2xl border border-white/5 bg-black/40 backdrop-blur-sm">
-              <table className="w-full text-left text-sm text-slate-400">
+          <div className="relative">
+            <div className="overflow-hidden bg-black/40 backdrop-blur-sm">
+              <table className="w-full table-fixed text-left text-sm text-slate-400">
                 <thead className="bg-white/5 text-xs uppercase text-slate-200">
                   <tr>
-                    <th className="px-6 py-4 font-medium tracking-wider">Cluster Name</th>
-                    <th className="px-6 py-4 font-medium tracking-wider">Repositories</th>
-                    <th className="px-6 py-4 font-medium tracking-wider">Status</th>
-                    <th className="px-6 py-4 font-medium tracking-wider">Feedback</th>
-                    <th className="px-6 py-4 font-medium tracking-wider text-right">Actions</th>
+                    <th className="w-[55%] sm:w-[45%] px-3 sm:px-4 py-3 font-medium tracking-wider">Name</th>
+                    <th className="hidden sm:table-cell sm:w-[25%] px-4 py-3 font-medium tracking-wider">Source</th>
+                    <th className="w-[25%] sm:w-[15%] px-2 sm:px-4 py-3 font-medium tracking-wider">Status</th>
+                    <th className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3 font-medium tracking-wider">Items</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {clusters.map((cluster) => (
-                      <tr key={cluster.id} className="group transition-colors hover:bg-white/5">
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1">
-                            <span className="font-medium text-slate-200 group-hover:text-emerald-300 transition-colors">
+                      <tr
+                        key={cluster.id}
+                        onClick={() => router.push(`/dashboard/clusters/${cluster.id}`)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            router.push(`/dashboard/clusters/${cluster.id}`);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="link"
+                        aria-label={`View cluster: ${cluster.issue_title || cluster.title || 'Untitled Cluster'}`}
+                        className="group cursor-pointer transition-colors hover:bg-white/5 focus:bg-white/5 focus:outline-none"
+                      >
+                        <td className="px-3 sm:px-4 py-3">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="font-medium text-slate-200 group-hover:text-emerald-300 transition-colors truncate text-sm">
                               {cluster.issue_title || cluster.title || 'Untitled Cluster'}
                             </span>
-                            <span className="text-xs text-slate-500 line-clamp-2">
+                            <span className="text-xs text-slate-500 truncate hidden sm:block">
                               {cluster.issue_description || cluster.summary}
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          {cluster.repos && cluster.repos.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {cluster.repos.slice(0, 2).map((repo) => (
-                                <span
-                                  key={repo}
-                                  className="inline-flex items-center gap-1 rounded-md border border-purple-900/50 bg-purple-900/20 px-2 py-0.5 text-[10px] font-medium text-purple-300"
-                                >
-                                  <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
-                                    <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z" />
-                                  </svg>
-                                  {repo}
-                                </span>
-                              ))}
-                              {cluster.repos.length > 2 && (
-                                <span className="inline-flex items-center rounded-md border border-purple-900/50 bg-purple-900/20 px-2 py-0.5 text-[10px] font-medium text-purple-300">
-                                  +{cluster.repos.length - 2} more
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-500">—</span>
-                          )}
+                        <td className="hidden sm:table-cell px-4 py-3">
+                          <div className="flex flex-col gap-1 min-w-0">
+                            {cluster.github_repo_url && isValidHttpUrl(cluster.github_repo_url) && (
+                              <a
+                                href={cluster.github_repo_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-xs text-purple-300 hover:text-purple-200 truncate"
+                              >
+                                <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 flex-shrink-0">
+                                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                                </svg>
+                                <span className="truncate">{cluster.github_repo_url.replace('https://github.com/', '')}</span>
+                              </a>
+                            )}
+                            {cluster.sources && cluster.sources.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {cluster.sources.map((source: string) => (
+                                  <span
+                                    key={source}
+                                    className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                      source === 'github'
+                                        ? 'bg-purple-900/30 text-purple-300'
+                                        : source === 'reddit'
+                                        ? 'bg-orange-900/30 text-orange-300'
+                                        : 'bg-slate-700/50 text-slate-300'
+                                    }`}
+                                  >
+                                    {source}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {!cluster.github_repo_url && (!cluster.sources || cluster.sources.length === 0) && (
+                              <span className="text-xs text-slate-500">—</span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border ${cluster.status === 'new' || cluster.status === 'pr_opened' || cluster.status === 'fixing'
+                        <td className="px-2 sm:px-4 py-3">
+                          <span className={`inline-flex items-center gap-1 rounded-full px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-xs font-medium border whitespace-nowrap ${cluster.status === 'new' || cluster.status === 'pr_opened' || cluster.status === 'fixing'
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                             : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
                             }`}>
@@ -367,23 +461,8 @@ export default function ClustersListPage() {
                             {cluster.status.replace('_', ' ')}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-200">{cluster.count}</span>
-                            <span className="text-xs text-slate-500">items</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <Link
-                            href={`/dashboard/clusters/${cluster.id}`}
-                            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-300 transition-all hover:bg-emerald-500 hover:text-black hover:border-emerald-500"
-                          >
-                            View Details
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M5 12h14"></path>
-                              <path d="m12 5 7 7-7 7"></path>
-                            </svg>
-                          </Link>
+                        <td className="px-2 sm:px-4 py-3 text-center">
+                          <span className="text-slate-200 text-sm">{cluster.count}</span>
                         </td>
                       </tr>
                     ))}
