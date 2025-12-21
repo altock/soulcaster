@@ -172,6 +172,11 @@ class UpstashRESTClient:
         # Convert list to dict
         return dict(zip(result[0::2], result[1::2]))
 
+    def hdel(self, key: str, *fields: str) -> int:
+        if not fields:
+            return 0
+        return int(self._cmd("HDEL", key, *fields) or 0)
+
     def zadd(self, key: str, score: float, member: str):
         return self._cmd("ZADD", key, str(score), member)
 
@@ -1627,6 +1632,11 @@ class RedisStore:
         hash_payload = {k: str(v) for k, v in payload.items() if v is not None}
         key = self._cluster_key(project_id, cluster.id)
         self._hset(key, hash_payload)
+
+        # Clear fields that are None in the model but might exist in Redis
+        fields_to_remove = [k for k, v in payload.items() if v is None]
+        if fields_to_remove:
+            self._hdel(key, *fields_to_remove)
         
         # Use ZSET with created_at timestamp as score for sorted retrieval
         score = cluster.created_at.timestamp() if cluster.created_at else 0.0
@@ -2519,6 +2529,14 @@ class RedisStore:
             self.client.hset(key, mapping=mapping)
         else:
             self.client.hset(key, mapping)
+
+    def _hdel(self, key: str, *fields: str):
+        if not fields:
+            return
+        if self.mode == "redis":
+            self.client.hdel(key, *fields)
+        else:
+            self.client.hdel(key, *fields)
 
     def _hgetall(self, key: str) -> Dict[str, str]:
         if self.mode == "redis":
