@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 
 [[package]]
@@ -1209,7 +1209,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
-    { name = "vercel-blob", specifier = ">=0.1.0" },
+    { name = "vercel-blob", specifier = ">=0.4.0" },
 ]
 provides-extras = ["dev"]
 
