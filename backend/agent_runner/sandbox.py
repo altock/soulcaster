@@ -124,7 +124,7 @@ def configure_kilocode():
             "id": "default",
             "provider": "gemini",
             "geminiApiKey": gemini_key,
-            "apiModelId": api_model_id or "gemini-3-pro-preview",
+            "apiModelId": api_model_id or "gemini-3-flash-preview",
             "enableUrlContext": False,
             "enableGrounding": False,
         }
@@ -533,16 +533,15 @@ def main():
         gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         if gemini_api_key:
             try:
-                # Install google-generativeai if not available
+                # Install google-genai if not available
                 try:
-                    import google.generativeai as genai
+                    from google import genai
                 except ImportError:
-                    log("Installing google-generativeai package...")
-                    run_command("pip install -q google-generativeai")
-                    import google.generativeai as genai
+                    log("Installing google-genai package...")
+                    run_command("pip install -q google-genai")
+                    from google import genai
 
-                genai.configure(api_key=gemini_api_key)
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                client = genai.Client(api_key=gemini_api_key)
 
                 prompt = (
                     "You are writing a pull request description for a code change.\\n\\n"
@@ -558,7 +557,10 @@ def main():
                     "Do NOT use ```markdown or ``` wrappers."
                 )
 
-                response = model.generate_content(prompt)
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=prompt
+                )
                 generated_description = response.text.strip()
 
                 # Remove markdown code block wrappers if LLM added them

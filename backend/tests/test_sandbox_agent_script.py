@@ -114,3 +114,92 @@ class TestRestApiCommandConstruction:
         assert "application/vnd.github+json" in cmd
         assert "-d @" in cmd
 
+
+class TestGeminiSdkUsage:
+    """Test Google Gen AI SDK usage in AGENT_SCRIPT."""
+
+    def test_uses_new_google_genai_sdk(self):
+        """Verify AGENT_SCRIPT uses new google-genai SDK, not deprecated google-generativeai."""
+        script_path = Path(__file__).resolve().parents[1] / "agent_runner" / "sandbox.py"
+        agent_script = _extract_agent_script(script_path)
+
+        # Should use new SDK import
+        assert "from google import genai" in agent_script
+        assert "genai.Client" in agent_script
+
+        # Should NOT use deprecated SDK
+        assert "google.generativeai" not in agent_script
+        assert "genai.configure" not in agent_script
+        assert "GenerativeModel" not in agent_script
+
+    def test_uses_gemini_3_flash_model(self):
+        """Verify AGENT_SCRIPT uses gemini-3-flash-preview model."""
+        script_path = Path(__file__).resolve().parents[1] / "agent_runner" / "sandbox.py"
+        agent_script = _extract_agent_script(script_path)
+
+        assert 'model="gemini-3-flash-preview"' in agent_script
+
+    def test_uses_client_models_generate_content(self):
+        """Verify AGENT_SCRIPT uses client.models.generate_content API."""
+        script_path = Path(__file__).resolve().parents[1] / "agent_runner" / "sandbox.py"
+        agent_script = _extract_agent_script(script_path)
+
+        assert "client.models.generate_content" in agent_script
+
+
+class TestMarkdownWrapperStripping:
+    """Test markdown code block wrapper removal."""
+
+    def test_strip_markdown_wrapper(self):
+        """Strip ```markdown wrapper from start."""
+        text = "```markdown\n## Summary\nThis is content\n```"
+
+        if text.startswith("```markdown"):
+            text = text[len("```markdown"):].strip()
+        if text.startswith("```"):
+            text = text[3:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+        assert text == "## Summary\nThis is content"
+
+    def test_strip_plain_code_block_wrapper(self):
+        """Strip plain ``` wrapper."""
+        text = "```\n## Summary\nThis is content\n```"
+
+        if text.startswith("```markdown"):
+            text = text[len("```markdown"):].strip()
+        if text.startswith("```"):
+            text = text[3:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+        assert text == "## Summary\nThis is content"
+
+    def test_no_wrapper_unchanged(self):
+        """Content without wrapper stays unchanged."""
+        text = "## Summary\nThis is content"
+        original = text
+
+        if text.startswith("```markdown"):
+            text = text[len("```markdown"):].strip()
+        if text.startswith("```"):
+            text = text[3:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+        assert text == original
+
+    def test_strip_only_ending_wrapper(self):
+        """Handle case where only ending ``` exists."""
+        text = "## Summary\nThis is content\n```"
+
+        if text.startswith("```markdown"):
+            text = text[len("```markdown"):].strip()
+        if text.startswith("```"):
+            text = text[3:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+        assert text == "## Summary\nThis is content"
+
