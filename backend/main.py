@@ -1655,6 +1655,10 @@ class FeedbackUpdate(BaseModel):
     raw_text: Optional[str] = None
 
 
+class ClusterUpdate(BaseModel):
+    github_repo_url: Optional[str] = None
+
+
 @app.put("/feedback/{item_id}")
 def update_feedback_entry(
     item_id: UUID, payload: FeedbackUpdate, project_id: Optional[str] = Query(None)
@@ -1823,6 +1827,32 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[str] = Query(None))
     response["feedback_items"] = feedback_items
     response["project_id"] = str(pid)
     return response
+
+
+@app.patch("/clusters/{cluster_id}")
+def update_cluster_details(
+    cluster_id: str,
+    payload: ClusterUpdate,
+    project_id: Optional[str] = Query(None),
+):
+    """
+    Update mutable fields of a cluster.
+    """
+    pid = _require_project_id(project_id)
+    pid_str = str(pid)
+
+    cluster = get_cluster(pid_str, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return {"status": "ok", "id": cluster_id, "project_id": pid_str}
+
+    updates["updated_at"] = datetime.now(timezone.utc)
+    updated_cluster = update_cluster(pid_str, cluster_id, **updates)
+    
+    return updated_cluster
 
 
 @app.post("/cluster-jobs")
