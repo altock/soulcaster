@@ -30,6 +30,43 @@ dev-reset-force:
     python scripts/reset_dev_data.py --force
 
 # ============================================================================
+# Docker & Deployment
+# ============================================================================
+
+# Build backend Docker image
+docker-build:
+    @echo "🐳 Building backend Docker image..."
+    @echo "Using unified .env from project root"
+    cd backend && docker build -t soulcaster-backend .
+
+# Run backend in Docker with unified .env (local test)
+docker-run:
+    @echo "🐳 Running backend in Docker on http://localhost:8000"
+    @echo "Loading env vars from .env"
+    docker run -p 8000:8000 --env-file .env soulcaster-backend
+
+# Build and run with Docker Compose (includes Redis + unified .env)
+docker-up:
+    @echo "🐳 Starting backend + Redis with Docker Compose..."
+    @echo "Using unified .env from project root (../.env)"
+    cd backend && docker-compose up --build
+
+# Stop Docker Compose services
+docker-down:
+    @echo "🐳 Stopping Docker Compose services..."
+    cd backend && docker-compose down
+
+# View Docker Compose logs
+docker-logs:
+    @echo "📋 Showing Docker Compose logs..."
+    cd backend && docker-compose logs -f
+
+# Test Docker build without cache (troubleshooting)
+docker-build-clean:
+    @echo "🐳 Building Docker image (no cache)..."
+    cd backend && docker build --no-cache -t soulcaster-backend .
+
+# ============================================================================
 # Production
 # ============================================================================
 
@@ -43,12 +80,15 @@ prod-health:
     echo "🏥 Checking production backend health..."
     curl -sf $PROD_BACKEND_URL/health | jq '.' || echo "❌ Health check failed"
 
-# Deploy backend to Sevalla (manual reminder)
+# Deploy backend (git push triggers auto-deploy)
 prod-deploy-backend:
-    @echo "🚀 Deploying backend to Sevalla..."
-    @echo "⚠️  Manual step required:"
-    @echo "   1. Push to 'main' branch"
-    @echo "   2. Sevalla will auto-deploy"
+    @echo "🚀 Deploying backend..."
+    @echo "⚠️  Ensure you've:"
+    @echo "   1. Committed all changes"
+    @echo "   2. Updated env vars in hosting dashboard"
+    @echo "   3. Pushed to 'main' branch"
+    @echo ""
+    git push origin main
 
 # Deploy dashboard to Vercel
 prod-deploy-dashboard:
@@ -135,10 +175,30 @@ db-studio:
 check-env:
     #!/usr/bin/env bash
     echo "🔍 Checking environment configuration..."
-    echo "Backend .env:"
-    if [ -f backend/.env ]; then echo "✅ Found"; else echo "❌ Missing"; fi
-    echo "Dashboard .env.local:"
-    if [ -f dashboard/.env.local ]; then echo "✅ Found"; else echo "❌ Missing"; fi
+    echo ""
+    echo "Unified .env (recommended):"
+    if [ -f .env ]; then
+        echo "  ✅ Found at project root"
+        echo ""
+        echo "  Required variables:"
+        grep -q "^ENVIRONMENT=" .env && echo "    ✅ ENVIRONMENT" || echo "    ❌ ENVIRONMENT (missing or commented)"
+        grep -q "^UPSTASH_REDIS_REST_URL=" .env && echo "    ✅ UPSTASH_REDIS_REST_URL" || echo "    ❌ UPSTASH_REDIS_REST_URL"
+        grep -q "^UPSTASH_REDIS_REST_TOKEN=" .env && echo "    ✅ UPSTASH_REDIS_REST_TOKEN" || echo "    ❌ UPSTASH_REDIS_REST_TOKEN"
+        grep -q "^UPSTASH_VECTOR_REST_URL=" .env && echo "    ✅ UPSTASH_VECTOR_REST_URL" || echo "    ❌ UPSTASH_VECTOR_REST_URL"
+        grep -q "^UPSTASH_VECTOR_REST_TOKEN=" .env && echo "    ✅ UPSTASH_VECTOR_REST_TOKEN" || echo "    ❌ UPSTASH_VECTOR_REST_TOKEN"
+        grep -q "^GEMINI_API_KEY=" .env && echo "    ✅ GEMINI_API_KEY" || echo "    ❌ GEMINI_API_KEY"
+        grep -q "^GITHUB_ID=" .env && echo "    ✅ GITHUB_ID" || echo "    ❌ GITHUB_ID"
+        grep -q "^GITHUB_SECRET=" .env && echo "    ✅ GITHUB_SECRET" || echo "    ❌ GITHUB_SECRET"
+        grep -q "^NEXTAUTH_SECRET=" .env && echo "    ✅ NEXTAUTH_SECRET" || echo "    ❌ NEXTAUTH_SECRET"
+        grep -q "^DATABASE_URL=" .env && echo "    ✅ DATABASE_URL" || echo "    ❌ DATABASE_URL"
+        grep -q "^E2B_API_KEY=" .env && echo "    ✅ E2B_API_KEY" || echo "    ❌ E2B_API_KEY"
+    else
+        echo "  ❌ Missing - run: cp .env.example .env"
+    fi
+    echo ""
+    echo "Legacy files (should be removed):"
+    if [ -f backend/.env ]; then echo "  ⚠️  backend/.env exists (remove it)"; fi
+    if [ -f dashboard/.env.local ]; then echo "  ⚠️  dashboard/.env.local exists (remove it)"; fi
 
 # Tail local backend logs
 logs-backend-dev:
