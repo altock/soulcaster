@@ -58,7 +58,12 @@ async function ensureDefaultProject(userId: string): Promise<string> {
       method: 'GET',
     });
 
-    const projectExists = checkResponse.ok;
+    // Check response body, not just HTTP status (200 with empty array means no projects)
+    let projectExists = false;
+    if (checkResponse.ok) {
+      const data = await checkResponse.json();
+      projectExists = data?.projects?.length > 0;
+    }
 
     // If project doesn't exist in backend, sync it
     if (!projectExists || result.isNew) {

@@ -807,16 +807,29 @@ def list_projects(user_id: Union[str, UUID] = Query(...)):
 def create_project_endpoint(payload: CreateProjectRequest):
     """
     Create a new Project for the specified user.
-    
+
     Parameters:
         payload (CreateProjectRequest): Request containing `name` for the new project and the `user_id` of its owner.
-    
+
     Returns:
         dict: A mapping with key `"project"` whose value is the created Project instance.
     """
     now = datetime.now(timezone.utc)
     # Use provided project_id if available, otherwise use user_id as project_id
     pid = payload.project_id if payload.project_id else payload.user_id
+
+    # Check if project already exists to prevent silent overwrites
+    existing = get_project(pid)
+    if existing:
+        # If project exists with same user_id, return it (idempotent)
+        if str(existing.user_id) == str(payload.user_id):
+            return {"project": existing}
+        # If project exists with different user_id, raise conflict error
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project {pid} already exists for a different user"
+        )
+
     project = Project(id=pid, user_id=payload.user_id, name=payload.name, created_at=now)
     create_project(project)
     return {"project": project}

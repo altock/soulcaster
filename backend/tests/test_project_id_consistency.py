@@ -176,7 +176,7 @@ def test_quota_check_with_cuid_project_id():
     # Should succeed, not return 404
     assert response.status_code == 200
     data = response.json()
-    assert data["success"] is True
+    assert data["status"] == "ok"
     assert data["project_id"] == project_id
 
 
