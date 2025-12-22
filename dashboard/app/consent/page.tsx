@@ -76,111 +76,20 @@ export default function ConsentPage() {
           <div className="mb-8 space-y-4">
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
               <p className="text-amber-200 text-sm font-medium">
-                Soulcaster is in Research Preview. Before you continue, please understand what
-                data we collect.
+                Soulcaster is in Research Preview. We collect usage data to improve service
+                quality and user experience.
               </p>
             </div>
 
-            <div className="space-y-3">
-              <h2 className="text-lg font-semibold text-white">We collect and may review:</h2>
-              <ul className="space-y-2 text-slate-300">
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  <span>
-                    <strong className="text-white">All feedback, clusters, and summaries</strong>{' '}
-                    you create
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  <span>
-                    <strong className="text-white">Agent-generated code and fixes</strong>{' '}
-                    (currently open-source repos only)
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  <span>
-                    <strong className="text-white">Sandbox execution logs</strong> from E2B
-                    environments
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  <span>
-                    <strong className="text-white">User actions and decisions</strong> (cluster
-                    views, triage choices, agent triggers)
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <polyline points="20 6 9 17 4 12"></polyline>
-                  </svg>
-                  <span>
-                    <strong className="text-white">Errors and performance data</strong> to improve
-                    the service
-                  </span>
-                </li>
-              </ul>
-            </div>
-
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mt-6">
-              <h3 className="text-sm font-semibold text-blue-200 mb-2">Why we collect this:</h3>
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-blue-200 mb-2">What this means:</h3>
               <p className="text-sm text-blue-100/80">
-                This data helps us improve Soulcaster&apos;s AI models, fix generation quality, and
-                overall service. Your feedback directly shapes the product.
+                We collect data about how you use Soulcaster to make the service better.
+                Your participation helps us improve the product.
               </p>
             </div>
 
-            <div className="bg-slate-700/50 border border-white/10 rounded-lg p-4 mt-4">
+            <div className="bg-slate-700/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-slate-200 mb-2">Your privacy matters:</h3>
               <ul className="text-sm text-slate-300 space-y-1">
                 <li>• GitHub tokens are encrypted and never logged</li>

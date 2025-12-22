@@ -8,6 +8,7 @@ export interface IntegrationConfig {
   description: string;
   fields: IntegrationField[];
   enabled?: boolean;
+  comingSoon?: boolean;
 }
 
 export interface IntegrationField {
@@ -164,9 +165,26 @@ export default function IntegrationCard({ config, onSave, onToggle }: Integratio
   };
 
   return (
-    <div className="group relative bg-gradient-to-br from-black/40 via-black/20 to-black/40 border border-white/10 rounded-2xl p-6 backdrop-blur-sm hover:border-emerald-500/30 transition-all duration-300 hover:shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+    <div className={`group relative bg-gradient-to-br from-black/40 via-black/20 to-black/40 border border-white/10 rounded-2xl p-6 backdrop-blur-sm transition-all duration-300 ${
+      config.comingSoon
+        ? 'opacity-60 cursor-not-allowed'
+        : 'hover:border-emerald-500/30 hover:shadow-[0_0_30px_rgba(16,185,129,0.1)]'
+    }`}>
       {/* Subtle glow effect */}
-      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" />
+      <div className={`absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-transparent transition-opacity duration-500 rounded-2xl pointer-events-none ${
+        config.comingSoon ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'
+      }`} />
+
+      {/* Coming Soon Overlay */}
+      {config.comingSoon && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 bg-black/40 backdrop-blur-[1px] rounded-2xl">
+          <div className="text-center">
+            <span className="inline-block px-4 py-2 rounded-full bg-white/10 text-slate-300 border border-white/10 text-sm font-medium">
+              Coming soon
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="relative z-10 flex items-start justify-between mb-6">

@@ -89,28 +89,28 @@ export default function SourceConfig() {
       icon: '⚠️',
       title: 'Sentry',
       description: 'Capture errors and performance issues',
-      enabled: true,
+      enabled: false,
     },
     {
       type: 'splunk' as const,
       icon: '🔍',
       title: 'Splunk',
       description: 'Monitor logs and trigger alerts via webhook',
-      enabled: true,
+      enabled: false,
     },
     {
       type: 'datadog' as const,
       icon: '🐕',
       title: 'Datadog',
       description: 'Receive monitor alerts and metrics',
-      enabled: true,
+      enabled: false,
     },
     {
       type: 'posthog' as const,
       icon: '📊',
       title: 'PostHog',
       description: 'Track product analytics events',
-      enabled: true,
+      enabled: false,
     },
   ];
 

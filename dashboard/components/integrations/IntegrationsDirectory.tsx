@@ -69,6 +69,7 @@ export default function IntegrationsDirectory({
       icon: '🔍',
       description: 'Monitor logs and trigger alerts via webhook',
       enabled: false,
+      comingSoon: true,
       fields: [
         {
           id: 'webhook_token',
@@ -101,6 +102,7 @@ export default function IntegrationsDirectory({
       icon: '🐕',
       description: 'Receive monitor alerts and metrics',
       enabled: false,
+      comingSoon: true,
       fields: [
         {
           id: 'webhook_secret',
@@ -124,6 +126,7 @@ export default function IntegrationsDirectory({
       icon: '📊',
       description: 'Track product analytics events',
       enabled: false,
+      comingSoon: true,
       fields: [
         {
           id: 'event_types',
@@ -140,6 +143,7 @@ export default function IntegrationsDirectory({
       icon: '⚠️',
       description: 'Capture errors and performance issues',
       enabled: false,
+      comingSoon: true,
       fields: [
         {
           id: 'webhook_secret',
