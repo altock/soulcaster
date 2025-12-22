@@ -1054,6 +1054,58 @@ class InMemoryStore:
         """
         return self.projects.get(str(project_id))
 
+    def count_feedback_items_for_user(self, user_id: str) -> int:
+        """
+        Count total feedback items across all projects owned by user.
+
+        Args:
+            user_id: User ID to count feedback items for.
+
+        Returns:
+            int: Total number of feedback items across all user's projects.
+        """
+        user_projects = self.get_projects_for_user(user_id)
+        count = 0
+        for project in user_projects:
+            count += len([f for f in self.feedback_items.values()
+                          if str(f.project_id) == str(project.id)])
+        return count
+
+    def count_successful_jobs_for_user(self, user_id: str) -> int:
+        """
+        Count successful jobs across all projects owned by user.
+
+        Args:
+            user_id: User ID to count successful jobs for.
+
+        Returns:
+            int: Number of jobs with status="success" across all user's projects.
+        """
+        user_projects = self.get_projects_for_user(user_id)
+        project_ids = {str(p.id) for p in user_projects}
+
+        return sum(1 for job in self.agent_jobs.values()
+                   if str(job.project_id) in project_ids
+                   and job.status == "success")
+
+    def get_user_id_for_project(self, project_id: str) -> str:
+        """
+        Resolve user_id from project_id.
+
+        Args:
+            project_id: Project ID to look up.
+
+        Returns:
+            str: User ID who owns the project.
+
+        Raises:
+            ValueError: If project not found.
+        """
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        return str(project.user_id)
+
     # Generic key-value config methods
     def get(self, key: str) -> Optional[str]:
         """
@@ -2715,6 +2767,67 @@ class RedisStore:
 
         return Project(**data)
 
+    def count_feedback_items_for_user(self, user_id: UUID) -> int:
+        """
+        Count total feedback items across all projects owned by user.
+
+        Args:
+            user_id: User ID to count feedback items for.
+
+        Returns:
+            int: Total number of feedback items across all user's projects.
+        """
+        project_ids = self._smembers(self._user_projects_key(user_id))
+        total = 0
+        for pid in project_ids:
+            count_key = self._feedback_created_key(str(pid))
+            total += self._zcard(count_key)
+        return total
+
+    def count_successful_jobs_for_user(self, user_id: UUID) -> int:
+        """
+        Count successful jobs across all projects owned by user.
+
+        Args:
+            user_id: User ID to count successful jobs for.
+
+        Returns:
+            int: Number of jobs with status="success" across all user's projects.
+        """
+        project_ids = self._smembers(self._user_projects_key(user_id))
+        project_id_set = {str(p) for p in project_ids}
+        total = 0
+
+        for key in self._scan_iter("job:*"):
+            # Skip job logs (they have :logs suffix)
+            if key.endswith(":logs"):
+                continue
+            data = self._hgetall(key)
+            if not data:
+                continue
+            if str(data.get("project_id")) in project_id_set:
+                if data.get("status") == "success":
+                    total += 1
+        return total
+
+    def get_user_id_for_project(self, project_id: UUID) -> str:
+        """
+        Resolve user_id from project_id.
+
+        Args:
+            project_id: Project ID to look up.
+
+        Returns:
+            str: User ID who owns the project.
+
+        Raises:
+            ValueError: If project not found.
+        """
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        return str(project.user_id)
+
     # --- client wrappers ---
     def _set(self, key: str, value: str):
         """
@@ -2758,7 +2871,7 @@ class RedisStore:
     def _zrem(self, key: str, member: str):
         """
         Remove a member from the sorted set stored at the given key.
-        
+
         Parameters:
             key (str): Redis key of the sorted set.
             member (str): The member to remove from the sorted set.
@@ -2767,6 +2880,20 @@ class RedisStore:
             self.client.zrem(key, member)
         else:
             self.client.zrem(key, member)
+
+    def _zcard(self, key: str) -> int:
+        """
+        Get the cardinality (number of members) of a sorted set.
+
+        Parameters:
+            key (str): Redis key of the sorted set.
+
+        Returns:
+            int: Number of members in the sorted set (0 if key doesn't exist).
+        """
+        if self.mode == "redis":
+            return self.client.zcard(key) or 0
+        return self.client.zcard(key) or 0
 
     def _sadd(self, key: str, member: str):
         """
@@ -3391,11 +3518,53 @@ def get_projects_for_user(user_id: UUID) -> List[Project]:
 def get_project(project_id: UUID) -> Optional[Project]:
     """
     Retrieve the project with the given ID.
-    
+
     Returns:
         Project if a project with `project_id` exists, `None` otherwise.
     """
     return _STORE.get_project(project_id)
+
+
+def count_feedback_items_for_user(user_id: str) -> int:
+    """
+    Count total feedback items across all projects owned by user.
+
+    Args:
+        user_id: User ID to count feedback items for.
+
+    Returns:
+        int: Total number of feedback items across all user's projects.
+    """
+    return _STORE.count_feedback_items_for_user(user_id)
+
+
+def count_successful_jobs_for_user(user_id: str) -> int:
+    """
+    Count successful jobs across all projects owned by user.
+
+    Args:
+        user_id: User ID to count successful jobs for.
+
+    Returns:
+        int: Number of jobs with status="success" across all user's projects.
+    """
+    return _STORE.count_successful_jobs_for_user(user_id)
+
+
+def get_user_id_for_project(project_id: str) -> str:
+    """
+    Resolve user_id from project_id.
+
+    Args:
+        project_id: Project ID to look up.
+
+    Returns:
+        str: User ID who owns the project.
+
+    Raises:
+        ValueError: If project not found.
+    """
+    return _STORE.get_user_id_for_project(project_id)
 
 
 # Project-scoped config API
