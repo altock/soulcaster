@@ -16,7 +16,7 @@ type TransactionClient = Prisma.TransactionClient;
  * @returns The ID of the user's default project
  */
 async function ensureDefaultProject(userId: string): Promise<string> {
-  return prisma.$transaction(async (tx: TransactionClient) => {
+  const result = await prisma.$transaction(async (tx: TransactionClient) => {
     // Ensure the user row exists (DB might be freshly reset)
     const user = await tx.user.upsert({
       where: { id: userId },
@@ -27,7 +27,7 @@ async function ensureDefaultProject(userId: string): Promise<string> {
 
     // If a default already exists, return it immediately
     if (user?.defaultProjectId) {
-      return user.defaultProjectId;
+      return { projectId: user.defaultProjectId, isNew: false };
     }
 
     // Create a default project for the user and set it
@@ -44,10 +44,52 @@ async function ensureDefaultProject(userId: string): Promise<string> {
       select: { defaultProjectId: true },
     });
 
-    return updatedUser.defaultProjectId ?? project.id;
+    return { projectId: updatedUser.defaultProjectId ?? project.id, isNew: true };
   }, {
     timeout: 15000, // 15 seconds (default is 5s)
   });
+
+  // Always ensure project exists in backend Redis (handles Redis wipes/resets)
+  try {
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+
+    // First check if project exists in backend
+    const checkResponse = await fetch(`${backendUrl}/projects?user_id=${userId}`, {
+      method: 'GET',
+    });
+
+    const projectExists = checkResponse.ok;
+
+    // If project doesn't exist in backend, sync it
+    if (!projectExists || result.isNew) {
+      const response = await fetch(`${backendUrl}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: result.projectId,  // Send the project's ID from Prisma
+          user_id: userId,               // Send the user's ID
+          name: 'Default Project',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to sync project to backend:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText,
+          userId,
+        });
+      } else {
+        console.log('Successfully synced project to backend Redis:', result.projectId);
+      }
+    }
+  } catch (error) {
+    // Don't fail the login if backend sync fails - just log it
+    console.error('Failed to sync project to backend (non-blocking):', error);
+  }
+
+  return result.projectId;
 }
 
 export const authOptions: NextAuthOptions = {

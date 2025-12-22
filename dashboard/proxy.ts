@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public routes that don't require authentication or consent
@@ -15,6 +15,11 @@ export async function middleware(request: NextRequest) {
     '/_next',
     '/favicon.ico',
   ];
+
+  // Allow exact root path (landing page)
+  if (pathname === '/') {
+    return NextResponse.next();
+  }
 
   // Allow public paths
   if (publicPaths.some((path) => pathname.startsWith(path))) {

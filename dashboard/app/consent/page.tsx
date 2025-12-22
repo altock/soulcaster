@@ -6,7 +6,7 @@ import { useState } from 'react';
 import Footer from '@/components/Footer';
 
 export default function ConsentPage() {
-  const { data: session } = useSession();
+  const { data: session, update } = useSession();
   const router = useRouter();
   const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -25,7 +25,7 @@ export default function ConsentPage() {
 
       if (res.ok) {
         // Force session update to refresh consent status in token
-        await fetch('/api/auth/session?update=true');
+        await update();
         router.push('/dashboard');
         router.refresh();
       } else {
@@ -40,8 +40,9 @@ export default function ConsentPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8">
-      <div className="max-w-2xl w-full">
+    <div className="min-h-screen flex flex-col">
+      <div className="flex-1 flex items-center justify-center px-4 sm:px-6 md:px-8 py-8">
+        <div className="max-w-2xl lg:max-w-3xl w-full">
         <div className="bg-slate-900/80 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
           {/* Header */}
           <div className="mb-8">
@@ -74,14 +75,14 @@ export default function ConsentPage() {
 
           {/* Content */}
           <div className="mb-8 space-y-4">
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 sm:p-4 md:p-6">
               <p className="text-amber-200 text-sm font-medium">
                 Soulcaster is in Research Preview. We collect usage data to improve service
                 quality and user experience.
               </p>
             </div>
 
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 sm:p-4 md:p-6">
               <h3 className="text-sm font-semibold text-blue-200 mb-2">What this means:</h3>
               <p className="text-sm text-blue-100/80">
                 We collect data about how you use Soulcaster to make the service better.
@@ -89,7 +90,7 @@ export default function ConsentPage() {
               </p>
             </div>
 
-            <div className="bg-slate-700/50 border border-white/10 rounded-lg p-4">
+            <div className="bg-slate-700/50 border border-white/10 rounded-lg p-3 sm:p-4 md:p-6">
               <h3 className="text-sm font-semibold text-slate-200 mb-2">Your privacy matters:</h3>
               <ul className="text-sm text-slate-300 space-y-1">
                 <li>• GitHub tokens are encrypted and never logged</li>
@@ -124,22 +125,23 @@ export default function ConsentPage() {
               </span>
             </label>
 
-            <div className="flex gap-4">
+            <div className="flex flex-col sm:flex-row gap-4">
               <button
                 type="submit"
                 disabled={!agreed || submitting}
-                className="flex-1 bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-semibold py-3 px-6 rounded-lg hover:from-emerald-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-emerald-500 disabled:hover:to-blue-500"
+                className="w-full sm:flex-1 bg-gradient-to-r from-emerald-500 to-blue-500 text-white font-semibold py-3 px-6 rounded-lg hover:from-emerald-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:from-emerald-500 disabled:hover:to-blue-500"
               >
                 {submitting ? 'Saving...' : 'Continue to Soulcaster'}
               </button>
               <a
                 href="/api/auth/signout"
-                className="px-6 py-3 text-slate-400 hover:text-white border border-slate-600 hover:border-slate-500 rounded-lg transition-colors text-center"
+                className="w-full sm:w-auto px-6 py-3 text-slate-400 hover:text-white border border-slate-600 hover:border-slate-500 rounded-lg transition-colors text-center"
               >
                 Sign Out
               </a>
             </div>
           </form>
+        </div>
         </div>
       </div>
       <Footer />

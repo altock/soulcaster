@@ -321,14 +321,24 @@ async def maybe_start_clustering(project_id: str) -> ClusterJob:
     loop = asyncio.get_running_loop()
     task = loop.create_task(run_clustering_job(project_id, job_id))
     _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    # Debug: log when task completes or fails
+    def task_done_callback(t):
+        _BACKGROUND_TASKS.discard(t)
+        if t.exception():
+            logger.error(f"Clustering task failed with exception: {t.exception()}")
+        else:
+            logger.info(f"Clustering task completed successfully")
+
+    task.add_done_callback(task_done_callback)
+    logger.info(f"Started clustering task for project {project_id}, job {job_id}")
     return job
 
 
 async def run_clustering_job(project_id: str, job_id: str):
     """
     Run the clustering job for a project and update its ClusterJob record.
-    
+
     Executes clustering for all unclustered feedback in the specified project: marks the job as running, processes unclustered items either with a deterministic testing-mode shortcut (no external embedding keys or under pytest) or with the production vector-based pipeline, persists any created IssueCluster records, removes processed items from the unclustered batch, and updates the ClusterJob with final status, finish time, and statistics. On success the job is set to "succeeded" and stats include keys such as `clustered`, `new_clusters`, and `updated_clusters` (or `singletons` in testing mode); on error the job is set to "failed" with the error message. The per-project cluster lock is released regardless of outcome.
     """
     start = datetime.now(timezone.utc)
@@ -336,6 +346,7 @@ async def run_clustering_job(project_id: str, job_id: str):
 
     try:
         items = get_unclustered_feedback(project_id)
+        logger.info(f"Clustering job {job_id}: Found {len(items)} unclustered items")
         if not items:
             update_cluster_job(
                 project_id,
@@ -349,6 +360,7 @@ async def run_clustering_job(project_id: str, job_id: str):
         testing_mode = bool(os.getenv("PYTEST_CURRENT_TEST")) or not bool(
             os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         )
+        logger.info(f"Clustering mode: testing={testing_mode}, has_gemini={bool(os.getenv('GEMINI_API_KEY'))}")
 
         if testing_mode:
             # In tests, avoid external embeddings but still drain unclustered feedback to mimic production semantics.

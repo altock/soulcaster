@@ -17,7 +17,7 @@ export default function Footer() {
           </span>
 
           {/* Right side - Links */}
-          <div className="flex gap-6 text-sm">
+          <div className="flex flex-wrap gap-4 sm:gap-6 text-sm">
             <Link
               href="/privacy"
               className="text-slate-400 hover:text-white transition-colors"
