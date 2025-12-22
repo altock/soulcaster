@@ -370,7 +370,9 @@ def main():
     run_command('git config user.name "Soulcaster Agent"', cwd=cwd)
 
     # 5. Branch
-    branch_name = f"fix/soulcaster-{int(time.time())}"
+    # Generate meaningful branch name from plan title
+    safe_title = re.sub(r'[^a-z0-9]+', '-', plan['title'].lower()).strip('-')
+    branch_name = f"fix/{safe_title[:60]}-{int(time.time())}"
     run_command(f"git checkout -b {branch_name}", cwd=cwd)
 
     # 6. Create empty commit and push to create draft PR early
