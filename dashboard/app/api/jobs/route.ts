@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
     }
     if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
-      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
+      return NextResponse.json({ error: 'Request timed out. Please try again.' }, { status: 503 });
     }
     console.error('Error fetching jobs:', error);
     return NextResponse.json({ error: 'Failed to fetch jobs' }, { status: 500 });

@@ -83,7 +83,7 @@ export default function IntegrationsDirectory({
           label: 'Webhook URL',
           type: 'text',
           placeholder: `${BACKEND_URL}/webhook/splunk`,
-          helpText: 'Use this URL in your Splunk webhook configuration',
+          helpText: 'Copy this URL to your Splunk webhook configuration',
           copyButton: true,
           readOnly: true,
         },

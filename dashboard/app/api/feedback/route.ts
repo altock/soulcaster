@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
     }
     if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
-      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
+      return NextResponse.json({ error: 'Request timed out. Please try again.' }, { status: 503 });
     }
     console.error('Error fetching feedback from backend:', error);
     return NextResponse.json({ error: 'Failed to fetch feedback' }, { status: 500 });
@@ -103,7 +103,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
     }
     if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
-      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
+      return NextResponse.json({ error: 'Request timed out. Please try again.' }, { status: 503 });
     }
     console.error('Error updating feedback:', error);
     return NextResponse.json({ error: 'Failed to update feedback' }, { status: 500 });

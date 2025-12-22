@@ -23,7 +23,7 @@ export async function POST() {
     return NextResponse.json(data, { status: response.status });
   } catch (error: any) {
     if (error?.name === 'AbortError' || error?.message?.includes('timeout')) {
-      return NextResponse.json({ error: 'Backend request timed out' }, { status: 503 });
+      return NextResponse.json({ error: 'Request timed out. Please try again.' }, { status: 503 });
     }
     console.error('Error triggering poll:', error);
     return NextResponse.json(

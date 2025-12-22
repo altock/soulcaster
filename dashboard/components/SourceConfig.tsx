@@ -350,12 +350,11 @@ export default function SourceConfig() {
             <div>
               <h4 className="font-semibold text-slate-200">Reddit Poller</h4>
               <p className="text-sm text-slate-400">
-                Uses public JSON feeds (no OAuth). Poller reads this list from Redis and posts to
-                the backend.
+                Automatically monitors these subreddits for new posts using Reddit&apos;s public feeds.
               </p>
             </div>
             <span className="text-xs font-medium text-slate-500">
-              1 req/sec per subreddit, caches with ETags
+              Checks each subreddit once per second
             </span>
           </div>
 
@@ -400,7 +399,7 @@ export default function SourceConfig() {
                       alert(`Failed to trigger poll: ${data.detail || data.error || 'Unknown error'}`);
                     }
                   } catch (err) {
-                    alert('Failed to connect to backend poller');
+                    alert('Failed to start Reddit polling. Please try again.');
                   }
                 }}
                 className="px-3 py-2 text-sm font-semibold text-emerald-300 border border-emerald-500/30 rounded-lg hover:bg-emerald-500/10 transition-colors"

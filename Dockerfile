@@ -11,13 +11,12 @@ WORKDIR /app
 
 # Copy dependency files from backend/ directory (layer caching optimization)
 COPY backend/pyproject.toml ./
-COPY backend/requirements.txt ./
+COPY backend/uv.lock ./
 
-# Install dependencies using uv (much faster than pip)
-# Create a virtual environment and install dependencies
-RUN uv venv /opt/venv && \
-    . /opt/venv/bin/activate && \
-    uv pip install -r requirements.txt
+# Install dependencies using uv sync (reads from pyproject.toml)
+# Creates a virtual environment and installs all dependencies
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+RUN uv sync --frozen --no-dev
 
 # Production stage
 FROM python:3.11-slim
