@@ -33,11 +33,11 @@ dev-reset-force:
 # Docker (Local Testing Only - Production uses hosting platform)
 # ============================================================================
 
-# Build backend Docker image (local testing)
+# Build backend Docker image from repo root (local testing)
 docker-build:
-    @echo "🐳 Building backend Docker image (local test)..."
+    @echo "🐳 Building backend Docker image (from repo root)..."
     @echo "ℹ️  Production builds happen automatically on hosting platform"
-    cd backend && docker build -t soulcaster-backend .
+    docker build -t soulcaster-backend -f Dockerfile .
 
 # Run backend in Docker with unified .env (local test)
 docker-run:
@@ -64,8 +64,8 @@ docker-logs:
 
 # Test Docker build without cache (troubleshooting)
 docker-build-clean:
-    @echo "🐳 Building Docker image (no cache)..."
-    cd backend && docker build --no-cache -t soulcaster-backend .
+    @echo "🐳 Building Docker image (no cache, from repo root)..."
+    docker build --no-cache -t soulcaster-backend -f Dockerfile .
 
 # ============================================================================
 # Production
