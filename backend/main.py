@@ -82,7 +82,11 @@ from store import (
     get_posthog_config as get_posthog_config_value,
     set_posthog_config as set_posthog_config_value,
     ping,
+    count_feedback_items_for_user,
+    count_successful_jobs_for_user,
+    get_user_id_for_project,
 )
+from limits import check_feedback_item_limit, check_coding_job_limit, FREE_TIER_MAX_ISSUES, FREE_TIER_MAX_JOBS  # noqa: E402
 from planner import generate_plan
 from github_client import fetch_repo_issues, issue_to_feedback_item
 from clustering_runner import maybe_start_clustering, run_clustering_job
@@ -217,6 +221,39 @@ def _require_project_id(project_id: Optional[UUID | str]) -> str:
         raise HTTPException(status_code=400, detail="project_id is required")
     return str(project_id)
 
+
+def _check_feedback_quota(project_id: str, count: int = 1):
+    """
+    Validate that adding feedback items won't exceed user quota.
+
+    Args:
+        project_id: Project ID to check quota for.
+        count: Number of items to add (default 1).
+
+    Raises:
+        HTTPException(429): If quota exceeded.
+        HTTPException(404): If project not found.
+    """
+    try:
+        user_id = get_user_id_for_project(project_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    can_add, current_count = check_feedback_item_limit(user_id, count)
+
+    if not can_add:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": f"Free tier limit of {FREE_TIER_MAX_ISSUES} issues reached",
+                "current_count": current_count,
+                "limit": FREE_TIER_MAX_ISSUES,
+                "requested": count
+            }
+        )
+
+
 _GITHUB_REPO_RE = re.compile(
     r"https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s#?]+)",
     re.IGNORECASE,
@@ -314,6 +351,9 @@ def ingest_reddit(item: FeedbackItem, project_id: Optional[str] = Query(None)):
         existing = get_feedback_by_external_id(pid_str, item.source, item.external_id)
         if existing:
             return {"status": "duplicate", "id": str(existing.id)}
+
+    # Only enforce quota for inserts that will actually create a new item
+    _check_feedback_quota(pid_str, count=1)
     add_feedback_item(item)
     _kickoff_clustering(pid_str)
     return {"status": "ok", "id": str(item.id), "project_id": pid_str}
@@ -418,6 +458,9 @@ async def ingest_sentry(
         if stacktrace:
             body += f"\nStacktrace:\n{stacktrace}"
 
+        # Check quota before creating item
+        _check_feedback_quota(str(pid), count=1)
+
         # Create FeedbackItem
         item = FeedbackItem(
             id=uuid4(),
@@ -503,6 +546,9 @@ def ingest_splunk_webhook(
         if existing:
             return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
 
+    # Check quota before storing
+    _check_feedback_quota(pid, count=1)
+
     # Store and trigger clustering
     add_feedback_item(item)
     _kickoff_clustering(pid)
@@ -585,6 +631,9 @@ async def ingest_datadog_webhook(
         if existing:
             return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
 
+    # Check quota before adding item
+    _check_feedback_quota(pid, count=1)
+
     # 5. Add item and trigger clustering
     add_feedback_item(item)
     _kickoff_clustering(pid)
@@ -632,6 +681,9 @@ def ingest_posthog_webhook(payload: dict, project_id: Optional[str] = Query(None
             existing = get_feedback_by_external_id(pid, item.source, item.external_id)
             if existing:
                 return {"status": "duplicate", "id": str(existing.id), "project_id": pid}
+
+        # Check quota before storing
+        _check_feedback_quota(pid, count=1)
 
         # Store the feedback item
         add_feedback_item(item)
@@ -779,6 +831,7 @@ def ingest_manual(request: ManualIngestRequest, project_id: Optional[str] = Quer
         dict: {"status": "ok", "id": "<created-item-uuid>", "project_id": "<project-uuid>"} containing the created item's ID and the project it was assigned to.
     """
     pid = _require_project_id(project_id)
+    _check_feedback_quota(str(pid), count=1)
     item = FeedbackItem(
         id=uuid4(),
         project_id=pid,
@@ -933,13 +986,42 @@ async def ingest_github_sync(
 
     # Batch write new items (adds to unclustered set for clustering)
     if new_items:
-        write_start = time.monotonic()
-        add_feedback_items_batch(new_items)
-        logger.info(
-            "Wrote %d new feedback items (%.2fs)",
-            len(new_items),
-            time.monotonic() - write_start,
-        )
+        # Check quota with batch size and handle partial batch if needed
+        try:
+            _check_feedback_quota(project_id, count=len(new_items))
+            write_start = time.monotonic()
+            add_feedback_items_batch(new_items)
+            logger.info(
+                "Wrote %d new feedback items (%.2fs)",
+                len(new_items),
+                time.monotonic() - write_start,
+            )
+        except HTTPException as e:
+            if e.status_code == 429:
+                # Partial batch: add what we can
+                try:
+                    user_id = get_user_id_for_project(project_id)
+                    _, current_count = check_feedback_item_limit(user_id, 0)
+                    allowed = max(0, FREE_TIER_MAX_ISSUES - current_count)
+
+                    if allowed > 0:
+                        logger.warning(f"Quota limit: adding {allowed}/{len(new_items)} items")
+                        write_start = time.monotonic()
+                        add_feedback_items_batch(new_items[:allowed])
+                        logger.info(
+                            "Wrote %d new feedback items (partial, quota limited) (%.2fs)",
+                            allowed,
+                            time.monotonic() - write_start,
+                        )
+                        # Update counts to reflect partial write
+                        new_count = allowed
+                        synced_ids = synced_ids[:allowed]
+                    else:
+                        raise
+                except ValueError:
+                    raise HTTPException(status_code=404, detail="Project not found")
+            else:
+                raise
 
     # Update existing items without re-adding to unclustered set (prevents duplicate clusters)
     if items_to_update:
@@ -1545,9 +1627,9 @@ async def trigger_poll(project_id: Optional[str] = Query(None)):
     def direct_ingest(payload: dict):
         """
         Create and store a FeedbackItem from a raw payload and trigger clustering for its project.
-        
+
         Injects the current `project_id` into the payload, constructs and persists a FeedbackItem, and starts the non-blocking clustering process for that project.
-        
+
         Parameters:
             payload (dict): Mapping of fields accepted by FeedbackItem; `project_id` will be set before item creation.
         """
@@ -1555,6 +1637,10 @@ async def trigger_poll(project_id: Optional[str] = Query(None)):
             # Inject project_id so the ingested feedback stays scoped correctly
             payload["project_id"] = pid
             item = FeedbackItem(**payload)
+
+            # Check quota before adding item
+            _check_feedback_quota(str(pid), count=1)
+
             add_feedback_item(item)
             _kickoff_clustering(str(pid))
         except Exception as e:
@@ -2265,6 +2351,24 @@ async def start_cluster_fix(
         # Here we error out to be safe
         raise HTTPException(status_code=500, detail=f"Runner '{runner_name}' not configured")
 
+    # 2.5. Check quota before creating job
+    try:
+        user_id = get_user_id_for_project(pid_str)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    can_create, current_count = check_coding_job_limit(user_id)
+    if not can_create:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": f"Free tier limit of {FREE_TIER_MAX_JOBS} successful coding jobs reached",
+                "current_count": current_count,
+                "limit": FREE_TIER_MAX_JOBS
+            }
+        )
+
     # 3. Create Job
     job = AgentJob(
         id=uuid4(),
@@ -2436,6 +2540,25 @@ def create_job(payload: CreateJobRequest, project_id: Optional[str] = Query(None
     cluster = get_cluster(pid_str, payload.cluster_id)
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found for project")
+
+    # Check quota before creating job
+    try:
+        user_id = get_user_id_for_project(pid_str)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    can_create, current_count = check_coding_job_limit(user_id)
+    if not can_create:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": f"Free tier limit of {FREE_TIER_MAX_JOBS} successful coding jobs reached",
+                "current_count": current_count,
+                "limit": FREE_TIER_MAX_JOBS
+            }
+        )
+
     now = datetime.now(timezone.utc)
     job = AgentJob(
         id=uuid4(),
