@@ -114,7 +114,6 @@ from sentry_client import (
 from datadog_client import datadog_event_to_feedback_item, verify_signature
 # Ensure runners are registered
 import agent_runner.sandbox
-import agent_runner.aws
 
 app = FastAPI(
     title="Soulcaster Ingestion API",
