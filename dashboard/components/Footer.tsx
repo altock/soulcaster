@@ -10,6 +10,12 @@ export default function Footer() {
             © {new Date().getFullYear()} Soulcaster. All rights reserved.
           </div>
 
+          {/* Center - Research Preview Badge */}
+          <span className="inline-flex items-center gap-2 text-xs text-slate-500">
+            <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>
+            Research Preview
+          </span>
+
           {/* Right side - Links */}
           <div className="flex gap-6 text-sm">
             <Link
@@ -35,14 +41,6 @@ export default function Footer() {
               Support
             </a>
           </div>
-        </div>
-
-        {/* Research Preview Badge */}
-        <div className="mt-4 pt-4 border-t border-white/5 text-center">
-          <span className="inline-flex items-center gap-2 text-xs text-slate-500">
-            <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>
-            Research Preview
-          </span>
         </div>
       </div>
     </footer>

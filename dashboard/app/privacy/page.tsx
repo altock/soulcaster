@@ -7,7 +7,7 @@ export default function PrivacyPage() {
       <div className="max-w-3xl mx-auto">
         <div className="bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl rounded-lg p-8">
           <h1 className="text-3xl font-bold text-white mb-6">Privacy Policy</h1>
-          <p className="text-sm text-slate-400 mb-8">Last updated: December 15, 2025</p>
+          <p className="text-sm text-slate-400 mb-8">Last updated: December 22, 2025</p>
 
           <div className="prose prose-invert max-w-none">
             <section className="mb-8">
@@ -15,8 +15,7 @@ export default function PrivacyPage() {
                 <h3 className="text-lg font-semibold text-amber-200 mb-2">Research Preview Notice</h3>
                 <p className="text-amber-100/80 text-sm">
                   Soulcaster is currently in Research Preview. During this phase, we collect
-                  comprehensive usage data to improve our AI models and service quality. This includes
-                  all feedback, clusters, agent-generated code, sandbox logs, and user actions.
+                  usage data to improve service quality and user experience.
                   Participation requires explicit consent.
                 </p>
               </div>
@@ -61,28 +60,8 @@ export default function PrivacyPage() {
 
               <h3 className="text-xl font-semibold text-slate-200 mb-3">3. Usage Data</h3>
               <p className="text-slate-300 mb-4">
-                We collect data about how you use Soulcaster, including:
-              </p>
-              <ul className="list-disc list-inside text-slate-300 mb-4 ml-4 space-y-1">
-                <li>Feedback items you ingest from Reddit, Sentry, or GitHub</li>
-                <li>Clusters you create and fix attempts you trigger</li>
-                <li>Job logs and status (for debugging and improving the service)</li>
-              </ul>
-
-              <h3 className="text-xl font-semibold text-slate-200 mb-3">4. Research Preview Data Collection</h3>
-              <p className="text-slate-300 mb-4">
-                During Research Preview, with your explicit consent, we collect and may manually review:
-              </p>
-              <ul className="list-disc list-inside text-slate-300 mb-4 ml-4 space-y-1">
-                <li>All feedback, clusters, and AI-generated summaries</li>
-                <li>Agent-generated code, diffs, and pull requests (public repositories only)</li>
-                <li>Sandbox execution logs from E2B environments</li>
-                <li>User actions and decisions (cluster views, triage choices, agent triggers)</li>
-                <li>Errors, performance metrics, and LLM prompts/responses</li>
-              </ul>
-              <p className="text-slate-300">
-                This comprehensive data collection helps us improve AI models, fix generation quality,
-                and overall service performance. You can withdraw consent and delete your data at any time.
+                We collect usage data to improve service quality and user experience. You can withdraw
+                consent and delete your data at any time.
               </p>
             </section>
 
@@ -139,14 +118,9 @@ export default function PrivacyPage() {
                 <div>
                   <h3 className="text-lg font-semibold text-slate-200 mb-2">Code Access</h3>
                   <p className="text-slate-300">
-                    <strong>We do not permanently store your repository code.</strong> Code is:
+                    We do not permanently store your repository code. Code is processed temporarily
+                    in isolated environments during fix generation and deleted when complete.
                   </p>
-                  <ul className="list-disc list-inside text-slate-300 mt-2 ml-4 space-y-1">
-                    <li>Read temporarily in E2B sandboxes during fix generation</li>
-                    <li>Processed in isolated, ephemeral environments</li>
-                    <li>Deleted when the job completes</li>
-                    <li>Never used to train machine learning models</li>
-                  </ul>
                 </div>
               </div>
             </section>
