@@ -102,8 +102,8 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Fetch consent status and add to token
-        // Update on every request or when explicitly triggered
-        if (trigger === 'update' || !token.consentedToResearch) {
+        // Update only on first load (undefined) or when explicitly triggered
+        if (trigger === 'update' || token.consentedToResearch === undefined) {
           try {
             const userData = await prisma.user.findUnique({
               where: { id: token.sub },

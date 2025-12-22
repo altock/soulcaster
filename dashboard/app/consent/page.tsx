@@ -190,6 +190,7 @@ export default function ConsentPage() {
                   <a
                     href="/privacy"
                     target="_blank"
+                    rel="noopener noreferrer"
                     className="text-blue-400 hover:underline"
                   >
                     Privacy Policy

@@ -322,10 +322,10 @@ export default function ClustersListPage() {
                 <div className="flex flex-col items-center gap-2">
                   <button
                     onClick={triggerClustering}
-                    disabled={isTriggering}
+                    disabled={isTriggering || jobIsRunning}
                     className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-emerald-300 transition-colors"
                   >
-                    {isTriggering ? (
+                    {isTriggering || jobIsRunning ? (
                       <>
                         <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

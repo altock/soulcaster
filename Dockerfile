@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Copy dependency files from backend/ directory (layer caching optimization)
 COPY backend/pyproject.toml ./
-COPY backend/uv.lock* ./
+COPY backend/uv.lock ./
 
 # Install dependencies using uv sync (reads from pyproject.toml)
 # Creates a virtual environment and installs all dependencies
