@@ -1364,10 +1364,10 @@ class RedisStore:
         return f"user:{user_id}"
 
     @staticmethod
-    def _project_key(project_id: UUID) -> str:
+    def _project_key(project_id: Union[str, UUID]) -> str:
         """
-        Constructs the Redis key used to store or reference a project by its UUID.
-        
+        Constructs the Redis key used to store or reference a project by its ID (UUID or CUID).
+
         Returns:
             str: Redis key in the form "project:{project_id}".
         """
@@ -2748,13 +2748,13 @@ class RedisStore:
                 projects.append(project)
         return projects
 
-    def get_project(self, project_id: UUID) -> Optional[Project]:
+    def get_project(self, project_id: Union[str, UUID]) -> Optional[Project]:
         """
-        Retrieve the stored project for a given project UUID.
-        
+        Retrieve the stored project for a given project ID (UUID or CUID).
+
         Parameters:
-            project_id (UUID): The UUID of the project to fetch.
-        
+            project_id (Union[str, UUID]): The UUID or CUID of the project to fetch.
+
         Returns:
             Project | None: The Project matching `project_id`, or `None` if no project exists. If the stored `created_at` is an ISO string, it is converted to a `datetime` on return.
         """
@@ -2810,12 +2810,12 @@ class RedisStore:
                     total += 1
         return total
 
-    def get_user_id_for_project(self, project_id: UUID) -> str:
+    def get_user_id_for_project(self, project_id: Union[str, UUID]) -> str:
         """
         Resolve user_id from project_id.
 
         Args:
-            project_id: Project ID to look up.
+            project_id: Project ID (UUID or CUID) to look up.
 
         Returns:
             str: User ID who owns the project.
@@ -3515,9 +3515,9 @@ def get_projects_for_user(user_id: UUID) -> List[Project]:
     return _STORE.get_projects_for_user(user_id)
 
 
-def get_project(project_id: UUID) -> Optional[Project]:
+def get_project(project_id: Union[str, UUID]) -> Optional[Project]:
     """
-    Retrieve the project with the given ID.
+    Retrieve the project with the given ID (UUID or CUID).
 
     Returns:
         Project if a project with `project_id` exists, `None` otherwise.

@@ -18,7 +18,7 @@ load_dotenv()
 
 from datetime import datetime, timezone
 import time
-from typing import Dict, List, Optional, Literal, Tuple
+from typing import Dict, List, Optional, Literal, Tuple, Union
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Path, Query, Request, BackgroundTasks
@@ -765,7 +765,8 @@ class CreateUserRequest(BaseModel):
 
 class CreateProjectRequest(BaseModel):
     name: str
-    user_id: UUID
+    user_id: Union[str, UUID]  # Supports both UUID and CUID formats
+    project_id: Optional[Union[str, UUID]] = None  # Optional: use this ID if provided
 
 
 @app.post("/users")
@@ -794,8 +795,8 @@ def create_user(payload: CreateUserRequest):
 
 
 @app.get("/projects")
-def list_projects(user_id: UUID = Query(...)):
-    """List projects for a user."""
+def list_projects(user_id: Union[str, UUID] = Query(...)):
+    """List projects for a user. Accepts both UUID and CUID formats."""
     return {"projects": get_projects_for_user(user_id)}
 
 
@@ -811,7 +812,9 @@ def create_project_endpoint(payload: CreateProjectRequest):
         dict: A mapping with key `"project"` whose value is the created Project instance.
     """
     now = datetime.now(timezone.utc)
-    project = Project(id=uuid4(), user_id=payload.user_id, name=payload.name, created_at=now)
+    # Use provided project_id if available, otherwise use user_id as project_id
+    pid = payload.project_id if payload.project_id else payload.user_id
+    project = Project(id=pid, user_id=payload.user_id, name=payload.name, created_at=now)
     create_project(project)
     return {"project": project}
 
@@ -1794,7 +1797,7 @@ class FeedbackUpdate(BaseModel):
 
 @app.put("/feedback/{item_id}")
 def update_feedback_entry(
-    item_id: UUID, payload: FeedbackUpdate, project_id: Optional[str] = Query(None)
+    item_id: Union[str, UUID], payload: FeedbackUpdate, project_id: Optional[str] = Query(None)
 ):
     """
     Update mutable fields on a FeedbackItem scoped to a project.
@@ -1814,7 +1817,7 @@ def update_feedback_entry(
 
 
 @app.get("/feedback/{item_id}")
-def get_feedback_by_id(item_id: UUID, project_id: Optional[str] = Query(None)):
+def get_feedback_by_id(item_id: Union[str, UUID], project_id: Optional[str] = Query(None)):
     """
     Retrieve a feedback item by its ID within the specified project.
     
@@ -2574,7 +2577,7 @@ def create_job(payload: CreateJobRequest, project_id: Optional[str] = Query(None
 
 
 @app.patch("/jobs/{job_id}")
-def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optional[str] = Query(None)):
+def update_job_status(job_id: Union[str, UUID], payload: UpdateJobRequest, project_id: Optional[str] = Query(None)):
     """
     Update the status and/or logs of an AgentJob scoped to a project.
     
@@ -2610,7 +2613,7 @@ def update_job_status(job_id: UUID, payload: UpdateJobRequest, project_id: Optio
 
 
 @app.get("/jobs/{job_id}")
-def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
+def get_job_details(job_id: Union[str, UUID], project_id: Optional[str] = Query(None)):
     """
     Retrieve the specified AgentJob scoped to the given project.
     
@@ -2633,7 +2636,7 @@ def get_job_details(job_id: UUID, project_id: Optional[str] = Query(None)):
 
 @app.get("/jobs/{job_id}/logs")
 def get_job_log_lines(
-    job_id: UUID,
+    job_id: Union[str, UUID],
     project_id: Optional[str] = Query(None),
 ):
     """
