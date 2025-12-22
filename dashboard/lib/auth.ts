@@ -30,16 +30,6 @@ async function ensureDefaultProject(userId: string): Promise<string> {
       return user.defaultProjectId;
     }
 
-    // Re-check inside the same transaction to avoid racing creations
-    const existingDefault = await tx.user.findUnique({
-      where: { id: userId },
-      select: { defaultProjectId: true },
-    });
-
-    if (existingDefault?.defaultProjectId) {
-      return existingDefault.defaultProjectId;
-    }
-
     // Create a default project for the user and set it
     const project = await tx.project.create({
       data: {
@@ -55,6 +45,8 @@ async function ensureDefaultProject(userId: string): Promise<string> {
     });
 
     return updatedUser.defaultProjectId ?? project.id;
+  }, {
+    timeout: 15000, // 15 seconds (default is 5s)
   });
 }
 

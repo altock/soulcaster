@@ -27,6 +27,7 @@ class AgentJob(BaseModel):
     status: Literal["pending", "running", "success", "failed"]
     logs: Optional[str] = None
     pr_url: Optional[str] = None
+    blob_url: Optional[str] = None  # URL to archived logs in Vercel Blob
     created_at: datetime
     updated_at: datetime
 

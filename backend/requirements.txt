@@ -10,5 +10,5 @@ numpy
 scikit-learn
 packaging
 google-genai
-e2b-code-interpreter
-e2b 
+e2b-code-interpreter==2.4.1
+vercel-blob==0.4.2

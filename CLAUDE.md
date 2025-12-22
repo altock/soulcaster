@@ -24,33 +24,46 @@ Three components sharing Upstash Redis:
 
 ## Development Commands
 
+**Quick Start:**
+```bash
+just                # Show all available commands
+just install        # Install all dependencies
+just dev-backend    # Run backend (localhost:8000)
+just dev-dashboard  # Run dashboard (localhost:3000)
+```
+
 ### Backend (from project root)
 
 ```bash
-pip install -r backend/requirements.txt
+# Modern (recommended)
+just dev-backend                  # Run with uv
+just test-backend                 # Run tests
+just install-backend              # Install dependencies
 
-uvicorn backend.main:app --reload --port 8000   # API server
-python -m backend.reddit_poller                  # Reddit poller (separate process)
-
-pytest backend/tests -v                          # All tests
-pytest backend/tests/test_clusters.py -v         # Single test file
-pytest backend/tests/test_clusters.py::test_list_clusters -v  # Specific test
+# Manual
+cd backend && uv sync             # Install dependencies
+cd backend && uv run uvicorn main:app --reload --port 8000
+cd backend && uv run pytest -v    # All tests
 ```
 
 ### Dashboard (from `/dashboard`)
 
 ```bash
-npm install
-npx prisma migrate dev        # Setup/migrate database
-npx prisma generate           # Regenerate Prisma client
+# Modern (recommended)
+just dev-dashboard                # Run dev server
+just test-dashboard               # Run tests
+just install-dashboard            # Install dependencies
 
-npm run dev                   # Development server (port 3000)
-npm run build                 # Production build (runs prisma generate first)
-npm run lint                  # ESLint
-npm run format                # Prettier
-npm run type-check            # TypeScript check
-npm test                      # Jest tests
-npm run test:watch            # Jest watch mode
+# Manual
+npm install
+npx prisma migrate dev            # Setup/migrate database
+npx prisma generate               # Regenerate Prisma client
+npm run dev                       # Development server (port 3000)
+npm run build                     # Production build
+npm run lint                      # ESLint
+npm run format                    # Prettier
+npm run type-check                # TypeScript check
+npm test                          # Jest tests
 ```
 
 ## Key Files
@@ -91,31 +104,37 @@ job:{id}             - Hash: id, cluster_id, status, logs, created_at
 
 ## Environment Variables
 
-**Backend** (`.env` in project root):
-```bash
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-GEMINI_API_KEY=
-GITHUB_ID=                    # GitHub OAuth client ID
-GITHUB_SECRET=                # GitHub OAuth client secret
-E2B_API_KEY=                  # For E2B sandbox provisioning
-KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
-```
+**Unified Configuration**: Use a single `.env` file in the project root for both backend AND dashboard.
 
-**Dashboard** (`.env.local` in `/dashboard`):
 ```bash
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-UPSTASH_VECTOR_REST_URL=
-UPSTASH_VECTOR_REST_TOKEN=
-GEMINI_API_KEY=
-GITHUB_ID=
-GITHUB_SECRET=
+# Copy .env.example to .env and fill in your values
+cp .env.example .env
+
+# Required variables (see .env.example for full documentation):
+ENVIRONMENT=development                              # development | production
+UPSTASH_REDIS_REST_URL=https://your-dev-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-dev-redis-token
+UPSTASH_VECTOR_REST_URL=https://your-dev-vector.upstash.io
+UPSTASH_VECTOR_REST_TOKEN=your-dev-vector-token
+GEMINI_API_KEY=your-gemini-api-key
+GITHUB_ID=your-github-oauth-client-id              # GitHub OAuth for dashboard
+GITHUB_SECRET=your-github-oauth-client-secret
+GITHUB_TOKEN=ghp_your-personal-access-token        # For agent operations
+E2B_API_KEY=your-e2b-api-key                       # E2B sandbox provisioning
+KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
+BLOB_READ_WRITE_TOKEN=your-vercel-blob-token       # Job log archival
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=              # Generate: openssl rand -base64 32
+NEXTAUTH_SECRET=your-nextauth-secret               # Generate: openssl rand -base64 32
 DATABASE_URL=postgresql://user:password@localhost:5432/soulcaster
 BACKEND_URL=http://localhost:8000
 ```
+
+**Why unified .env?**
+- Single source of truth for all credentials
+- No duplicate configuration between backend/dashboard
+- Next.js automatically reads from parent `.env` files
+- Easier dev vs prod environment management
+- Safety checks in `scripts/reset_dev_data.py` respect `ENVIRONMENT` variable
 
 ## API Endpoints
 

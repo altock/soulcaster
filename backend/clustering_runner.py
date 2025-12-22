@@ -198,7 +198,11 @@ def _run_vector_clustering(
     # Prepare texts and generate embeddings
     issues_payload = _prepare_issue_payloads(items)
     texts = clustering.prepare_issue_texts(issues_payload)
-    embeddings = clustering.embed_texts_gemini(texts)
+    try:
+        embeddings = clustering.embed_texts_gemini(texts)
+    except Exception as e:
+        logger.error("Failed to generate embeddings: %s", e)
+        raise RuntimeError(f"Embedding generation failed: {e}") from e
 
     new_clusters: List[IssueCluster] = []
     updated_cluster_ids: set = set()

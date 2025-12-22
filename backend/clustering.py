@@ -31,6 +31,9 @@ DEFAULT_SIM_THRESHOLD: float = float(os.getenv("CLUSTERING_SIM_THRESHOLD", "0.72
 DEFAULT_MIN_CLUSTER_SIZE: int = int(os.getenv("CLUSTERING_MIN_CLUSTER_SIZE", "2"))
 DEFAULT_TRUNCATE_BODY_CHARS: int = int(os.getenv("CLUSTERING_TRUNCATE_BODY_CHARS", "1500"))
 
+# Gemini API batch limit for embedding requests
+GEMINI_EMBED_BATCH_SIZE: int = 100
+
 
 # ---------------------------------------------------------------------------
 # Text preparation
@@ -114,12 +117,19 @@ def embed_texts_gemini(
         return np.empty((0, output_dimensionality), dtype=np.float32)
 
     client = _get_genai_client()
-    resp = client.models.embed_content(
-        model=model,
-        contents=list(texts),
-        config={"output_dimensionality": output_dimensionality},
-    )
-    embeddings = np.asarray([e.values for e in resp.embeddings], dtype=np.float32)
+    all_embeddings = []
+
+    # Process in batches to avoid Gemini API limit (100 items per batch)
+    for i in range(0, len(texts), GEMINI_EMBED_BATCH_SIZE):
+        batch = list(texts[i : i + GEMINI_EMBED_BATCH_SIZE])
+        resp = client.models.embed_content(
+            model=model,
+            contents=batch,
+            config={"output_dimensionality": output_dimensionality},
+        )
+        all_embeddings.extend([e.values for e in resp.embeddings])
+
+    embeddings = np.asarray(all_embeddings, dtype=np.float32)
 
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
