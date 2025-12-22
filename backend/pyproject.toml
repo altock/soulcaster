@@ -2,9 +2,7 @@
 name = "soulcaster-backend"
 version = "0.1.0"
 description = "Soulcaster backend API - Feedback triage and automated fix generation"
-readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
 authors = [
     { name = "Soulcaster Team" }
 ]
