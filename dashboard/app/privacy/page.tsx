@@ -1,29 +1,40 @@
 import Link from 'next/link';
+import Footer from '@/components/Footer';
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-3xl mx-auto">
-        <div className="bg-white shadow rounded-lg p-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-6">Privacy Policy</h1>
-          <p className="text-sm text-gray-500 mb-8">Last updated: December 15, 2025</p>
+        <div className="bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl rounded-lg p-8">
+          <h1 className="text-3xl font-bold text-white mb-6">Privacy Policy</h1>
+          <p className="text-sm text-slate-400 mb-8">Last updated: December 15, 2025</p>
 
-          <div className="prose prose-blue max-w-none">
+          <div className="prose prose-invert max-w-none">
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Introduction</h2>
-              <p className="text-gray-700 mb-4">
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 mb-6">
+                <h3 className="text-lg font-semibold text-amber-200 mb-2">Research Preview Notice</h3>
+                <p className="text-amber-100/80 text-sm">
+                  Soulcaster is currently in Research Preview. During this phase, we collect
+                  comprehensive usage data to improve our AI models and service quality. This includes
+                  all feedback, clusters, agent-generated code, sandbox logs, and user actions.
+                  Participation requires explicit consent.
+                </p>
+              </div>
+
+              <h2 className="text-2xl font-semibold text-white mb-4">Introduction</h2>
+              <p className="text-slate-300 mb-4">
                 Soulcaster is an automated feedback triage and code fix generation system currently in
-                beta. This Privacy Policy explains how we collect, use, and protect your information
-                when you use our service.
+                Research Preview. This Privacy Policy explains how we collect, use, and protect your
+                information when you use our service.
               </p>
-              <p className="text-gray-700">
+              <p className="text-slate-300">
                 By using Soulcaster, you agree to the collection and use of information in accordance
                 with this policy.
               </p>
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">
+              <h2 className="text-2xl font-semibold text-white mb-4">
                 Information We Collect
               </h2>
 
@@ -57,10 +68,26 @@ export default function PrivacyPage() {
                 <li>Clusters you create and fix attempts you trigger</li>
                 <li>Job logs and status (for debugging and improving the service)</li>
               </ul>
+
+              <h3 className="text-xl font-semibold text-gray-800 mb-3">4. Research Preview Data Collection</h3>
+              <p className="text-gray-700 mb-4">
+                During Research Preview, with your explicit consent, we collect and may manually review:
+              </p>
+              <ul className="list-disc list-inside text-gray-700 mb-4 ml-4 space-y-1">
+                <li>All feedback, clusters, and AI-generated summaries</li>
+                <li>Agent-generated code, diffs, and pull requests (public repositories only)</li>
+                <li>Sandbox execution logs from E2B environments</li>
+                <li>User actions and decisions (cluster views, triage choices, agent triggers)</li>
+                <li>Errors, performance metrics, and LLM prompts/responses</li>
+              </ul>
+              <p className="text-gray-700">
+                This comprehensive data collection helps us improve AI models, fix generation quality,
+                and overall service performance. You can withdraw consent and delete your data at any time.
+              </p>
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">How We Use Your Information</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">How We Use Your Information</h2>
               <p className="text-gray-700 mb-3">We use your information to:</p>
               <ul className="list-disc list-inside text-gray-700 mb-4 ml-4 space-y-2">
                 <li>
@@ -82,7 +109,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Data Storage and Security</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Data Storage and Security</h2>
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-800 mb-2">Token Storage</h3>
@@ -125,7 +152,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Third-Party Services</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Third-Party Services</h2>
               <p className="text-gray-700 mb-3">
                 Soulcaster integrates with the following third-party services:
               </p>
@@ -150,7 +177,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Your Rights and Choices</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Your Rights and Choices</h2>
               <div className="space-y-3">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-800 mb-2">Revoke Access</h3>
@@ -190,7 +217,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Beta Notice</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Beta Notice</h2>
               <p className="text-gray-700 mb-3">
                 <strong>Soulcaster is currently in beta.</strong> This means:
               </p>
@@ -206,7 +233,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Future Changes</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Future Changes</h2>
               <p className="text-gray-700 mb-3">
                 <strong>GitHub App Support Coming Soon:</strong> We plan to offer GitHub App
                 installation as an alternative to OAuth. This will allow:
@@ -223,7 +250,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="mb-8">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Contact Us</h2>
+              <h2 className="text-2xl font-semibold text-white mb-4">Contact Us</h2>
               <p className="text-gray-700">
                 If you have questions or concerns about this Privacy Policy or how we handle your
                 data, please contact us at:
@@ -268,6 +295,7 @@ export default function PrivacyPage() {
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

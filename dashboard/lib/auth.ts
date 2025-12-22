@@ -67,10 +67,12 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, account, user }) {
+    async jwt({ token, account, user, trigger }) {
       // Persist the OAuth access_token to the token right after signin
       if (account) {
         token.accessToken = account.access_token;
+        // Mark as new login for consent check
+        token.isNewLogin = true;
       }
 
       // Ensure user has a default project and add projectId to token
@@ -98,6 +100,26 @@ export const authOptions: NextAuthOptions = {
             await new Promise((resolve) => setTimeout(resolve, backoffMs));
           }
         }
+
+        // Fetch consent status and add to token
+        // Update on every request or when explicitly triggered
+        if (trigger === 'update' || !token.consentedToResearch) {
+          try {
+            const userData = await prisma.user.findUnique({
+              where: { id: token.sub },
+              select: { consentedToResearch: true },
+            });
+            token.consentedToResearch = userData?.consentedToResearch ?? false;
+          } catch (error) {
+            console.error('Failed to fetch consent status', error);
+            token.consentedToResearch = false;
+          }
+        }
+
+        // Clear isNewLogin flag after first check (to avoid persistent redirect)
+        if (token.isNewLogin && token.consentedToResearch) {
+          delete token.isNewLogin;
+        }
       }
 
       return token;
@@ -112,6 +134,9 @@ export const authOptions: NextAuthOptions = {
       }
       if (session.user && token.sub) {
         session.user.id = token.sub;
+      }
+      if (typeof token.consentedToResearch === 'boolean') {
+        session.consentedToResearch = token.consentedToResearch;
       }
       return session;
     },
