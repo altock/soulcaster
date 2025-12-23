@@ -4,21 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Soulcaster** is a feedback triage and automated fix generation system. It ingests bug reports from Reddit, Sentry, and GitHub issues, clusters similar feedback using embeddings, and triggers a coding agent to generate fixes and open PRs.
+**Soulcaster** is a feedback triage and automated fix generation system. It ingests bug reports from Reddit, Sentry, GitHub issues, Splunk, DataDog, and PostHog, clusters similar feedback using embeddings, and triggers a coding agent to generate fixes and open PRs.
 
-**Flow**: Reddit/Sentry/GitHub → Clustered Issues → Dashboard Triage → Coding Agent → GitHub PR
+**Flow**: Feedback Sources → Clustered Issues → Dashboard Triage → Coding Agent → GitHub PR
 
 ## Architecture
 
-Three components sharing Upstash Redis:
+Two main components sharing Upstash Redis:
 
 1. **Backend** (`/backend`) - FastAPI service for ingestion, clustering, and agent orchestration
-2. **Dashboard** (`/dashboard`) - Next.js 16 (App Router) web UI for triage and management
+2. **Dashboard** (`/dashboard`) - Next.js 15 (App Router) web UI for triage and management
 
 ### Tech Stack
 
 - **Backend**: FastAPI, Pydantic, redis-py, Upstash REST, Gemini embeddings, E2B sandboxes
-- **Dashboard**: Next.js 16, TypeScript, Tailwind, NextAuth (GitHub OAuth), Prisma (PostgreSQL)
+- **Dashboard**: Next.js, TypeScript, Tailwind, NextAuth (GitHub OAuth), Prisma (PostgreSQL)
 - **Storage**: Upstash Redis + Upstash Vector for embeddings
 - **LLM**: Gemini (`gemini-embedding-001` for embeddings, `gemini-2.5-flash` for summaries)
 
@@ -32,123 +32,136 @@ just dev-backend    # Run backend (localhost:8000)
 just dev-dashboard  # Run dashboard (localhost:3000)
 ```
 
-### Backend (from project root)
+### Backend
 
 ```bash
-# Modern (recommended)
 just dev-backend                  # Run with uv
-just test-backend                 # Run tests
+just test-backend                 # Run all tests
 just install-backend              # Install dependencies
 
-# Manual
-cd backend && uv sync             # Install dependencies
+# Run specific test file
+cd backend && uv run pytest tests/test_store.py -v
+
+# Run single test by name
+cd backend && uv run pytest -v -k "test_add_feedback_item"
+
+# Manual commands
+cd backend && uv sync
 cd backend && uv run uvicorn main:app --reload --port 8000
-cd backend && uv run pytest -v    # All tests
 ```
 
-### Dashboard (from `/dashboard`)
+### Dashboard
 
 ```bash
-# Modern (recommended)
 just dev-dashboard                # Run dev server
-just test-dashboard               # Run tests
+just test-dashboard               # Run all tests
 just install-dashboard            # Install dependencies
 
-# Manual
-npm install
-npx prisma migrate dev            # Setup/migrate database
-npx prisma generate               # Regenerate Prisma client
-npm run dev                       # Development server (port 3000)
-npm run build                     # Production build
-npm run lint                      # ESLint
-npm run format                    # Prettier
-npm run type-check                # TypeScript check
-npm test                          # Jest tests
+# Manual commands
+cd dashboard && npm install
+cd dashboard && npx prisma migrate dev    # Setup/migrate database
+cd dashboard && npx prisma generate       # Regenerate Prisma client
+cd dashboard && npm run dev
+cd dashboard && npm run build
+cd dashboard && npm run lint
+cd dashboard && npm run type-check
 ```
 
 ## Key Files
 
 **Backend**:
-- `backend/main.py` - FastAPI routes (`/ingest/*`, `/clusters`, `/feedback`, `/jobs`, `/cluster-jobs`)
+- `backend/main.py` - FastAPI routes (all `/ingest/*`, `/clusters`, `/feedback`, `/jobs`, `/cluster-jobs`)
 - `backend/store.py` - Redis/in-memory storage abstraction
-- `backend/models.py` - Pydantic models (`FeedbackItem`, `IssueCluster`, `AgentJob`)
+- `backend/models.py` - Pydantic models (`FeedbackItem`, `IssueCluster`, `AgentJob`, `ClusterJob`)
+- `backend/clustering_runner.py` - Async clustering job runner with Redis locks
+- `backend/clustering.py` - Embedding generation and similarity calculations
+- `backend/vector_store.py` - Upstash Vector wrapper for ANN search
+- `backend/limits.py` - Free tier quota limits (1500 issues, 20 jobs per user)
 
 **Dashboard**:
-- `dashboard/lib/vector.ts` - Vector DB-based clustering (recommended)
-- `dashboard/lib/clustering.ts` - Legacy centroid-based clustering
-- `dashboard/lib/redis.ts` - Upstash Redis client helpers
-- `dashboard/app/api/clusters/run-vector/route.ts` - Vector clustering endpoint
+- `dashboard/lib/auth.ts` - NextAuth configuration
+- `dashboard/lib/github.ts` - GitHub API client
+- `dashboard/app/api/clusters/*/route.ts` - Cluster management endpoints
 - `dashboard/prisma/schema.prisma` - Database schema (auth, projects)
 
 ## Redis Data Model
 
 ```
-feedback:{id}        - Hash: id, source, title, body, metadata, created_at, clustered
-feedback:created     - Sorted set: all feedback IDs by timestamp
-feedback:unclustered - Set: IDs pending clustering
-cluster:{id}         - Hash: id, title, summary, status, centroid, issue_title
-cluster:items:{id}   - Set: feedback IDs in cluster
-clusters:all         - Set: all cluster IDs
-job:{id}             - Hash: id, cluster_id, status, logs, created_at
+feedback:{id}              - Hash: feedback item data
+feedback:created:{proj}    - Sorted set: feedback IDs by timestamp for project
+feedback:unclustered:{proj}- Set: IDs pending clustering
+cluster:{id}               - Hash: cluster data
+cluster:items:{id}         - Set: feedback IDs in cluster
+clusters:all:{proj}        - Set: all cluster IDs for project
+job:{id}                   - Hash: agent job data
+cluster_job:{id}           - Hash: clustering job data
 ```
 
-## Clustering Algorithm (Vector-Based)
+## Clustering Algorithm
 
-1. Generate embedding via Gemini API for `title + body`
-2. Query Upstash Vector for similar feedback items (top-K ANN search)
-3. If top match ≥ 0.72 threshold AND already clustered → join that cluster
-4. If top matches ≥ 0.72 but unclustered → create new cluster with all similar items
-5. If no matches above threshold → create new single-item cluster
-6. Store embedding in Vector DB with cluster assignment metadata
-7. Generate LLM summary for new/changed clusters
+Uses in-memory batch clustering to avoid Upstash Vector eventual consistency issues:
+
+1. Generate embeddings via Gemini API for `title + body`
+2. Query Upstash Vector for existing similar items (read-only)
+3. In-memory clustering: compare batch items against each other + existing DB items
+4. If similarity ≥ 0.72 AND existing cluster → join that cluster
+5. If similar batch items → group into new cluster
+6. Batch upsert all items to Vector DB at once (single write)
+7. Persist clusters to Redis
+
+## Free Tier Limits
+
+- **1500 max feedback items** per user (across all projects)
+- **20 successful coding jobs** per user
+- Enforced in `backend/limits.py`, checked at ingestion and job creation
 
 ## Environment Variables
 
-**Unified Configuration**: Use a single `.env` file in the project root for both backend AND dashboard.
+Use a single `.env` file in the project root:
 
 ```bash
-# Copy .env.example to .env and fill in your values
 cp .env.example .env
 
-# Required variables (see .env.example for full documentation):
-ENVIRONMENT=development                              # development | production
-UPSTASH_REDIS_REST_URL=https://your-dev-redis.upstash.io
-UPSTASH_REDIS_REST_TOKEN=your-dev-redis-token
-UPSTASH_VECTOR_REST_URL=https://your-dev-vector.upstash.io
-UPSTASH_VECTOR_REST_TOKEN=your-dev-vector-token
-GEMINI_API_KEY=your-gemini-api-key
-GITHUB_ID=your-github-oauth-client-id              # GitHub OAuth for dashboard
-GITHUB_SECRET=your-github-oauth-client-secret
-GITHUB_TOKEN=ghp_your-personal-access-token        # For agent operations
-E2B_API_KEY=your-e2b-api-key                       # E2B sandbox provisioning
+# Required:
+ENVIRONMENT=development
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+UPSTASH_VECTOR_REST_URL=
+UPSTASH_VECTOR_REST_TOKEN=
+GEMINI_API_KEY=
+GITHUB_ID=                    # GitHub OAuth client ID
+GITHUB_SECRET=                # GitHub OAuth client secret
+E2B_API_KEY=
 KILOCODE_TEMPLATE_NAME=kilo-sandbox-v-0-1-dev
-BLOB_READ_WRITE_TOKEN=your-vercel-blob-token       # Job log archival
+BLOB_READ_WRITE_TOKEN=
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=your-nextauth-secret               # Generate: openssl rand -base64 32
-DATABASE_URL=postgresql://user:password@localhost:5432/soulcaster
+NEXTAUTH_SECRET=              # Generate: openssl rand -base64 32
+DATABASE_URL=postgresql://...
 BACKEND_URL=http://localhost:8000
 ```
-
-**Why unified .env?**
-- Single source of truth for all credentials
-- No duplicate configuration between backend/dashboard
-- Next.js automatically reads from parent `.env` files
-- Easier dev vs prod environment management
-- Safety checks in `scripts/reset_dev_data.py` respect `ENVIRONMENT` variable
 
 ## API Endpoints
 
 **Backend** (`:8000`):
-- `POST /ingest/reddit|sentry|manual` - Ingest feedback
-- `GET /feedback` - List feedback (`?source=`, `?limit=`, `?offset=`)
+- `POST /ingest/reddit` - Reddit posts
+- `POST /ingest/sentry` - Sentry webhooks
+- `POST /ingest/splunk/webhook` - Splunk alerts
+- `POST /ingest/datadog/webhook` - DataDog alerts
+- `POST /ingest/posthog/webhook` - PostHog events
+- `POST /ingest/manual` - Manual feedback
+- `POST /ingest/github/sync` - Sync GitHub issues for project
+- `GET /feedback` - List feedback (`?project_id=`, `?source=`, `?limit=`)
 - `GET /clusters`, `GET /clusters/{id}` - List/detail clusters
-- `POST /clusters/{id}/start_fix` - Mark cluster as "fixing"
+- `POST /clusters/{id}/start_fix` - Trigger fix generation
 - `POST /cluster-jobs` - Trigger backend clustering job
-- `POST /jobs`, `PATCH /jobs/{id}` - Manage agent jobs
+- `GET /cluster-jobs/{id}` - Get clustering job status
+- `POST /jobs`, `GET /jobs/{id}`, `PATCH /jobs/{id}` - Agent job management
 
 **Dashboard** (`:3000/api`):
-- `POST /api/clusters/run-vector` - Run vector-based clustering
 - `POST /api/clusters/cleanup` - Merge duplicate clusters
+- `GET /api/clusters/jobs` - List clustering jobs
+- `POST /api/ingest/github/sync` - Trigger GitHub sync
+- `GET /api/feedback` - Proxy to backend
 
 ## GitHub Authentication
 
@@ -156,3 +169,12 @@ BACKEND_URL=http://localhost:8000
 - Access token stored in encrypted NextAuth session
 - PRs created from user's account (not a bot)
 - Scopes: `repo`, `read:user`
+
+## Testing Data Reset
+
+```bash
+just dev-reset        # Reset dev data (with confirmation)
+just dev-reset-force  # Reset without confirmation
+```
+
+Only works when `ENVIRONMENT=development` to prevent accidental prod data loss.

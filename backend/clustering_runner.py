@@ -215,6 +215,7 @@ def _run_vector_clustering(
     for i, item in enumerate(items):
         similar = vector_store.find_similar(
             embedding=embeddings_list[i],
+            project_id=project_id,
             top_k=20,
             min_score=VECTOR_CLUSTERING_THRESHOLD,
             exclude_ids=[str(item.id)],
@@ -320,7 +321,7 @@ def _run_vector_clustering(
         })
 
     if vector_upserts:
-        vector_store.upsert_feedback_batch(vector_upserts)
+        vector_store.upsert_feedback_batch(vector_upserts, project_id=project_id)
 
     logger.info(f"Clustered {len(items)} items into {len(cluster_to_items)} clusters ({len(new_clusters)} new, {len(updated_cluster_ids)} updated)")
 

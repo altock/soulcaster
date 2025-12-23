@@ -92,7 +92,7 @@ async def test_run_clustering_job_writes_clusters(monkeypatch):
     call_count = [0]
     first_cluster_id = [None]
 
-    def mock_find_similar(embedding, top_k=20, min_score=0.0, exclude_ids=None):
+    def mock_find_similar(embedding, project_id, top_k=20, min_score=0.0, exclude_ids=None):
         from vector_store import SimilarFeedback, FeedbackVectorMetadata
         call_count[0] += 1
         if call_count[0] == 1:
@@ -109,7 +109,7 @@ async def test_run_clustering_job_writes_clusters(monkeypatch):
                 ),
             )]
 
-    def mock_upsert(feedback_id, embedding, metadata):
+    def mock_upsert(feedback_id, embedding, metadata, project_id):
         if first_cluster_id[0] is None:
             first_cluster_id[0] = metadata.cluster_id
 
@@ -231,7 +231,7 @@ async def test_vector_clustering_batch_upsert_format(monkeypatch):
 
     # Track upsert_feedback_batch calls
     batch_upsert_calls = []
-    def track_batch_upsert(items):
+    def track_batch_upsert(items, project_id):
         """Track that upsert_feedback_batch is called with correct format."""
         batch_upsert_calls.append(items)
     mock_vector_store.upsert_feedback_batch = track_batch_upsert
