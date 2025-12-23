@@ -77,11 +77,11 @@ def redis_scan_keys(url: str, token: str, pattern: str) -> list:
     return keys
 
 
-def delete_project_redis(project_id: str) -> dict:
-    """Delete all Redis keys for a project."""
+def get_project_redis_keys(project_id: str) -> dict:
+    """Get all Redis keys for a project (dry run)."""
     url, token = get_redis_client()
     if not url:
-        return {"success": False, "error": "Redis credentials not found"}
+        return {"success": False, "error": "Redis credentials not found", "keys": []}
 
     patterns = [
         f"feedback:{project_id}:*",
@@ -112,29 +112,59 @@ def delete_project_redis(project_id: str) -> dict:
             if result.get("result") == 1:
                 all_keys.append(pattern)
 
-    if all_keys:
-        batch_size = 100
-        deleted = 0
-        for i in range(0, len(all_keys), batch_size):
-            batch = all_keys[i:i + batch_size]
-            redis_command(url, token, "DEL", *batch)
-            deleted += len(batch)
-        return {"success": True, "deleted_keys": deleted}
+    return {"success": True, "keys": all_keys}
 
-    return {"success": True, "deleted_keys": 0}
+
+def delete_redis_keys(keys: list) -> dict:
+    """Delete specific Redis keys."""
+    url, token = get_redis_client()
+    if not url or not keys:
+        return {"success": True, "deleted_keys": 0}
+
+    batch_size = 100
+    deleted = 0
+    for i in range(0, len(keys), batch_size):
+        batch = keys[i:i + batch_size]
+        redis_command(url, token, "DEL", *batch)
+        deleted += len(batch)
+    return {"success": True, "deleted_keys": deleted}
 
 
 # =============================================================================
 # Vector DB helpers
 # =============================================================================
 
-def delete_project_vector(project_id: str) -> dict:
+def check_vector_namespace(project_id: str) -> dict:
+    """Check if vector namespace exists and get info."""
+    url = os.getenv("UPSTASH_VECTOR_REST_URL")
+    token = os.getenv("UPSTASH_VECTOR_REST_TOKEN")
+
+    if not url or not token:
+        return {"success": False, "error": "Vector credentials not found", "exists": False}
+
+    try:
+        # Try to get namespace info
+        response = requests.get(
+            f"{url.rstrip('/')}/info/{project_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            vector_count = data.get("result", {}).get("vectorCount", 0)
+            return {"success": True, "exists": True, "vector_count": vector_count}
+        return {"success": True, "exists": False, "vector_count": 0}
+    except Exception as e:
+        return {"success": False, "error": str(e), "exists": False}
+
+
+def delete_vector_namespace(project_id: str) -> dict:
     """Delete vector namespace for a project."""
     url = os.getenv("UPSTASH_VECTOR_REST_URL")
     token = os.getenv("UPSTASH_VECTOR_REST_TOKEN")
 
     if not url or not token:
-        return {"success": False, "error": "Vector credentials not found"}
+        return {"success": True}  # Nothing to delete
 
     try:
         response = requests.post(
@@ -142,7 +172,7 @@ def delete_project_vector(project_id: str) -> dict:
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
-        if response.status_code in [200, 404]:  # 404 = namespace didn't exist
+        if response.status_code in [200, 404]:
             return {"success": True}
         return {"success": False, "error": f"Status {response.status_code}"}
     except Exception as e:
@@ -299,63 +329,127 @@ def main():
     user_id = info["id"]
     projects = get_user_projects(user_id)
 
-    print(f"  User: {info['name']} ({info['email']})")
+    print(f"  User: {info['name'] or '(no name)'} ({info['email'] or '(no email)'})")
     print(f"  ID: {user_id}")
     print(f"  Projects: {len(projects)}")
-    for p in projects:
-        print(f"    - {p[1]} ({p[0]})")
     print()
 
-    # Confirmation
-    if not args.force:
-        print_colored("⚠️  This will permanently delete:", Colors.YELLOW)
-        print("    - The user account")
-        print("    - All OAuth sessions")
-        print(f"    - {len(projects)} project(s) and ALL their data:")
-        print("      - Feedback items (Redis)")
-        print("      - Clusters (Redis)")
-        print("      - Vector embeddings (Upstash Vector)")
-        print("      - Jobs")
+    # ==========================================================================
+    # PHASE 1: Gather all data to be deleted
+    # ==========================================================================
+    print_colored("📊 Scanning data to be deleted...", Colors.BLUE)
+    print()
+
+    project_data = []
+    total_redis_keys = 0
+    total_vectors = 0
+
+    for project_id, project_name in projects:
+        print(f"  Project: {project_name} ({project_id})")
+
+        # Check Redis
+        redis_info = get_project_redis_keys(project_id)
+        redis_keys = redis_info.get("keys", [])
+        total_redis_keys += len(redis_keys)
+
+        if redis_info["success"]:
+            print(f"    Redis: {len(redis_keys)} keys")
+            # Show breakdown
+            feedback_keys = [k for k in redis_keys if k.startswith(f"feedback:{project_id}")]
+            cluster_keys = [k for k in redis_keys if k.startswith(f"cluster:{project_id}")]
+            if feedback_keys:
+                print(f"      - {len(feedback_keys)} feedback keys")
+            if cluster_keys:
+                print(f"      - {len(cluster_keys)} cluster keys")
+        else:
+            print_colored(f"    Redis: {redis_info.get('error')}", Colors.YELLOW)
+
+        # Check Vector
+        vector_info = check_vector_namespace(project_id)
+        vector_count = vector_info.get("vector_count", 0)
+        total_vectors += vector_count
+
+        if vector_info["success"]:
+            if vector_info.get("exists"):
+                print(f"    Vector: {vector_count} embeddings")
+            else:
+                print(f"    Vector: namespace not found")
+        else:
+            print_colored(f"    Vector: {vector_info.get('error')}", Colors.YELLOW)
+
+        project_data.append({
+            "id": project_id,
+            "name": project_name,
+            "redis_keys": redis_keys,
+            "vector_count": vector_count,
+        })
         print()
-        response = input(f"Type '{info['email']}' to confirm: ")
-        if response != info['email']:
+
+    # ==========================================================================
+    # PHASE 2: Show summary and confirm
+    # ==========================================================================
+    print_colored("=" * 60, Colors.BOLD)
+    print_colored("DELETION SUMMARY", Colors.BOLD)
+    print_colored("=" * 60, Colors.BOLD)
+    print()
+    print(f"  User: {info['name'] or user_id}")
+    print(f"  Projects: {len(projects)}")
+    print(f"  Redis keys: {total_redis_keys}")
+    print(f"  Vector embeddings: {total_vectors}")
+    print(f"  Postgres: 1 user + {len(projects)} project(s)")
+    print()
+
+    if not args.force:
+        print_colored("⚠️  This action is PERMANENT and cannot be undone.", Colors.YELLOW)
+        print()
+        confirm_value = info['email'] or user_id
+        response = input(f"Type '{confirm_value}' to confirm deletion: ")
+        if response != confirm_value:
             print_colored("❌ Aborted.", Colors.RED)
             return 1
         print()
 
-    # Delete each project's Redis/Vector data
-    for project_id, project_name in projects:
-        print(f"🗑️  Deleting project: {project_name}...")
+    # ==========================================================================
+    # PHASE 3: Delete
+    # ==========================================================================
+    print_colored("🗑️  Deleting...", Colors.RED)
+    print()
 
-        # Redis
-        redis_result = delete_project_redis(project_id)
-        if redis_result["success"]:
-            print_colored(f"   ✓ Redis: {redis_result.get('deleted_keys', 0)} keys", Colors.GREEN)
-        else:
-            print_colored(f"   ✗ Redis: {redis_result.get('error')}", Colors.RED)
+    for pdata in project_data:
+        print(f"  Project: {pdata['name']}...")
 
-        # Vector
-        vector_result = delete_project_vector(project_id)
-        if vector_result["success"]:
-            print_colored(f"   ✓ Vector namespace deleted", Colors.GREEN)
+        # Delete Redis keys
+        if pdata["redis_keys"]:
+            redis_result = delete_redis_keys(pdata["redis_keys"])
+            if redis_result["success"]:
+                print_colored(f"    ✓ Redis: {redis_result.get('deleted_keys', 0)} keys deleted", Colors.GREEN)
+            else:
+                print_colored(f"    ✗ Redis failed", Colors.RED)
         else:
-            print_colored(f"   ✗ Vector: {vector_result.get('error')}", Colors.RED)
+            print(f"    - Redis: nothing to delete")
+
+        # Delete Vector namespace
+        if pdata["vector_count"] > 0:
+            vector_result = delete_vector_namespace(pdata["id"])
+            if vector_result["success"]:
+                print_colored(f"    ✓ Vector: namespace deleted", Colors.GREEN)
+            else:
+                print_colored(f"    ✗ Vector: {vector_result.get('error')}", Colors.RED)
+        else:
+            print(f"    - Vector: nothing to delete")
 
     # Delete user from Postgres
     print()
-    print("🗑️  Deleting user from Postgres...")
+    print("  Postgres...")
     pg_result = delete_user_postgres(user_id)
     if pg_result["success"]:
-        if pg_result.get("deleted", 0) > 0:
-            print_colored("   ✓ User deleted (cascades to projects)", Colors.GREEN)
-        else:
-            print_colored("   ✓ User not found (already deleted)", Colors.YELLOW)
+        print_colored("    ✓ User and projects deleted", Colors.GREEN)
     else:
-        print_colored(f"   ✗ {pg_result.get('error')}", Colors.RED)
+        print_colored(f"    ✗ {pg_result.get('error')}", Colors.RED)
 
     print()
     print_colored("=" * 60, Colors.BOLD)
-    print_colored("✓ User deletion complete", Colors.GREEN)
+    print_colored("✓ Deletion complete", Colors.GREEN)
     print_colored("=" * 60, Colors.BOLD)
 
     return 0
