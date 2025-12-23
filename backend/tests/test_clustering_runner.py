@@ -202,12 +202,11 @@ async def test_maybe_start_clustering_respects_lock(monkeypatch):
     clustering_runner.release_cluster_lock(project_id, "existing-job")
 
 
-async def test_vector_clustering_upsert_uses_correct_parameter_names(monkeypatch):
+async def test_vector_clustering_batch_upsert_format(monkeypatch):
     """
-    Regression test: Verify upsert_feedback is called with correct parameter names.
+    Regression test: Verify upsert_feedback_batch is called with correct format.
 
-    This catches bugs where we pass `id=` instead of `feedback_id=` which would
-    cause a TypeError at runtime but slip through mocked tests.
+    This catches bugs where we pass wrong keys in the batch items dict.
     """
     from unittest.mock import MagicMock, patch
     from vector_store import FeedbackVectorMetadata
@@ -230,36 +229,33 @@ async def test_vector_clustering_upsert_uses_correct_parameter_names(monkeypatch
     mock_vector_store = MagicMock()
     mock_vector_store.find_similar.return_value = []  # No similar items found
 
-    # Track upsert_feedback calls to verify parameter names
-    upsert_calls = []
-    def track_upsert(feedback_id, embedding, metadata):
-        """Track that upsert_feedback is called with correct param names."""
-        upsert_calls.append({
-            "feedback_id": feedback_id,
-            "embedding": embedding,
-            "metadata": metadata,
-        })
-    mock_vector_store.upsert_feedback = track_upsert
-    mock_vector_store.update_cluster_assignment_batch = MagicMock()
+    # Track upsert_feedback_batch calls
+    batch_upsert_calls = []
+    def track_batch_upsert(items):
+        """Track that upsert_feedback_batch is called with correct format."""
+        batch_upsert_calls.append(items)
+    mock_vector_store.upsert_feedback_batch = track_batch_upsert
 
     # Patch VectorStore constructor in clustering_runner module
-    # Must patch where it's used, not where it's defined
     with patch("clustering_runner.VectorStore", return_value=mock_vector_store):
-        # Force vector clustering mode by:
-        # 1. Setting GEMINI_API_KEY
-        # 2. Removing PYTEST_CURRENT_TEST (which forces testing mode)
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
         monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
         job = await clustering_runner.maybe_start_clustering(project_id)
         await clustering_runner.run_clustering_job(project_id, job.id)
 
-    # Verify upsert_feedback was called with correct parameter names
-    # If we had used `id=` instead of `feedback_id=`, this would have failed
-    assert len(upsert_calls) == 2, f"Expected 2 upsert calls, got {len(upsert_calls)}"
+    # Verify upsert_feedback_batch was called once with all items
+    assert len(batch_upsert_calls) == 1, f"Expected 1 batch upsert call, got {len(batch_upsert_calls)}"
 
-    # Verify the parameters are correct types
-    for call in upsert_calls:
-        assert isinstance(call["feedback_id"], str), "feedback_id should be a string"
-        assert isinstance(call["embedding"], list), "embedding should be a list"
-        assert isinstance(call["metadata"], FeedbackVectorMetadata), "metadata should be FeedbackVectorMetadata"
+    items = batch_upsert_calls[0]
+    assert len(items) == 2, f"Expected 2 items in batch, got {len(items)}"
+
+    # Verify each item has correct keys and types
+    for item in items:
+        assert "id" in item, "item should have 'id' key"
+        assert "embedding" in item, "item should have 'embedding' key"
+        assert "metadata" in item, "item should have 'metadata' key"
+        assert isinstance(item["id"], str), "id should be a string"
+        assert isinstance(item["embedding"], list), "embedding should be a list"
+        assert isinstance(item["metadata"], FeedbackVectorMetadata), "metadata should be FeedbackVectorMetadata"
+        assert item["metadata"].cluster_id is not None, "cluster_id should be set"
