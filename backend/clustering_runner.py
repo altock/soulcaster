@@ -10,7 +10,6 @@ import asyncio
 import logging
 import os
 import re
-import time
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 from uuid import uuid4
@@ -178,13 +177,16 @@ def _run_vector_clustering(
     project_id: str,
 ) -> dict:
     """
-    Cluster feedback items by their vector embeddings using the configured vector store and create or update IssueCluster records accordingly.
-    
-    Returns:
-        dict: A mapping with keys:
-            - new_clusters (List[IssueCluster]): newly created cluster objects persisted to storage.
-            - updated_clusters (List[str]): cluster IDs that had items added.
-            - items_clustered (int): number of feedback items processed.
+    Cluster feedback items using in-memory similarity for batch items + vector DB for existing items.
+
+    Strategy:
+    1. Generate embeddings for all items
+    2. Query vector DB for existing similar items (read-only, fast)
+    3. Cluster in-memory: compare batch items against each other + existing DB items
+    4. Batch upsert everything at the end (single write)
+
+    This avoids the Upstash Vector eventual consistency issue by not relying on
+    items being queryable immediately after upsert.
     """
     if not items:
         return {"new_clusters": [], "updated_clusters": [], "items_clustered": 0}
@@ -205,82 +207,122 @@ def _run_vector_clustering(
         logger.error("Failed to generate embeddings: %s", e)
         raise RuntimeError(f"Embedding generation failed: {e}") from e
 
+    # Convert to list format for easier handling
+    embeddings_list = [emb.tolist() for emb in embeddings]
+
+    # Phase 1: Query vector DB for existing similar items (read-only, no consistency issues)
+    existing_matches = {}
+    for i, item in enumerate(items):
+        similar = vector_store.find_similar(
+            embedding=embeddings_list[i],
+            top_k=20,
+            min_score=VECTOR_CLUSTERING_THRESHOLD,
+            exclude_ids=[str(item.id)],
+        )
+        existing_matches[str(item.id)] = similar
+
+    # Phase 2: In-memory clustering
+    # Track: item_id -> cluster_id
+    item_cluster_map: dict[str, str] = {}
+
+    # Helper to compute cosine similarity
+    def cosine_sim(a: List[float], b: List[float]) -> float:
+        import numpy as np
+        a_arr = np.array(a)
+        b_arr = np.array(b)
+        dot = np.dot(a_arr, b_arr)
+        norm_a = np.linalg.norm(a_arr)
+        norm_b = np.linalg.norm(b_arr)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return float(dot / (norm_a * norm_b))
+
+    for i, item in enumerate(items):
+        item_id = str(item.id)
+        embedding = embeddings_list[i]
+
+        # Check 1: Any existing vector DB item with a cluster?
+        existing_similar = existing_matches[item_id]
+        clustered_existing = [s for s in existing_similar if s.metadata and s.metadata.cluster_id]
+
+        if clustered_existing:
+            # Join existing cluster from vector DB
+            item_cluster_map[item_id] = clustered_existing[0].metadata.cluster_id
+            logger.debug(f"Item {item_id[:8]} joining existing DB cluster {clustered_existing[0].metadata.cluster_id[:8]}")
+            continue
+
+        # Check 2: Any previously processed batch item is similar?
+        found_batch_cluster = False
+        for j in range(i):
+            prev_item = items[j]
+            prev_id = str(prev_item.id)
+            prev_embedding = embeddings_list[j]
+
+            similarity = cosine_sim(embedding, prev_embedding)
+            if similarity >= VECTOR_CLUSTERING_THRESHOLD and prev_id in item_cluster_map:
+                # Join same cluster as previous batch item
+                item_cluster_map[item_id] = item_cluster_map[prev_id]
+                logger.debug(f"Item {item_id[:8]} joining batch cluster {item_cluster_map[prev_id][:8]} (sim={similarity:.3f})")
+                found_batch_cluster = True
+                break
+
+        if not found_batch_cluster:
+            # Create new cluster
+            new_cluster_id = str(uuid4())
+            item_cluster_map[item_id] = new_cluster_id
+            logger.debug(f"Item {item_id[:8]} creating new cluster {new_cluster_id[:8]}")
+
+    # Phase 3: Create Redis clusters and track which are new vs updated
     new_clusters: List[IssueCluster] = []
     updated_cluster_ids: set = set()
 
-    # Track cluster assignments for grouped items that need updating
-    cluster_assignments = []  # For grouped items
-
+    # Group items by cluster_id
+    cluster_to_items: dict[str, List[FeedbackItem]] = {}
     for i, item in enumerate(items):
-        embedding = embeddings[i].tolist()
+        item_id = str(item.id)
+        cluster_id = item_cluster_map[item_id]
+        if cluster_id not in cluster_to_items:
+            cluster_to_items[cluster_id] = []
+        cluster_to_items[cluster_id].append(item)
 
-        # Use vector DB to find cluster assignment
-        result = cluster_with_vector_db(
-            feedback_id=str(item.id),
-            embedding=embedding,
-            source=item.source,
-            title=item.title or "",
-            threshold=VECTOR_CLUSTERING_THRESHOLD,
-            vector_store=vector_store,
-        )
+    for cluster_id, cluster_items in cluster_to_items.items():
+        # Check if cluster already exists in Redis
+        existing_cluster = get_cluster(project_id, cluster_id)
 
-        if result.is_new_cluster:
+        if existing_cluster:
+            # Add items to existing cluster
+            updated_cluster_ids.add(cluster_id)
+            for item in cluster_items:
+                add_feedback_to_cluster(cluster_id, str(item.id), project_id)
+        else:
             # Create new cluster
-            cluster_items = [item]
-
-            # If there are grouped items, we need to find them and include them
-            # But they should already be in the vector DB from previous iterations
-            # or will be processed in this batch
-
             cluster = _build_cluster(cluster_items)
-            cluster.id = result.cluster_id  # Use the ID from vector clustering
+            cluster.id = cluster_id
             new_clusters.append(cluster)
             add_cluster(cluster)
+            # Add all items to the cluster
+            for item in cluster_items:
+                add_feedback_to_cluster(cluster_id, str(item.id), project_id)
 
-            # Also update grouped items' cluster assignments in vector DB
-            if result.grouped_feedback_ids:
-                for grouped_id in result.grouped_feedback_ids:
-                    cluster_assignments.append({
-                        "feedback_id": grouped_id,
-                        "cluster_id": result.cluster_id,
-                    })
-                    # Also add to Redis cluster
-                    add_feedback_to_cluster(result.cluster_id, grouped_id, project_id)
-        else:
-            # Join existing cluster - but verify it exists in Redis first
-            existing_cluster = get_cluster(project_id, result.cluster_id)
-            if existing_cluster:
-                updated_cluster_ids.add(result.cluster_id)
-                add_feedback_to_cluster(result.cluster_id, str(item.id), project_id)
-            else:
-                # Cluster exists in vector DB but not in Redis - create it
-                cluster = _build_cluster([item])
-                cluster.id = result.cluster_id
-                new_clusters.append(cluster)
-                add_cluster(cluster)
-
-        # IMMEDIATELY upsert to vector store so subsequent items can find this one
-        # This fixes the bug where batch processing created individual clusters
-        # because items weren't visible to each other during the loop
-        vector_store.upsert_feedback(
-            feedback_id=str(item.id),
-            embedding=embedding,
-            metadata=FeedbackVectorMetadata(
+    # Phase 4: Batch upsert all items to vector store at once
+    vector_upserts = []
+    for i, item in enumerate(items):
+        item_id = str(item.id)
+        vector_upserts.append({
+            "id": item_id,
+            "embedding": embeddings_list[i],
+            "metadata": FeedbackVectorMetadata(
                 title=item.title or "",
                 source=item.source,
-                cluster_id=result.cluster_id,
+                cluster_id=item_cluster_map[item_id],
                 created_at=item.created_at.isoformat() if item.created_at else None,
             ),
-        )
+        })
 
-        # Wait for vector store eventual consistency before processing next item
-        # Upstash Vector takes ~1 second for upserts to become queryable
-        # Without this delay, subsequent items can't find this one during query
-        time.sleep(1.2)  # 1.2 seconds to ensure visibility
+    if vector_upserts:
+        vector_store.upsert_feedback_batch(vector_upserts)
 
-    # Update cluster assignments for grouped items
-    if cluster_assignments:
-        vector_store.update_cluster_assignment_batch(cluster_assignments)
+    logger.info(f"Clustered {len(items)} items into {len(cluster_to_items)} clusters ({len(new_clusters)} new, {len(updated_cluster_ids)} updated)")
 
     return {
         "new_clusters": new_clusters,
