@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { Geist, Geist_Mono } from 'next/font/google';
 import UnicornBackground from '@/components/UnicornBackground';
 import SessionProvider from '@/components/SessionProvider';
+import { ProjectProvider } from '@/contexts/ProjectContext';
 import './globals.css';
 
 const geistSans = Geist({
@@ -53,8 +55,12 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased text-white font-sans`}>
         <SessionProvider>
-          <UnicornBackground />
-          <div className="min-h-screen relative z-10">{children}</div>
+          <Suspense fallback={null}>
+            <ProjectProvider>
+              <UnicornBackground />
+              <div className="min-h-screen relative z-10">{children}</div>
+            </ProjectProvider>
+          </Suspense>
         </SessionProvider>
       </body>
     </html>
