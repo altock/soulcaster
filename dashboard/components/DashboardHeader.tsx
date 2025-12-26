@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { useState } from 'react';
+import { useProject } from '@/contexts/ProjectContext';
 
 type ActivePage = 'overview' | 'feedback' | 'clusters' | 'prs' | 'billing' | 'settings';
 
@@ -26,6 +27,7 @@ export default function DashboardHeader({
 }: DashboardHeaderProps) {
   const pathname = usePathname();
   const { data: session, status } = useSession();
+  const { currentProject } = useProject();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -49,6 +51,31 @@ export default function DashboardHeader({
             </div>
             <span className="text-sm font-semibold tracking-tight text-slate-100 hidden sm:inline">Soulcaster</span>
           </Link>
+
+          {/* Current Project Display */}
+          {currentProject && (
+            <Link
+              href="/settings/projects"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/5 border border-white/10 hover:border-emerald-500/30 hover:bg-white/10 transition-all text-xs"
+              title="Switch project"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-emerald-400"
+              >
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span className="text-slate-300 max-w-[120px] truncate">{currentProject.name}</span>
+            </Link>
+          )}
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">

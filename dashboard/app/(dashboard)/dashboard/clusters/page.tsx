@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 
 type ClusterJobStatus = {
   id: string;
@@ -25,6 +27,7 @@ type ClusterJobStatus = {
  */
 export default function ClustersListPage() {
   const router = useRouter();
+  const { currentProjectId } = useProject();
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,18 +59,20 @@ export default function ClustersListPage() {
   };
 
   useEffect(() => {
+    if (!currentProjectId) return;
     const loadData = async () => {
       await fetchClusters();
       await fetchLatestJob();
     };
     loadData();
-  }, []);
+  }, [currentProjectId]);
 
   const fetchClusters = async () => {
+    if (!currentProjectId) return;
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch('/api/clusters');
+      const response = await fetch(`/api/clusters?project_id=${currentProjectId}`);
       if (!response.ok) {
         throw new Error('Failed to fetch clusters');
       }
@@ -81,8 +86,9 @@ export default function ClustersListPage() {
   };
 
   const fetchLatestJob = async () => {
+    if (!currentProjectId) return;
     try {
-      const response = await fetch('/api/clusters/jobs?limit=1', {
+      const response = await fetch(`/api/clusters/jobs?project_id=${currentProjectId}&limit=1`, {
         cache: 'no-store',
       });
       if (response.ok) {
@@ -101,9 +107,10 @@ export default function ClustersListPage() {
   };
 
   const triggerClustering = async () => {
+    if (!currentProjectId) return;
     try {
       setIsTriggering(true);
-      const response = await fetch('/api/clusters/jobs', {
+      const response = await fetch(`/api/clusters/jobs?project_id=${currentProjectId}`, {
         method: 'POST',
       });
       if (!response.ok) {
@@ -157,9 +164,46 @@ export default function ClustersListPage() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+      <div className="min-h-screen bg-matrix-black pb-12 pt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
+            <div>
+              <Skeleton className="h-8 w-48 mb-2" />
+              <Skeleton className="h-4 w-72 hidden sm:block" />
+            </div>
+            <Skeleton className="h-8 w-32 rounded-full" />
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+            <table className="w-full table-fixed text-left text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="w-[55%] sm:w-[45%] px-3 sm:px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="hidden sm:table-cell sm:w-[25%] px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="w-[25%] sm:w-[15%] px-2 sm:px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3"><Skeleton className="h-3 w-8" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <tr key={i}>
+                    <td className="px-3 sm:px-4 py-4">
+                      <Skeleton className="h-5 w-full max-w-[200px] mb-1" />
+                      <Skeleton className="h-3 w-full max-w-[160px] hidden sm:block" />
+                    </td>
+                    <td className="hidden sm:table-cell px-4 py-4">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="px-2 sm:px-4 py-4">
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    </td>
+                    <td className="px-2 sm:px-4 py-4 text-center">
+                      <Skeleton className="h-4 w-6 mx-auto" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );

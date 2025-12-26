@@ -3,20 +3,24 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 import type { StatsResponse, AgentJob } from '@/types';
 
 export default function DashboardOverview() {
   const { data: session } = useSession();
+  const { currentProjectId } = useProject();
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [prCount, setPrCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!currentProjectId) return;
     const fetchData = async () => {
       try {
         const [statsRes, jobsRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/jobs'),
+          fetch(`/api/stats?project_id=${currentProjectId}`),
+          fetch(`/api/jobs?project_id=${currentProjectId}`),
         ]);
 
         if (statsRes.ok) {
@@ -36,7 +40,7 @@ export default function DashboardOverview() {
       }
     };
     fetchData();
-  }, []);
+  }, [currentProjectId]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -80,10 +84,10 @@ export default function DashboardOverview() {
                 </svg>
               </div>
               <div className="text-right">
-                <p className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
-                  {loading ? '...' : stats?.total_clusters || 0}
-                </p>
-                <p className="text-xs text-emerald-300/70 uppercase tracking-wide">clusters</p>
+                <div className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
+                  {loading ? <Skeleton className="h-9 w-8" /> : stats?.total_clusters || 0}
+                </div>
+                <div className="text-xs text-emerald-300/70 uppercase tracking-wide">clusters</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-white group-hover:text-emerald-400 transition-colors">
@@ -121,10 +125,10 @@ export default function DashboardOverview() {
                 </svg>
               </div>
               <div className="text-right">
-                <p className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
-                  {loading ? '...' : stats?.total_feedback || 0}
-                </p>
-                <p className="text-xs text-blue-300/70 uppercase tracking-wide">feedback</p>
+                <div className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
+                  {loading ? <Skeleton className="h-9 w-8" /> : stats?.total_feedback || 0}
+                </div>
+                <div className="text-xs text-blue-300/70 uppercase tracking-wide">feedback</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-white group-hover:text-blue-400 transition-colors">
@@ -164,10 +168,10 @@ export default function DashboardOverview() {
                 </svg>
               </div>
               <div className="text-right">
-                <p className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
-                  {loading ? '...' : prCount}
-                </p>
-                <p className="text-xs text-purple-300/70 uppercase tracking-wide">PRs</p>
+                <div className="text-3xl font-medium tracking-tight text-slate-50 tabular-nums">
+                  {loading ? <Skeleton className="h-9 w-8" /> : prCount}
+                </div>
+                <div className="text-xs text-purple-300/70 uppercase tracking-wide">PRs</div>
               </div>
             </div>
             <h3 className="text-lg font-semibold text-white group-hover:text-purple-400 transition-colors">

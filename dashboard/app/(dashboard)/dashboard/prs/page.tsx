@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 import type { AgentJob } from '@/types';
 
 type JobLogsPayload = {
@@ -9,6 +11,7 @@ type JobLogsPayload = {
 };
 
 export default function PrsPage() {
+  const { currentProjectId } = useProject();
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -16,8 +19,9 @@ export default function PrsPage() {
   const [jobLogs, setJobLogs] = useState<string | null>(null);
 
   const fetchJobs = async () => {
+    if (!currentProjectId) return;
     try {
-      const res = await fetch('/api/jobs');
+      const res = await fetch(`/api/jobs?project_id=${currentProjectId}`);
       if (res.ok) {
         const data = await res.json();
         setJobs(data);
@@ -34,6 +38,7 @@ export default function PrsPage() {
   };
 
   useEffect(() => {
+    if (!currentProjectId) return;
     let intervalId: NodeJS.Timeout | null = null;
 
     // Await initial fetch before starting interval to avoid race conditions
@@ -47,10 +52,10 @@ export default function PrsPage() {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => {
-    if (!selectedJobId) {
+    if (!selectedJobId || !currentProjectId) {
       setJobLogs(null);
       return;
     }
@@ -58,7 +63,7 @@ export default function PrsPage() {
     let cancelled = false;
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?cursor=0&limit=200`);
+        const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?project_id=${currentProjectId}&cursor=0&limit=200`);
         if (!res.ok) return;
         const payload = (await res.json()) as JobLogsPayload;
         if (!cancelled) {
@@ -73,7 +78,7 @@ export default function PrsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedJobId]);
+  }, [selectedJobId, currentProjectId]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -126,9 +131,26 @@ export default function PrsPage() {
         )}
 
         {loading && jobs.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500 mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading jobs...</p>
+          <div className="grid gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white/5 rounded-xl border border-white/10 p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                    <Skeleton className="h-9 w-36 rounded-lg" />
+                  </div>
+                  <Skeleton className="h-8 w-20 rounded-lg" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : jobs.length === 0 && !error ? (
           <div className="bg-emerald-950/20 rounded-3xl border border-white/10 backdrop-blur-sm p-16 text-center relative overflow-hidden">

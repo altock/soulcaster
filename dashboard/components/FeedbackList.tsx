@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import FeedbackCard from './FeedbackCard';
+import { SkeletonCard } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 import type { FeedbackItem, FeedbackSource, GitHubRepo } from '@/types';
 
 interface FeedbackListProps {
@@ -16,6 +18,7 @@ interface FeedbackListProps {
  * @returns The component's rendered JSX containing filters, a loading indicator, an empty-state message, or a grid of feedback cards.
  */
 export default function FeedbackList({ refreshTrigger, onRequestShowSources }: FeedbackListProps) {
+  const { currentProjectId } = useProject();
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [sourceFilter, setSourceFilter] = useState<FeedbackSource | 'all'>('all');
@@ -23,16 +26,21 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
 
   useEffect(() => {
-    fetchRepos();
-  }, []);
+    if (currentProjectId) {
+      fetchRepos();
+    }
+  }, [currentProjectId]);
 
   useEffect(() => {
-    fetchFeedback();
-  }, [sourceFilter, repoFilter, refreshTrigger]);
+    if (currentProjectId) {
+      fetchFeedback();
+    }
+  }, [sourceFilter, repoFilter, refreshTrigger, currentProjectId]);
 
   const fetchRepos = async () => {
+    if (!currentProjectId) return;
     try {
-      const response = await fetch('/api/config/github/repos');
+      const response = await fetch(`/api/config/github/repos?project_id=${currentProjectId}`);
       if (response.ok) {
         const data = await response.json();
         setRepos(data.repos || []);
@@ -63,9 +71,10 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
   }, [sourceFilter]);
 
   const fetchFeedback = async () => {
+    if (!currentProjectId) return;
     try {
       setLoading(true);
-      const queryParams = new URLSearchParams({ limit: '50' });
+      const queryParams = new URLSearchParams({ limit: '50', project_id: currentProjectId });
       if (sourceFilter !== 'all') {
         queryParams.append('source', sourceFilter);
       }
@@ -93,8 +102,10 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading feedback...</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <SkeletonCard key={i} />
+        ))}
       </div>
     );
   }
