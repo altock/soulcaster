@@ -24,6 +24,8 @@ from uuid import uuid4
 
 import numpy as np
 
+from vector_store import FeedbackVectorMetadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,7 +98,7 @@ class VectorDBClusteringEngine:
 
     def cluster_batch(
         self,
-        items: List[dict],  # FeedbackItems
+        items: List,  # FeedbackItem objects
         embeddings: List[np.ndarray],
         project_id: str,
     ) -> ClusteringResult:
@@ -172,7 +174,7 @@ class VectorDBClusteringEngine:
 
     def _query_existing_items(
         self,
-        items: List[dict],
+        items: List,
         embeddings: List[np.ndarray],
         project_id: str,
     ) -> Dict[str, List]:
@@ -189,7 +191,7 @@ class VectorDBClusteringEngine:
         existing_matches = {}
 
         for i, item in enumerate(items):
-            item_id = str(item.get("id"))
+            item_id = str(item.id)
             embedding = embeddings[i].tolist()
 
             # Query with retries for eventual consistency
@@ -221,7 +223,7 @@ class VectorDBClusteringEngine:
 
     def _cluster_in_memory_with_audit(
         self,
-        items: List[dict],
+        items: List,
         embeddings: List[np.ndarray],
         existing_matches: Dict[str, List],
     ) -> Tuple[List[Tuple[str, List[str]]], Dict[str, ClusteringDecision]]:
@@ -242,7 +244,7 @@ class VectorDBClusteringEngine:
         cluster_members: Dict[str, List[str]] = {}
 
         for i, item in enumerate(items):
-            item_id = str(item.get("id"))
+            item_id = str(item.id)
             embedding = embeddings[i]
 
             # Check 1: Can join existing cluster from vector DB?
@@ -286,7 +288,7 @@ class VectorDBClusteringEngine:
             found_batch_cluster = False
             for j in range(i):
                 prev_item = items[j]
-                prev_id = str(prev_item.get("id"))
+                prev_id = str(prev_item.id)
 
                 if prev_id not in item_to_cluster:
                     continue
@@ -351,7 +353,7 @@ class VectorDBClusteringEngine:
 
     def _prepare_upserts(
         self,
-        items: List[dict],
+        items: List,
         embeddings: List[np.ndarray],
         clusters: List[Tuple[str, List[str]]],
         audit_trail: Dict[str, ClusteringDecision],
@@ -362,18 +364,20 @@ class VectorDBClusteringEngine:
         item_to_cluster = {id: c for c, ids in clusters for id in ids}
 
         for i, item in enumerate(items):
-            item_id = str(item.get("id"))
+            item_id = str(item.id)
             cluster_id = item_to_cluster[item_id]
+
+            metadata = FeedbackVectorMetadata(
+                title=item.title or "",
+                source=item.source or "",
+                cluster_id=cluster_id,
+                created_at=item.created_at.isoformat() if item.created_at else None,
+            )
 
             upserts.append({
                 "id": item_id,
                 "embedding": embeddings[i].tolist(),
-                "metadata": {
-                    "title": item.get("title", ""),
-                    "source": item.get("source", ""),
-                    "cluster_id": cluster_id,
-                    "created_at": item.get("created_at"),
-                }
+                "metadata": metadata,
             })
 
         return upserts
@@ -383,10 +387,8 @@ class VectorDBClusteringEngine:
         if not upserts:
             return
 
-        # This would call vector_store.upsert_feedback_batch
-        # For now, just log
         logger.info(f"Upserting {len(upserts)} items to vector store")
-        # self.vector_store.upsert_feedback_batch(upserts, project_id=project_id)
+        self.vector_store.upsert_feedback_batch(upserts, project_id=project_id)
 
 
 if __name__ == "__main__":
