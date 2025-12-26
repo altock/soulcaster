@@ -36,6 +36,7 @@ from vector_store import (
     cluster_with_vector_db,
     VECTOR_CLUSTERING_THRESHOLD,
 )
+from clustering_runner_v2 import VectorDBClusteringEngine
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -177,25 +178,30 @@ def _run_vector_clustering(
     project_id: str,
 ) -> dict:
     """
-    Cluster feedback items using in-memory similarity for batch items + vector DB for existing items.
+    Cluster feedback items using proper vector DB engine with audit trail.
 
     Strategy:
     1. Generate embeddings for all items
-    2. Query vector DB for existing similar items (read-only, fast)
-    3. Cluster in-memory: compare batch items against each other + existing DB items
+    2. Query vector DB for existing similar items (read-only, with EC handling)
+    3. Cluster in-memory with explicit decision tracking (audit trail)
     4. Batch upsert everything at the end (single write)
 
-    This avoids the Upstash Vector eventual consistency issue by not relying on
-    items being queryable immediately after upsert.
+    Returns clustering result with audit trail for explainability.
     """
     if not items:
-        return {"new_clusters": [], "updated_clusters": [], "items_clustered": 0}
+        return {
+            "new_clusters": [],
+            "updated_clusters": [],
+            "items_clustered": 0,
+            "audit_trail": {},
+        }
 
-    # Initialize vector store
+    # Initialize vector store and clustering engine
     try:
         vector_store = VectorStore()
+        engine = VectorDBClusteringEngine(vector_store)
     except Exception as e:
-        logger.error("Failed to initialize VectorStore: %s", e)
+        logger.error("Failed to initialize clustering engine: %s", e)
         raise
 
     # Prepare texts and generate embeddings
@@ -207,86 +213,20 @@ def _run_vector_clustering(
         logger.error("Failed to generate embeddings: %s", e)
         raise RuntimeError(f"Embedding generation failed: {e}") from e
 
-    # Convert to list format for easier handling
-    embeddings_list = [emb.tolist() for emb in embeddings]
+    # Run the clustering engine (3-phase: query, cluster, upsert)
+    clustering_result = engine.cluster_batch(items, embeddings, project_id)
 
-    # Phase 1: Query vector DB for existing similar items (read-only, no consistency issues)
-    existing_matches = {}
-    for i, item in enumerate(items):
-        similar = vector_store.find_similar(
-            embedding=embeddings_list[i],
-            project_id=project_id,
-            top_k=20,
-            min_score=VECTOR_CLUSTERING_THRESHOLD,
-            exclude_ids=[str(item.id)],
-        )
-        existing_matches[str(item.id)] = similar
-
-    # Phase 2: In-memory clustering
-    # Track: item_id -> cluster_id
-    item_cluster_map: dict[str, str] = {}
-
-    # Helper to compute cosine similarity
-    def cosine_sim(a: List[float], b: List[float]) -> float:
-        import numpy as np
-        a_arr = np.array(a)
-        b_arr = np.array(b)
-        dot = np.dot(a_arr, b_arr)
-        norm_a = np.linalg.norm(a_arr)
-        norm_b = np.linalg.norm(b_arr)
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return float(dot / (norm_a * norm_b))
-
-    for i, item in enumerate(items):
-        item_id = str(item.id)
-        embedding = embeddings_list[i]
-
-        # Check 1: Any existing vector DB item with a cluster?
-        existing_similar = existing_matches[item_id]
-        clustered_existing = [s for s in existing_similar if s.metadata and s.metadata.cluster_id]
-
-        if clustered_existing:
-            # Join existing cluster from vector DB
-            item_cluster_map[item_id] = clustered_existing[0].metadata.cluster_id
-            logger.debug(f"Item {item_id[:8]} joining existing DB cluster {clustered_existing[0].metadata.cluster_id[:8]}")
-            continue
-
-        # Check 2: Any previously processed batch item is similar?
-        found_batch_cluster = False
-        for j in range(i):
-            prev_item = items[j]
-            prev_id = str(prev_item.id)
-            prev_embedding = embeddings_list[j]
-
-            similarity = cosine_sim(embedding, prev_embedding)
-            if similarity >= VECTOR_CLUSTERING_THRESHOLD and prev_id in item_cluster_map:
-                # Join same cluster as previous batch item
-                item_cluster_map[item_id] = item_cluster_map[prev_id]
-                logger.debug(f"Item {item_id[:8]} joining batch cluster {item_cluster_map[prev_id][:8]} (sim={similarity:.3f})")
-                found_batch_cluster = True
-                break
-
-        if not found_batch_cluster:
-            # Create new cluster
-            new_cluster_id = str(uuid4())
-            item_cluster_map[item_id] = new_cluster_id
-            logger.debug(f"Item {item_id[:8]} creating new cluster {new_cluster_id[:8]}")
-
-    # Phase 3: Create Redis clusters and track which are new vs updated
+    # Phase 3: Persist clusters to Redis
     new_clusters: List[IssueCluster] = []
     updated_cluster_ids: set = set()
 
-    # Group items by cluster_id
-    cluster_to_items: dict[str, List[FeedbackItem]] = {}
-    for i, item in enumerate(items):
-        item_id = str(item.id)
-        cluster_id = item_cluster_map[item_id]
-        if cluster_id not in cluster_to_items:
-            cluster_to_items[cluster_id] = []
-        cluster_to_items[cluster_id].append(item)
+    for cluster_id, item_ids in clustering_result.clusters.items():
+        # Get the items in this cluster
+        cluster_items = [item for item in items if str(item.id) in item_ids]
 
-    for cluster_id, cluster_items in cluster_to_items.items():
+        if not cluster_items:
+            continue
+
         # Check if cluster already exists in Redis
         existing_cluster = get_cluster(project_id, cluster_id)
 
@@ -305,30 +245,18 @@ def _run_vector_clustering(
             for item in cluster_items:
                 add_feedback_to_cluster(cluster_id, str(item.id), project_id)
 
-    # Phase 4: Batch upsert all items to vector store at once
-    vector_upserts = []
-    for i, item in enumerate(items):
-        item_id = str(item.id)
-        vector_upserts.append({
-            "id": item_id,
-            "embedding": embeddings_list[i],
-            "metadata": FeedbackVectorMetadata(
-                title=item.title or "",
-                source=item.source,
-                cluster_id=item_cluster_map[item_id],
-                created_at=item.created_at.isoformat() if item.created_at else None,
-            ),
-        })
-
-    if vector_upserts:
-        vector_store.upsert_feedback_batch(vector_upserts, project_id=project_id)
-
-    logger.info(f"Clustered {len(items)} items into {len(cluster_to_items)} clusters ({len(new_clusters)} new, {len(updated_cluster_ids)} updated)")
+    logger.info(
+        f"Clustered {clustering_result.items_clustered} items into {len(clustering_result.clusters)} clusters "
+        f"({len(new_clusters)} new, {len(updated_cluster_ids)} updated) "
+        f"in {clustering_result.performance_metrics.get('total', 0):.3f}s"
+    )
 
     return {
         "new_clusters": new_clusters,
         "updated_clusters": list(updated_cluster_ids),
-        "items_clustered": len(items),
+        "items_clustered": clustering_result.items_clustered,
+        "audit_trail": clustering_result.audit_trail,
+        "performance_metrics": clustering_result.performance_metrics,
     }
 
 
@@ -416,12 +344,30 @@ async def run_clustering_job(project_id: str, job_id: str):
             "updated_clusters": len(result["updated_clusters"]),
         }
 
+        # Convert audit trail from dataclass to dict for storage
+        audit_trail_dict = {}
+        if result.get("audit_trail"):
+            for item_id, decision in result["audit_trail"].items():
+                # Convert ClusteringDecision dataclass to dict
+                audit_trail_dict[item_id] = decision.to_dict() if hasattr(decision, 'to_dict') else {
+                    "item_id": decision.item_id,
+                    "cluster_id": decision.cluster_id,
+                    "decision_type": decision.decision_type,
+                    "similarity_score": decision.similarity_score,
+                    "matched_item_id": decision.matched_item_id,
+                    "timestamp": decision.timestamp.isoformat() if hasattr(decision.timestamp, 'isoformat') else str(decision.timestamp),
+                    "confidence": decision.confidence,
+                    "details": decision.details,
+                }
+
         update_cluster_job(
             project_id,
             job_id,
             status="succeeded",
             finished_at=datetime.now(timezone.utc),
             stats=stats,
+            audit_trail=audit_trail_dict,
+            performance_metrics=result.get("performance_metrics", {}),
         )
     except Exception as exc:  # pragma: no cover - exercised in integration
         logger.exception("Clustering job %s failed", job_id)

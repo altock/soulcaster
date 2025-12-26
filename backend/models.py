@@ -52,6 +52,23 @@ class CodingPlan(BaseModel):
     updated_at: datetime
 
 
+class ClusteringDecision(BaseModel):
+    """
+    Audit trail entry explaining why an item was assigned to a cluster.
+
+    Helps users understand clustering decisions and debug issues.
+    """
+
+    item_id: str
+    cluster_id: str
+    decision_type: Literal["created_new", "joined_existing", "joined_batch"]
+    similarity_score: Optional[float] = None  # How similar to matched item
+    matched_item_id: Optional[str] = None  # Which item triggered clustering
+    timestamp: datetime
+    confidence: float = 1.0  # Confidence in decision (0.0-1.0)
+    details: Dict = {}  # Extra context (source, rank, etc.)
+
+
 class ClusterJob(BaseModel):
     """
     Represents a clustering job tracked by the backend.
@@ -65,6 +82,10 @@ class ClusterJob(BaseModel):
     finished_at: Optional[datetime] = None
     error: Optional[str] = None
     stats: Dict[str, int] = {}
+    # Audit trail: item_id -> ClusteringDecision
+    audit_trail: Optional[Dict[str, ClusteringDecision]] = None
+    # Performance metrics from clustering
+    performance_metrics: Optional[Dict[str, float]] = None
 
 
 class FeedbackItem(BaseModel):

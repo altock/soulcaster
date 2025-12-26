@@ -1981,6 +1981,80 @@ def get_cluster_detail(cluster_id: str, project_id: Optional[str] = Query(None))
     return response
 
 
+@app.get("/clusters/{cluster_id}/explain")
+def explain_cluster(cluster_id: str, project_id: Optional[str] = Query(None)):
+    """
+    Explain why items are in a cluster by showing clustering audit trail.
+
+    Returns the decision history for each feedback item in the cluster,
+    showing which item it matched with, similarity score, and decision type.
+
+    Returns:
+        dict: Explanation with:
+            - cluster_id (str): The cluster ID
+            - items (list): For each item, its clustering decision with:
+                - item_id: The feedback item ID
+                - decision_type: "created_new" | "joined_existing" | "joined_batch"
+                - matched_item_id: Which item it matched (if applicable)
+                - similarity_score: How similar (if applicable)
+                - timestamp: When it was clustered
+    """
+    pid = _require_project_id(project_id)
+    pid_str = str(pid)
+
+    cluster = get_cluster(pid_str, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # Get the most recent clustering job to fetch audit trail
+    # Note: In production, audit trail should be stored with cluster
+    # For now, fetch from latest clustering job
+    jobs = list_cluster_jobs(pid_str)
+
+    audit_trail = {}
+    for job in reversed(jobs):  # Most recent first
+        if job.get("audit_trail"):
+            # Check if this job's audit trail contains items from our cluster
+            job_audit = job.get("audit_trail", {})
+            for item_id, decision in job_audit.items():
+                if decision.get("cluster_id") == cluster_id:
+                    audit_trail[item_id] = decision
+
+    # If no audit trail found in jobs, return basic explanation
+    if not audit_trail:
+        return {
+            "cluster_id": cluster_id,
+            "message": "No detailed explanation available (clustering decision history not found)",
+            "items": [{"item_id": fid} for fid in cluster.feedback_ids],
+        }
+
+    # Build detailed explanation
+    items_explanation = []
+    for item_id in cluster.feedback_ids:
+        if item_id in audit_trail:
+            decision = audit_trail[item_id]
+            items_explanation.append({
+                "item_id": item_id,
+                "decision_type": decision.get("decision_type"),
+                "matched_item_id": decision.get("matched_item_id"),
+                "similarity_score": decision.get("similarity_score"),
+                "timestamp": decision.get("timestamp"),
+                "details": decision.get("details", {}),
+            })
+        else:
+            items_explanation.append({
+                "item_id": item_id,
+                "decision_type": "unknown",
+                "details": {"note": "Decision history not available"},
+            })
+
+    return {
+        "cluster_id": cluster_id,
+        "items": items_explanation,
+        "total_items": len(cluster.feedback_ids),
+    }
+
+
 @app.post("/cluster-jobs")
 async def create_cluster_job(project_id: Optional[str] = Query(None)):
     """
