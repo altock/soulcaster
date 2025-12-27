@@ -54,7 +54,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch feedback' }, { status });
     }
     const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
+    return NextResponse.json(data, {
+      status: response.status,
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
   } catch (error: any) {
     if (error?.message === 'project_id is required') {
       return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
