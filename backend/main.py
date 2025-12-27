@@ -76,6 +76,7 @@ from store import (
     get_unclustered_feedback,
     add_coding_plan,
     get_coding_plan,
+    update_coding_plan,
     get_sentry_config as get_sentry_config_value,
     set_sentry_config as set_sentry_config_value,
     get_splunk_config as get_splunk_config_value,
@@ -2269,6 +2270,39 @@ def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
     return plan
 
 
+class UpdatePlanRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.patch("/clusters/{cluster_id}/plan")
+def update_cluster_plan_endpoint(
+    cluster_id: str, payload: UpdatePlanRequest, project_id: Optional[str] = Query(None)
+):
+    """
+    Update an existing coding plan for a cluster.
+    """
+    pid = _require_project_id(project_id)
+
+    # 1. Validate cluster
+    cluster = get_cluster(pid, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+
+    # 2. Check if plan exists
+    plan = get_coding_plan(cluster_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="No plan found for this cluster")
+
+    # 3. Update plan
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return plan
+
+    updated_plan = update_coding_plan(cluster_id, **updates)
+    return updated_plan
+
+
 @app.post("/clusters/{cluster_id}/plan")
 def generate_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
@@ -2292,7 +2326,14 @@ def generate_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(Non
             items.append(item)
 
     # 3. Call planner
-    plan = generate_plan(cluster, items)
+    try:
+        plan = generate_plan(cluster, items)
+    except Exception as e:
+        logger.error(f"Plan generation failed for cluster {cluster_id}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Implementation plan generation failed: {str(e)}"
+        )
 
     # 4. Save plan
     add_coding_plan(plan)

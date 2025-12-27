@@ -50,6 +50,8 @@ def test_generate_plan_no_api_key():
         assert "no API key" in plan.description 
         assert plan.cluster_id == "c1"
 
+import pytest
+
 def test_generate_plan_exception_handling():
     cluster = IssueCluster(
         id="c1", project_id="p1", title="Bug", summary="Bug summary",
@@ -63,6 +65,6 @@ def test_generate_plan_exception_handling():
         # API raises error
         mock_client.models.generate_content.side_effect = Exception("API Broken")
         
-        plan = generate_plan(cluster, [])
-        assert plan.title.startswith("Error planning fix")
-        assert "API Broken" in plan.description
+        with pytest.raises(Exception) as excinfo:
+            generate_plan(cluster, [])
+        assert "API Broken" in str(excinfo.value)
