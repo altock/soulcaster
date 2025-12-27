@@ -8,13 +8,19 @@ interface FeedbackCardProps {
 
 import { useState } from 'react';
 import EditFeedbackModal from './EditFeedbackModal';
+import { useProject } from '@/contexts/ProjectContext';
 
 export default function FeedbackCard({ item }: FeedbackCardProps) {
+  const { currentProjectId } = useProject();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [feedbackItem, setFeedbackItem] = useState(item);
 
   const handleSave = async (updatedData: Partial<FeedbackItem>) => {
-    const response = await fetch('/api/feedback', {
+    if (!currentProjectId) {
+      throw new Error('No project selected');
+    }
+
+    const response = await fetch(`/api/feedback?project_id=${currentProjectId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -23,6 +29,7 @@ export default function FeedbackCard({ item }: FeedbackCardProps) {
         id: item.id,
         ...updatedData,
       }),
+      cache: 'no-store', // Prevent caching
     });
 
     if (!response.ok) {

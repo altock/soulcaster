@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { useProject } from '@/contexts/ProjectContext';
 
 interface ManualFeedbackFormProps {
   onSuccess?: () => void;
 }
 
 export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProps) {
+  const { currentProjectId } = useProject();
   const [text, setText] = useState('');
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,12 +19,17 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
     e.preventDefault();
     if (!text.trim()) return;
 
+    if (!currentProjectId) {
+      setError('No project selected');
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
     setSuccess(false);
 
     try {
-      const response = await fetch('/api/ingest/manual', {
+      const response = await fetch(`/api/ingest/manual?project_id=${currentProjectId}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -31,6 +38,7 @@ export default function ManualFeedbackForm({ onSuccess }: ManualFeedbackFormProp
           text: text.trim(),
           github_repo_url: githubRepoUrl.trim() || undefined,
         }),
+        cache: 'no-store', // Prevent caching
       });
 
       if (!response.ok) {

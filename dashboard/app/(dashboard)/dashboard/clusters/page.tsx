@@ -60,36 +60,71 @@ export default function ClustersListPage() {
 
   useEffect(() => {
     if (!currentProjectId) return;
+
+    // Clear stale state immediately when project changes
+    setClusters([]);
+    setLatestJob(null);
+    setLoading(true);
+    setError(null);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
+
     const loadData = async () => {
-      await fetchClusters();
-      await fetchLatestJob();
+      try {
+        await Promise.all([
+          fetchClusters(abortController.signal),
+          fetchLatestJob(abortController.signal),
+        ]);
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          // Request was cancelled - this is expected during project switch
+          console.log('[ClustersPage] Request cancelled');
+          return;
+        }
+        console.error('[ClustersPage] Error loading data:', err);
+      }
     };
+
     loadData();
+
+    // Cleanup: abort all pending requests when project changes or component unmounts
+    return () => {
+      abortController.abort();
+    };
   }, [currentProjectId]);
 
-  const fetchClusters = async () => {
+  const fetchClusters = async (signal?: AbortSignal) => {
     if (!currentProjectId) return;
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`/api/clusters?project_id=${currentProjectId}`);
+      const response = await fetch(`/api/clusters?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+        signal, // Allow request cancellation
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch clusters');
       }
       const data = await response.json();
       setClusters(data);
     } catch (err) {
+      // Don't set error state if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchLatestJob = async () => {
+  const fetchLatestJob = async (signal?: AbortSignal) => {
     if (!currentProjectId) return;
     try {
       const response = await fetch(`/api/clusters/jobs?project_id=${currentProjectId}&limit=1`, {
         cache: 'no-store',
+        signal, // Allow request cancellation
       });
       if (response.ok) {
         const data = await response.json();
@@ -100,6 +135,10 @@ export default function ClustersListPage() {
       }
       console.error('Failed to fetch cluster jobs status');
     } catch (err) {
+      // Don't log error if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       console.error('Failed to fetch cluster jobs status:', err);
     }
     setLatestJob(null);
