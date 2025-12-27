@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react';
 import IntegrationCard, { IntegrationConfig } from '@/components/settings/IntegrationCard';
 import SearchInput from '@/components/ui/SearchInput';
 import RequestIntegrationDialog from '@/components/integrations/RequestIntegrationDialog';
-import { useProject } from '@/contexts/ProjectContext';
-import { BACKEND_URL, DEFAULT_PAGE_SIZE, DEFAULT_REQUEST_HREF } from '@/lib/integrations';
+import { BACKEND_URL, DEFAULT_PAGE_SIZE, DEFAULT_PROJECT_ID, DEFAULT_REQUEST_HREF } from '@/lib/integrations';
 
 export type IntegrationId = 'splunk' | 'datadog' | 'posthog' | 'sentry';
 
@@ -49,7 +48,7 @@ function normalizeMultiSelectInput(value: unknown): string[] {
 
 export default function IntegrationsDirectory({
   integrationIds,
-  projectId: _deprecatedProjectId, // Deprecated: now uses useProject hook
+  projectId,
   pageSize = DEFAULT_PAGE_SIZE,
   requestHref = DEFAULT_REQUEST_HREF,
   showRequestButton = true,
@@ -58,10 +57,10 @@ export default function IntegrationsDirectory({
   showPagination = true,
   className = '',
 }: IntegrationsDirectoryProps) {
-  const { currentProjectId } = useProject();
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const resolvedProjectId = projectId ?? DEFAULT_PROJECT_ID;
 
   // State for integration configs (loaded from backend)
   const [integrationConfigs, setIntegrationConfigs] = useState<Record<IntegrationId, IntegrationConfig>>({
@@ -176,35 +175,14 @@ export default function IntegrationsDirectory({
 
   // Load initial enabled states from backend
   useEffect(() => {
-    if (!currentProjectId) return;
-
-    // Clear stale state immediately when project changes
-    setIntegrationConfigs((prev) => {
-      const reset = { ...prev };
-      Object.keys(reset).forEach((key) => {
-        reset[key as IntegrationId] = {
-          ...reset[key as IntegrationId],
-          enabled: false,
-        };
-      });
-      return reset;
-    });
-    setIsLoading(true);
-
-    // Create AbortController to cancel requests on cleanup
-    const abortController = new AbortController();
-
     const loadIntegrationStates = async () => {
+      setIsLoading(true);
       try {
         const integrations: IntegrationId[] = ['splunk', 'datadog', 'posthog', 'sentry'];
         const results = await Promise.allSettled(
           integrations.map(async (integration) => {
             const res = await fetch(
-              `${BACKEND_URL}/config/${integration}/enabled?project_id=${currentProjectId}`,
-              {
-                cache: 'no-store', // Prevent browser caching
-                signal: abortController.signal, // Allow request cancellation
-              }
+              `${BACKEND_URL}/config/${integration}/enabled?project_id=${resolvedProjectId}`
             );
             if (res.ok) {
               const data = await res.json();
@@ -230,11 +208,6 @@ export default function IntegrationsDirectory({
           return updated;
         });
       } catch (error) {
-        // Don't log error if request was aborted
-        if (error instanceof Error && error.name === 'AbortError') {
-          console.log('[IntegrationsDirectory] Request cancelled');
-          return;
-        }
         console.error('Failed to load integration states:', error);
       } finally {
         setIsLoading(false);
@@ -242,38 +215,44 @@ export default function IntegrationsDirectory({
     };
 
     loadIntegrationStates();
-
-    // Cleanup: abort requests on unmount or project change
-    return () => {
-      abortController.abort();
-    };
-  }, [currentProjectId]);
+  }, [resolvedProjectId]);
 
   // Toggle handlers for each integration
   const handleToggle =
     (integration: IntegrationId) =>
     async (enabled: boolean) => {
-      if (!currentProjectId) return;
-      const res = await fetch(
-        `${BACKEND_URL}/config/${integration}/enabled?project_id=${currentProjectId}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled }),
-          cache: 'no-store', // Prevent browser caching
-        }
-      );
-      if (!res.ok) throw new Error(`Failed to update ${integration} status`);
-
+      // Optimistically update UI
+      const previousState = integrationConfigs[integration]?.enabled;
       setIntegrationConfigs((prev) => ({
         ...prev,
         [integration]: { ...prev[integration], enabled },
       }));
+
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/config/${integration}/enabled?project_id=${resolvedProjectId}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+          }
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to update ${integration} status`);
+        }
+      } catch (error) {
+        // Revert to previous state on failure
+        setIntegrationConfigs((prev) => ({
+          ...prev,
+          [integration]: { ...prev[integration], enabled: previousState ?? false },
+        }));
+        console.error(`Failed to toggle ${integration}:`, error);
+        throw error; // Re-throw so the caller can handle it if needed
+      }
     };
 
   // Save handlers for each integration
   const handleSplunkSave = async (data: Record<string, any>) => {
-    if (!currentProjectId) return;
     const payload: { webhook_token?: string; allowed_searches?: string[] } = {};
     if (data.webhook_token !== undefined) {
       payload.webhook_token = data.webhook_token;
@@ -284,27 +263,24 @@ export default function IntegrationsDirectory({
         .map((s: string) => s.trim())
         .filter(Boolean);
     }
-    const res = await fetch(`${BACKEND_URL}/config/splunk?project_id=${currentProjectId}`, {
+    const res = await fetch(`${BACKEND_URL}/config/splunk?project_id=${resolvedProjectId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      cache: 'no-store', // Prevent browser caching
     });
     if (!res.ok) throw new Error('Failed to save Splunk configuration');
   };
 
   const handleDatadogSave = async (data: Record<string, any>) => {
-    if (!currentProjectId) return;
     // Save webhook secret
     if (data.webhook_secret) {
       const secretRes = await fetch(`${BACKEND_URL}/config/datadog/secret`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: currentProjectId,
+          project_id: resolvedProjectId,
           secret: data.webhook_secret,
         }),
-        cache: 'no-store', // Prevent browser caching
       });
       if (!secretRes.ok) throw new Error('Failed to save webhook secret');
     }
@@ -316,31 +292,27 @@ export default function IntegrationsDirectory({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: currentProjectId,
+          project_id: resolvedProjectId,
           monitors,
         }),
-        cache: 'no-store', // Prevent browser caching
       });
       if (!monitorsRes.ok) throw new Error('Failed to save allowed monitors');
     }
   };
 
   const handlePostHogSave = async (data: Record<string, any>) => {
-    if (!currentProjectId) return;
     const eventsRes = await fetch(`${BACKEND_URL}/config/posthog/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        project_id: currentProjectId,
+        project_id: resolvedProjectId,
         event_types: data.event_types || [],
       }),
-      cache: 'no-store', // Prevent browser caching
     });
     if (!eventsRes.ok) throw new Error('Failed to save event types');
   };
 
   const handleSentrySave = async (data: Record<string, any>) => {
-    if (!currentProjectId) return;
     const payload: { webhook_secret?: string; environments?: string[]; levels?: string[] } = {};
     if (data.webhook_secret !== undefined) {
       payload.webhook_secret = data.webhook_secret;
@@ -351,11 +323,10 @@ export default function IntegrationsDirectory({
     if (data.levels !== undefined) {
       payload.levels = data.levels;
     }
-    const res = await fetch(`${BACKEND_URL}/config/sentry?project_id=${currentProjectId}`, {
+    const res = await fetch(`${BACKEND_URL}/config/sentry?project_id=${resolvedProjectId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      cache: 'no-store', // Prevent browser caching
     });
     if (!res.ok) throw new Error('Failed to save Sentry configuration');
   };
