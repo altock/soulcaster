@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useEffect } from 'react';
+
 import type { CodingPlan } from '@/types';
 
 interface PlanTabProps {
@@ -9,6 +11,7 @@ interface PlanTabProps {
   isGeneratingPlan: boolean;
   onGeneratePlan: () => void;
   onStartFix: () => void;
+  onUpdatePlan: (title: string, description: string) => Promise<void>;
 }
 
 export default function PlanTab({
@@ -18,7 +21,33 @@ export default function PlanTab({
   isGeneratingPlan,
   onGeneratePlan,
   onStartFix,
+  onUpdatePlan,
 }: PlanTabProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
+  const [editedDescription, setEditedDescription] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Update local state when codingPlan changes
+  useEffect(() => {
+    if (codingPlan) {
+      setEditedTitle(codingPlan.title);
+      setEditedDescription(codingPlan.description);
+    }
+  }, [codingPlan]);
+
+  const handleSave = async () => {
+    try {
+      setIsSaving(true);
+      await onUpdatePlan(editedTitle, editedDescription);
+      setIsEditing(false);
+    } catch (err) {
+      alert('Failed to save plan');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // Empty state when no plan exists
   if (!codingPlan) {
     return (
@@ -120,26 +149,88 @@ export default function PlanTab({
               </p>
             </div>
           </div>
-          {canStartFix && (
-            <button
-              onClick={onGeneratePlan}
-              disabled={isGeneratingPlan || isFixing}
-              className="text-xs text-slate-400 hover:text-emerald-400 transition-colors disabled:opacity-50"
-            >
-              {isGeneratingPlan ? 'Regenerating...' : 'Regenerate'}
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {!isEditing && canStartFix && (
+              <button
+                onClick={() => setIsEditing(true)}
+                disabled={isFixing || isGeneratingPlan}
+                className="text-xs text-slate-400 hover:text-emerald-400 transition-colors disabled:opacity-50"
+              >
+                Edit
+              </button>
+            )}
+            {canStartFix && !isEditing && (
+              <button
+                onClick={onGeneratePlan}
+                disabled={isGeneratingPlan || isFixing}
+                className="text-xs text-slate-400 hover:text-emerald-400 transition-colors disabled:opacity-50"
+              >
+                {isGeneratingPlan ? 'Regenerating...' : 'Regenerate'}
+              </button>
+            )}
+          </div>
         </div>
 
-        <h2 className="text-2xl font-semibold text-white mb-4">
-          {codingPlan.title}
-        </h2>
+        {isEditing ? (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">
+                Title
+              </label>
+              <input
+                type="text"
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-emerald-500/50 transition-colors"
+                placeholder="Plan Title"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">
+                Description
+              </label>
+              <textarea
+                value={editedDescription}
+                onChange={(e) => setEditedDescription(e.target.value)}
+                rows={12}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-emerald-500/50 transition-colors resize-none"
+                placeholder="Plan Description"
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setIsEditing(false);
+                  setEditedTitle(codingPlan.title);
+                  setEditedDescription(codingPlan.description);
+                }}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-full border border-white/10 text-slate-400 text-xs font-medium hover:bg-white/5 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving || !editedTitle.trim() || !editedDescription.trim()}
+                className="px-6 py-2 rounded-full bg-emerald-500 text-black text-xs font-bold hover:bg-emerald-400 transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+              >
+                {isSaving ? 'Saving...' : 'Save Plan'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <h2 className="text-2xl font-semibold text-white mb-4">
+              {codingPlan.title}
+            </h2>
 
-        <div className="prose prose-invert prose-sm max-w-none">
-          <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
-            {codingPlan.description}
-          </p>
-        </div>
+            <div className="prose prose-invert prose-sm max-w-none">
+              <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
+                {codingPlan.description}
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Action Panel */}

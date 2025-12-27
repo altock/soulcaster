@@ -52,3 +52,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         return NextResponse.json({ error: 'Failed to generate plan' }, { status: 500 });
     }
 }
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+    try {
+        const { id } = await params;
+        const projectId = await requireProjectId(request);
+        const body = await request.json();
+
+        const response = await fetch(`${BACKEND_URL}/clusters/${encodeURIComponent(id)}/plan?project_id=${projectId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            return NextResponse.json({ error: errorText }, { status: response.status });
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+    } catch (error: any) {
+        if (error?.message === 'project_id is required') {
+            return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
+        }
+        console.error('Error updating plan:', error);
+        return NextResponse.json({ error: 'Failed to update plan' }, { status: 500 });
+    }
+}

@@ -627,6 +627,18 @@ class InMemoryStore:
         """
         return self.coding_plans.get(cluster_id)
 
+    def update_coding_plan(self, cluster_id: str, **updates) -> CodingPlan:
+        """
+        Update an existing CodingPlan.
+        """
+        existing = self.coding_plans.get(cluster_id)
+        if not existing:
+            raise KeyError(f"No coding plan found for cluster {cluster_id}")
+        updated = existing.model_copy(update=updates)
+        updated.updated_at = datetime.now()
+        self.coding_plans[cluster_id] = updated
+        return updated
+
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: ProjectId) -> List[str]:
         """
@@ -1311,6 +1323,19 @@ class RedisStore:
         if not data:
             return None
         return CodingPlan.model_validate_json(data)
+
+    def update_coding_plan(self, cluster_id: str, **updates) -> CodingPlan:
+        """
+        Update an existing CodingPlan in Redis.
+        """
+        existing = self.get_coding_plan(cluster_id)
+        if not existing:
+            raise KeyError(f"No coding plan found for cluster {cluster_id}")
+        updated = existing.model_copy(update=updates)
+        updated.updated_at = datetime.now()
+        key = self._coding_plan_key(cluster_id)
+        self.client.set(key, updated.model_dump_json())
+        return updated
 
     @staticmethod
     def _cluster_lock_key(project_id: str) -> str:
@@ -3804,6 +3829,12 @@ def get_coding_plan(cluster_id: str) -> Optional[CodingPlan]:
     Retrieve a CodingPlan by cluster_id.
     """
     return _STORE.get_coding_plan(cluster_id)
+
+def update_coding_plan(cluster_id: str, **updates) -> CodingPlan:
+    """
+    Update an existing CodingPlan.
+    """
+    return _STORE.update_coding_plan(cluster_id, **updates)
 
 def clear_coding_plans():
     """

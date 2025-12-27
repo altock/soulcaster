@@ -167,13 +167,33 @@ export default function ClusterDetailPage() {
       const response = await fetch(`/api/clusters/${clusterId}/plan`, {
         method: 'POST',
       });
-      if (!response.ok) throw new Error('Failed to generate plan');
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate plan');
+      }
       setCodingPlan(data);
+      // Switch to plan tab automatically after successful generation
+      setActiveTab('plan');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Plan generation failed');
     } finally {
       setIsGeneratingPlan(false);
+    }
+  };
+
+  const handleUpdatePlan = async (title: string, description: string) => {
+    try {
+      const response = await fetch(`/api/clusters/${clusterId}/plan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description }),
+      });
+      if (!response.ok) throw new Error('Failed to update plan');
+      const data = await response.json();
+      setCodingPlan(data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Plan update failed');
+      throw err;
     }
   };
 
@@ -357,6 +377,7 @@ export default function ClusterDetailPage() {
               isGeneratingPlan={isGeneratingPlan}
               onGeneratePlan={handleGeneratePlan}
               onStartFix={handleStartFix}
+              onUpdatePlan={handleUpdatePlan}
             />
           )}
 
