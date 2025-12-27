@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { useProject } from '@/contexts/ProjectContext';
 import type { AgentJob, ClusterDetail, CodingPlan } from '@/types';
 import {
   ClusterHeader,
@@ -26,6 +27,7 @@ import {
 export default function ClusterDetailPage() {
   const params = useParams();
   const clusterId = params.id as string;
+  const { currentProjectId } = useProject();
 
   // Cluster data state
   const [cluster, setCluster] = useState<ClusterDetail | null>(null);
@@ -57,10 +59,13 @@ export default function ClusterDetailPage() {
 
   // Fetch functions (defined before effects that use them)
   const fetchCluster = useCallback(async () => {
+    if (!currentProjectId) return;
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`/api/clusters/${clusterId}`);
+      const response = await fetch(`/api/clusters/${clusterId}?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch cluster');
       }
@@ -71,11 +76,14 @@ export default function ClusterDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [clusterId]);
+  }, [clusterId, currentProjectId]);
 
   const fetchPlan = useCallback(async () => {
+    if (!currentProjectId) return;
     try {
-      const response = await fetch(`/api/clusters/${clusterId}/plan`);
+      const response = await fetch(`/api/clusters/${clusterId}/plan?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+      });
       if (response.ok) {
         const data = await response.json();
         setCodingPlan(data);
@@ -85,12 +93,15 @@ export default function ClusterDetailPage() {
     } catch (err) {
       console.error('Failed to fetch plan:', err);
     }
-  }, [clusterId]);
+  }, [clusterId, currentProjectId]);
 
   const fetchFixJobs = useCallback(async () => {
+    if (!currentProjectId) return;
     try {
       setJobsError(null);
-      const response = await fetch(`/api/clusters/${clusterId}/jobs`);
+      const response = await fetch(`/api/clusters/${clusterId}/jobs?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch fix jobs');
       }
@@ -99,12 +110,16 @@ export default function ClusterDetailPage() {
     } catch (err) {
       setJobsError(err instanceof Error ? err.message : 'Failed to fetch fix jobs');
     }
-  }, [clusterId]);
+  }, [clusterId, currentProjectId]);
 
   const fetchJobLogs = useCallback(
     async (jobId: string) => {
+      if (!currentProjectId) return;
       const response = await fetch(
-        `/api/jobs/${encodeURIComponent(jobId)}/job-logs`
+        `/api/jobs/${encodeURIComponent(jobId)}/job-logs?project_id=${currentProjectId}`,
+        {
+          cache: 'no-store', // Prevent browser caching
+        }
       );
       if (!response.ok) {
         throw new Error('Failed to fetch logs');
@@ -123,15 +138,25 @@ export default function ClusterDetailPage() {
       }
       // For memory source, keep current tailing state (controlled by job status polling)
     },
-    []
+    [currentProjectId]
   );
 
-  // Initial data fetch
+  // Initial data fetch - clear stale state when project changes
   useEffect(() => {
+    if (!currentProjectId) return;
+
+    // Clear stale state immediately when project changes
+    setCluster(null);
+    setCodingPlan(null);
+    setFixJobs([]);
+    setLoading(true);
+    setError(null);
+    setJobsError(null);
+
     fetchCluster();
     fetchPlan();
     fetchFixJobs();
-  }, [fetchCluster, fetchPlan, fetchFixJobs]);
+  }, [fetchCluster, fetchPlan, fetchFixJobs, currentProjectId]);
 
   // Poll cluster status when fixing
   useEffect(() => {
@@ -162,10 +187,12 @@ export default function ClusterDetailPage() {
   }, [selectedJobForLogs?.id, isTailingLogs, fetchJobLogs]);
 
   const handleGeneratePlan = async () => {
+    if (!currentProjectId) return;
     try {
       setIsGeneratingPlan(true);
-      const response = await fetch(`/api/clusters/${clusterId}/plan`, {
+      const response = await fetch(`/api/clusters/${clusterId}/plan?project_id=${currentProjectId}`, {
         method: 'POST',
+        cache: 'no-store', // Prevent browser caching
       });
       if (!response.ok) throw new Error('Failed to generate plan');
       const data = await response.json();
@@ -178,6 +205,7 @@ export default function ClusterDetailPage() {
   };
 
   const handleStartFix = async () => {
+    if (!currentProjectId) return;
     try {
       setIsFixing(true);
       if (!codingPlan) {
@@ -185,8 +213,9 @@ export default function ClusterDetailPage() {
         await fetchPlan();
       }
 
-      const response = await fetch(`/api/clusters/${clusterId}/start_fix`, {
+      const response = await fetch(`/api/clusters/${clusterId}/start_fix?project_id=${currentProjectId}`, {
         method: 'POST',
+        cache: 'no-store', // Prevent browser caching
       });
       if (!response.ok) {
         throw new Error('Failed to start fix');
