@@ -16,11 +16,26 @@ export default function DashboardOverview() {
 
   useEffect(() => {
     if (!currentProjectId) return;
+
+    // Clear stale state immediately when project changes
+    setStats(null);
+    setPrCount(0);
+    setLoading(true);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
+
     const fetchData = async () => {
       try {
         const [statsRes, jobsRes] = await Promise.all([
-          fetch(`/api/stats?project_id=${currentProjectId}`),
-          fetch(`/api/jobs?project_id=${currentProjectId}`),
+          fetch(`/api/stats?project_id=${currentProjectId}`, {
+            cache: 'no-store', // Prevent browser caching
+            signal: abortController.signal,
+          }),
+          fetch(`/api/jobs?project_id=${currentProjectId}`, {
+            cache: 'no-store', // Prevent browser caching
+            signal: abortController.signal,
+          }),
         ]);
 
         if (statsRes.ok) {
@@ -34,12 +49,23 @@ export default function DashboardOverview() {
           setPrCount(prsWithUrl);
         }
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // Request was cancelled - this is expected during project switch
+          console.log('[Dashboard] Request cancelled');
+          return;
+        }
         console.error('Error fetching data:', error);
       } finally {
         setLoading(false);
       }
     };
+
     fetchData();
+
+    // Cleanup: abort all pending requests when project changes or component unmounts
+    return () => {
+      abortController.abort();
+    };
   }, [currentProjectId]);
 
   return (
