@@ -23,7 +23,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Clustering thresholds (single source of truth)
-VECTOR_CLUSTERING_THRESHOLD = 0.72
+# Higher threshold (0.78) prevents semantic drift where loosely related items
+# chain together into overly-broad clusters. Trade-off: more small clusters,
+# but they're tighter and can be merged later with cleanup.
+VECTOR_CLUSTERING_THRESHOLD = 0.78
 CLEANUP_MERGE_THRESHOLD = 0.65
 
 # Embedding dimension for Gemini
@@ -70,6 +73,16 @@ class ClusterCohesion:
     max_similarity: float
     item_count: int
     quality: str  # 'tight', 'moderate', 'loose'
+
+
+@dataclass
+class ItemFitResult:
+    """Result from checking if an item fits a cluster."""
+
+    fits: bool
+    avg_similarity: float
+    min_similarity: float
+    rejection_reason: Optional[str] = None
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -146,6 +159,67 @@ def calculate_cluster_cohesion(
         item_count=len(embeddings),
         quality=quality,
     )
+
+
+# Coherence thresholds for cluster membership validation
+MIN_AVG_SIMILARITY_TO_JOIN = 0.70  # Must have at least this avg similarity to cluster members
+MIN_WORST_SIMILARITY_TO_JOIN = 0.55  # No member can be less similar than this
+
+
+def would_item_fit_cluster(
+    new_embedding: List[float],
+    cluster_embeddings: List[List[float]],
+    min_avg_similarity: float = MIN_AVG_SIMILARITY_TO_JOIN,
+    min_worst_similarity: float = MIN_WORST_SIMILARITY_TO_JOIN,
+) -> ItemFitResult:
+    """
+    Check if adding a new item would maintain cluster coherence.
+
+    Validates that the new item has sufficient similarity to existing cluster
+    members. This prevents items that are similar to just ONE member from
+    joining clusters where they don't fit with the rest.
+
+    Parameters:
+        new_embedding (List[float]): Embedding vector for the candidate item.
+        cluster_embeddings (List[List[float]]): Embeddings of existing cluster members.
+        min_avg_similarity (float): Minimum average similarity required to all members.
+        min_worst_similarity (float): Minimum similarity to the least-similar member.
+
+    Returns:
+        ItemFitResult: Contains `fits` (bool), `avg_similarity`, `min_similarity`,
+            and `rejection_reason` if the item doesn't fit.
+    """
+    if not cluster_embeddings:
+        # Empty cluster - any item fits
+        return ItemFitResult(fits=True, avg_similarity=1.0, min_similarity=1.0)
+
+    similarities = [
+        _cosine_similarity(new_embedding, existing)
+        for existing in cluster_embeddings
+    ]
+
+    avg_sim = sum(similarities) / len(similarities)
+    min_sim = min(similarities)
+
+    # Check average similarity threshold
+    if avg_sim < min_avg_similarity:
+        return ItemFitResult(
+            fits=False,
+            avg_similarity=avg_sim,
+            min_similarity=min_sim,
+            rejection_reason=f"avg_similarity {avg_sim:.3f} < {min_avg_similarity}",
+        )
+
+    # Check worst-case similarity threshold
+    if min_sim < min_worst_similarity:
+        return ItemFitResult(
+            fits=False,
+            avg_similarity=avg_sim,
+            min_similarity=min_sim,
+            rejection_reason=f"min_similarity {min_sim:.3f} < {min_worst_similarity}",
+        )
+
+    return ItemFitResult(fits=True, avg_similarity=avg_sim, min_similarity=min_sim)
 
 
 class VectorStore:
@@ -339,6 +413,47 @@ class VectorStore:
 
         return similar
 
+    def fetch_cluster_embeddings(
+        self,
+        cluster_id: str,
+        project_id: str,
+        max_samples: int = 10,
+    ) -> List[List[float]]:
+        """
+        Fetch embeddings of items belonging to a specific cluster.
+
+        Uses a query-based approach: queries with a zero vector to get items,
+        then filters by cluster_id. This is more efficient than fetching all
+        vectors when the cluster is small relative to the namespace.
+
+        Parameters:
+            cluster_id (str): Cluster identifier to fetch embeddings for.
+            project_id (str): Project ID (namespace).
+            max_samples (int): Maximum number of embeddings to fetch. For large
+                clusters, we sample rather than fetching all.
+
+        Returns:
+            List[List[float]]: List of embedding vectors for cluster members.
+        """
+        # Query with a neutral vector to get items, then filter by cluster
+        # We fetch more than needed since we're filtering
+        results = self.index.query(
+            vector=[0.0] * EMBEDDING_DIMENSION,
+            top_k=max_samples * 5,
+            include_metadata=True,
+            include_vectors=True,
+            namespace=project_id,
+        )
+
+        embeddings = []
+        for r in results:
+            if r.metadata and r.metadata.get("cluster_id") == cluster_id and r.vector:
+                embeddings.append(list(r.vector))
+                if len(embeddings) >= max_samples:
+                    break
+
+        return embeddings
+
     def update_cluster_assignment(
         self, feedback_id: str, cluster_id: str, project_id: str
     ) -> None:
@@ -480,11 +595,12 @@ def cluster_with_vector_db(
     project_id: str,
     threshold: float = VECTOR_CLUSTERING_THRESHOLD,
     vector_store: Optional[VectorStore] = None,
+    cluster_centroids: Optional[Dict[str, List[float]]] = None,
 ) -> ClusteringResult:
     """
     Assigns a feedback embedding to an existing cluster or creates a new cluster based on similarity to stored embeddings.
 
-    Searches the vector store for items with similarity >= threshold (excluding the provided feedback_id). If a matching item already has a cluster assignment, returns that cluster and the similarity to the best clustered match. If matches exist but none are clustered, creates a new cluster that groups those matched item IDs. If no matches are found, creates a new cluster for the single feedback item.
+    Searches the vector store for items with similarity >= threshold (excluding the provided feedback_id). If a matching item already has a cluster assignment, checks similarity against the cluster's centroid (if available) to prevent semantic drift. Only joins if centroid similarity also meets threshold. If matches exist but none are clustered, creates a new cluster that groups those matched item IDs. If no matches are found, creates a new cluster for the single feedback item.
 
     Parameters:
         feedback_id (str): Identifier of the feedback being clustered.
@@ -492,6 +608,9 @@ def cluster_with_vector_db(
         project_id (str): Project ID used as the namespace for tenant isolation.
         threshold (float): Similarity cutoff used to consider items as candidates for clustering.
         vector_store (Optional[VectorStore]): VectorStore instance to query; if omitted a new instance is created.
+        cluster_centroids (Optional[Dict[str, List[float]]]): Map of cluster_id to centroid embedding.
+            When provided, joining a cluster requires similarity to centroid >= threshold.
+            This prevents semantic drift where items chain together via transitive similarity.
 
     Returns:
         ClusteringResult: Result containing the assigned `cluster_id`, whether a new cluster was created (`is_new_cluster`), the similarity score when joining an existing cluster (`similarity`), and `grouped_feedback_ids` when a new cluster groups other items.
@@ -527,15 +646,67 @@ def cluster_with_vector_db(
     logger.debug(f"  -> {len(clustered_items)}/{len(similar)} similar items have cluster_id assigned")
 
     if clustered_items:
-        # Join the cluster of the most similar clustered item
         best_match = clustered_items[0]
-        logger.debug(f"  -> JOINING existing cluster {best_match.metadata.cluster_id[:8]}... (similarity={best_match.score:.3f})")
-        return ClusteringResult(
-            feedback_id=feedback_id,
-            cluster_id=best_match.metadata.cluster_id,  # type: ignore
-            is_new_cluster=False,
-            similarity=best_match.score,
-        )
+        candidate_cluster_id = best_match.metadata.cluster_id  # type: ignore
+
+        # If we have centroids, verify similarity to cluster center (prevents semantic drift)
+        if cluster_centroids and candidate_cluster_id in cluster_centroids:
+            centroid = cluster_centroids[candidate_cluster_id]
+            centroid_similarity = _cosine_similarity(embedding, centroid)
+
+            if centroid_similarity >= threshold:
+                # Good fit - join the cluster
+                logger.debug(
+                    f"  -> JOINING existing cluster {candidate_cluster_id[:8]}... "
+                    f"(member_sim={best_match.score:.3f}, centroid_sim={centroid_similarity:.3f})"
+                )
+                return ClusteringResult(
+                    feedback_id=feedback_id,
+                    cluster_id=candidate_cluster_id,
+                    is_new_cluster=False,
+                    similarity=centroid_similarity,  # Report centroid similarity
+                )
+            else:
+                # Similar to a member but not to cluster center - likely semantic drift
+                # Check other candidate clusters before creating new
+                for item in clustered_items[1:]:
+                    other_cluster_id = item.metadata.cluster_id  # type: ignore
+                    if other_cluster_id in cluster_centroids:
+                        other_centroid = cluster_centroids[other_cluster_id]
+                        other_centroid_sim = _cosine_similarity(embedding, other_centroid)
+                        if other_centroid_sim >= threshold:
+                            logger.debug(
+                                f"  -> JOINING alternative cluster {other_cluster_id[:8]}... "
+                                f"(centroid_sim={other_centroid_sim:.3f}, rejected {candidate_cluster_id[:8]} centroid_sim={centroid_similarity:.3f})"
+                            )
+                            return ClusteringResult(
+                                feedback_id=feedback_id,
+                                cluster_id=other_cluster_id,
+                                is_new_cluster=False,
+                                similarity=other_centroid_sim,
+                            )
+
+                # No cluster centroid meets threshold - create new cluster
+                cluster_id = str(uuid4())
+                logger.debug(
+                    f"  -> Creating NEW cluster {cluster_id[:8]}... "
+                    f"(rejected {candidate_cluster_id[:8]}: member_sim={best_match.score:.3f} but centroid_sim={centroid_similarity:.3f} < {threshold})"
+                )
+                return ClusteringResult(
+                    feedback_id=feedback_id,
+                    cluster_id=cluster_id,
+                    is_new_cluster=True,
+                    grouped_feedback_ids=[],
+                )
+        else:
+            # No centroids available - fall back to original behavior
+            logger.debug(f"  -> JOINING existing cluster {candidate_cluster_id[:8]}... (similarity={best_match.score:.3f}, no centroid check)")
+            return ClusteringResult(
+                feedback_id=feedback_id,
+                cluster_id=candidate_cluster_id,
+                is_new_cluster=False,
+                similarity=best_match.score,
+            )
 
     # All similar items are unclustered - create new cluster and group them
     cluster_id = str(uuid4())

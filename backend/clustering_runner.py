@@ -35,7 +35,15 @@ from vector_store import (
     FeedbackVectorMetadata,
     cluster_with_vector_db,
     VECTOR_CLUSTERING_THRESHOLD,
+    would_item_fit_cluster,
+    MIN_AVG_SIMILARITY_TO_JOIN,
+    MIN_WORST_SIMILARITY_TO_JOIN,
 )
+
+# Enable/disable coherence validation (more expensive but stricter)
+ENABLE_COHERENCE_CHECK = os.getenv("CLUSTERING_ENABLE_COHERENCE_CHECK", "true").lower() == "true"
+# Only check coherence for clusters with this many members (fetching embeddings is expensive)
+COHERENCE_CHECK_MIN_CLUSTER_SIZE = int(os.getenv("CLUSTERING_COHERENCE_MIN_SIZE", "3"))
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -181,9 +189,11 @@ def _run_vector_clustering(
 
     Strategy:
     1. Generate embeddings for all items
-    2. Query vector DB for existing similar items (read-only, fast)
-    3. Cluster in-memory: compare batch items against each other + existing DB items
-    4. Batch upsert everything at the end (single write)
+    2. Load existing cluster centroids to prevent semantic drift
+    3. Query vector DB for existing similar items (read-only, fast)
+    4. Cluster in-memory: compare batch items against each other + existing DB items
+       - When joining existing cluster, verify similarity to centroid (not just member)
+    5. Batch upsert everything at the end (single write)
 
     This avoids the Upstash Vector eventual consistency issue by not relying on
     items being queryable immediately after upsert.
@@ -197,6 +207,19 @@ def _run_vector_clustering(
     except Exception as e:
         logger.error("Failed to initialize VectorStore: %s", e)
         raise
+
+    # Load existing cluster centroids to prevent semantic drift
+    # When an item is similar to a cluster member but NOT to the cluster center,
+    # it's likely semantic drift and should form a new cluster instead.
+    cluster_centroids: dict[str, List[float]] = {}
+    try:
+        all_clusters = get_all_clusters(project_id)
+        for cluster in all_clusters:
+            if cluster.centroid:
+                cluster_centroids[cluster.id] = cluster.centroid
+        logger.debug(f"Loaded {len(cluster_centroids)} cluster centroids for drift prevention")
+    except Exception as e:
+        logger.warning(f"Failed to load cluster centroids, continuing without drift prevention: {e}")
 
     # Prepare texts and generate embeddings
     issues_payload = _prepare_issue_payloads(items)
@@ -247,10 +270,71 @@ def _run_vector_clustering(
         clustered_existing = [s for s in existing_similar if s.metadata and s.metadata.cluster_id]
 
         if clustered_existing:
-            # Join existing cluster from vector DB
-            item_cluster_map[item_id] = clustered_existing[0].metadata.cluster_id
-            logger.debug(f"Item {item_id[:8]} joining existing DB cluster {clustered_existing[0].metadata.cluster_id[:8]}")
-            continue
+            # Find a cluster where the item is similar to the CENTROID (not just a member)
+            # This prevents semantic drift where items chain together via transitive similarity
+            joined_cluster = None
+            for match in clustered_existing:
+                candidate_cluster_id = match.metadata.cluster_id
+
+                # If we have the centroid, check similarity to it
+                if candidate_cluster_id in cluster_centroids:
+                    centroid = cluster_centroids[candidate_cluster_id]
+                    centroid_sim = cosine_sim(embedding, centroid)
+
+                    if centroid_sim >= VECTOR_CLUSTERING_THRESHOLD:
+                        # Centroid check passed - optionally do coherence check
+                        passes_coherence = True
+
+                        if ENABLE_COHERENCE_CHECK:
+                            # Fetch cluster member embeddings and validate coherence
+                            try:
+                                cluster_embeddings = vector_store.fetch_cluster_embeddings(
+                                    cluster_id=candidate_cluster_id,
+                                    project_id=project_id,
+                                    max_samples=10,
+                                )
+                                if len(cluster_embeddings) >= COHERENCE_CHECK_MIN_CLUSTER_SIZE:
+                                    fit_result = would_item_fit_cluster(
+                                        embedding,
+                                        cluster_embeddings,
+                                        min_avg_similarity=MIN_AVG_SIMILARITY_TO_JOIN,
+                                        min_worst_similarity=MIN_WORST_SIMILARITY_TO_JOIN,
+                                    )
+                                    if not fit_result.fits:
+                                        passes_coherence = False
+                                        logger.debug(
+                                            f"Item {item_id[:8]} rejected from cluster {candidate_cluster_id[:8]} "
+                                            f"by coherence check: {fit_result.rejection_reason}"
+                                        )
+                            except Exception as e:
+                                logger.warning(f"Coherence check failed for {candidate_cluster_id[:8]}: {e}")
+                                # On error, allow the join (fail open)
+
+                        if passes_coherence:
+                            # Good fit to cluster center and passes coherence - join
+                            joined_cluster = candidate_cluster_id
+                            logger.debug(
+                                f"Item {item_id[:8]} joining existing DB cluster {candidate_cluster_id[:8]} "
+                                f"(member_sim={match.score:.3f}, centroid_sim={centroid_sim:.3f})"
+                            )
+                            break
+                        # else: try next cluster candidate
+                    else:
+                        # Similar to member but not center - likely drift, try next
+                        logger.debug(
+                            f"Item {item_id[:8]} rejected from cluster {candidate_cluster_id[:8]} "
+                            f"(member_sim={match.score:.3f} but centroid_sim={centroid_sim:.3f} < {VECTOR_CLUSTERING_THRESHOLD})"
+                        )
+                else:
+                    # No centroid available - fall back to original behavior
+                    joined_cluster = candidate_cluster_id
+                    logger.debug(f"Item {item_id[:8]} joining existing DB cluster {candidate_cluster_id[:8]} (no centroid check)")
+                    break
+
+            if joined_cluster:
+                item_cluster_map[item_id] = joined_cluster
+                continue
+            # If no cluster passed centroid check, fall through to create new cluster
 
         # Check 2: Any previously processed batch item is similar?
         found_batch_cluster = False

@@ -2237,6 +2237,83 @@ def cleanup_duplicate_clusters(project_id: Optional[str] = Query(None)):
     }
 
 
+@app.get("/clusters/analyze")
+def analyze_cluster_quality(project_id: Optional[str] = Query(None)):
+    """
+    Analyze cluster quality and detect overly-broad clusters that should be split.
+
+    Returns a health report for all clusters in the project, identifying:
+    - Healthy clusters (good internal cohesion)
+    - Loose clusters (low internal cohesion, may contain mixed content)
+    - Split recommendations for clusters that have natural sub-groups
+
+    Parameters:
+        project_id (Optional[str]): Project identifier.
+
+    Returns:
+        dict: Cluster health report with split recommendations.
+    """
+    from cluster_analysis import (
+        analyze_project_clusters,
+        LOOSE_CLUSTER_THRESHOLD,
+    )
+    from vector_store import get_vector_store
+
+    pid = _require_project_id(project_id)
+    clusters = get_all_clusters(pid)
+
+    if not clusters:
+        return {
+            "success": True,
+            "project_id": pid,
+            "total_clusters": 0,
+            "healthy_clusters": 0,
+            "loose_clusters": 0,
+            "split_recommendations": [],
+        }
+
+    # Convert to dict format expected by analyze_project_clusters
+    cluster_dicts = [
+        {"id": c.id, "feedback_ids": c.feedback_ids or []}
+        for c in clusters
+    ]
+
+    try:
+        vector_store = get_vector_store()
+        report = analyze_project_clusters(
+            project_id=pid,
+            clusters=cluster_dicts,
+            vector_store=vector_store,
+            loose_threshold=LOOSE_CLUSTER_THRESHOLD,
+        )
+
+        return {
+            "success": True,
+            "project_id": pid,
+            "total_clusters": report.total_clusters,
+            "healthy_clusters": report.healthy_clusters,
+            "loose_clusters": report.loose_clusters,
+            "split_recommendations": [
+                {
+                    "cluster_id": rec.cluster_id,
+                    "reason": rec.reason,
+                    "current_avg_similarity": rec.current_cohesion.avg_similarity,
+                    "current_quality": rec.current_cohesion.quality,
+                    "suggested_subcluster_count": len(rec.suggested_subclusters),
+                    "subcluster_cohesions": rec.subcluster_cohesions,
+                }
+                for rec in report.split_recommendations
+            ],
+        }
+    except Exception as e:
+        logger.exception("Cluster analysis failed")
+        return {
+            "success": False,
+            "error": str(e),
+            "project_id": pid,
+        }
+
+
 @app.get("/clusters/{cluster_id}/plan")
 def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
     """
