@@ -47,7 +47,7 @@ def test_ingest_reddit(project_context):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].title == "Bug in the system"
     assert items[0].source == "reddit"
@@ -78,11 +78,11 @@ def test_ingest_reddit_deduplicates_external_ids(project_context):
     assert second.status_code == 200
     assert second.json()["status"] == "duplicate"
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].title == "Original bug"
 
-    clusters = get_all_clusters()
+    clusters = get_all_clusters(str(pid))
     assert len(clusters) == 1
     assert len(clusters[0].feedback_ids) == 1
 
@@ -110,8 +110,8 @@ def test_ingest_sentry(project_context):
     }
     response = client.post(f"/ingest/sentry?project_id={pid}", json=payload)
     assert response.status_code == 200
-    
-    items = get_all_feedback_items()
+
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].source == "sentry"
     assert items[0].external_id == "sentry_123"
@@ -125,7 +125,7 @@ def test_ingest_manual(project_context):
     response = client.post(f"/ingest/manual?project_id={pid}", json=payload)
     assert response.status_code == 200
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].source == "manual"
     assert items[0].title == "The login button is broken on mobile."
@@ -139,7 +139,7 @@ def test_ingest_manual_long_text(project_context):
     response = client.post(f"/ingest/manual?project_id={pid}", json=payload)
     assert response.status_code == 200
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].title == long_text[:80]
     assert items[0].body == long_text
@@ -154,7 +154,7 @@ def test_ingest_sentry_minimal_payload(project_context):
     response = client.post(f"/ingest/sentry?project_id={pid}", json=payload)
     assert response.status_code == 200
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].source == "sentry"
     assert items[0].title == "Minimal error"
@@ -176,7 +176,7 @@ def test_ingest_reddit_with_empty_body(project_context):
     response = client.post(f"/ingest/reddit?project_id={pid}", json=payload)
     assert response.status_code == 200
 
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 1
     assert items[0].body == ""
 
@@ -199,11 +199,11 @@ def test_add_feedback_writes_to_unclustered(project_context):
     }
     response = client.post(f"/ingest/reddit?project_id={pid}", json=payload)
     assert response.status_code == 200
-    
+
     # Check feedback was created
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) >= 1
-    
+
     # KEY TEST: Check it's in the unclustered set
     unclustered = get_unclustered_feedback(pid)
     assert len(unclustered) >= 1
@@ -304,11 +304,11 @@ def test_remove_from_unclustered(project_context):
     }
     response = client.post(f"/ingest/reddit?project_id={pid}", json=payload)
     assert response.status_code == 200
-    
-    items = get_all_feedback_items()
+
+    items = get_all_feedback_items(str(pid))
     test_item = next((item for item in items if item.external_id == "t3_remove_test"), None)
     assert test_item is not None
-    
+
     # Verify it's in unclustered
     unclustered_before = get_unclustered_feedback(pid)
     assert any(item.id == test_item.id for item in unclustered_before)

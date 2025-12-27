@@ -45,6 +45,7 @@ class CodingPlan(BaseModel):
             extra = "ignore"
 
     id: str
+    project_id: Optional[str] = None  # Added for multi-project isolation
     cluster_id: str
     title: str
     description: str

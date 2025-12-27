@@ -377,15 +377,21 @@ class InMemoryStore:
             return item
         return None
 
-    def get_all_feedback_items(self, project_id: Optional[str] = None) -> List[FeedbackItem]:
+    def get_all_feedback_items(self, project_id: str) -> List[FeedbackItem]:
         """
-        Get all stored feedback items.
-        
+        Get all stored feedback items for a project.
+
+        Parameters:
+            project_id (str): Project identifier (required for multi-project isolation).
+
         Returns:
-            list[FeedbackItem]: All FeedbackItem instances currently held in the store.
+            list[FeedbackItem]: FeedbackItem instances for the specified project.
+
+        Raises:
+            ValueError: If project_id is not provided.
         """
-        if project_id is None:
-            return list(self.feedback_items.values())
+        if not project_id:
+            raise ValueError("project_id is required for get_all_feedback_items")
         return [
             item for item in self.feedback_items.values() if str(item.project_id) == str(project_id)
         ]
@@ -526,12 +532,21 @@ class InMemoryStore:
             return cluster
         return cluster if str(cluster.project_id) == str(project_id) else None
 
-    def get_all_clusters(self, project_id: Optional[str] = None) -> List[IssueCluster]:
+    def get_all_clusters(self, project_id: str) -> List[IssueCluster]:
         """
-        In-memory cluster listing with optional project scoping.
+        In-memory cluster listing for a specific project.
+
+        Parameters:
+            project_id (str): Project identifier (required for multi-project isolation).
+
+        Returns:
+            List[IssueCluster]: Clusters for the specified project.
+
+        Raises:
+            ValueError: If project_id is not provided.
         """
-        if project_id is None:
-            return list(self.issue_clusters.values())
+        if not project_id:
+            raise ValueError("project_id is required for get_all_clusters")
         return [c for c in self.issue_clusters.values() if str(c.project_id) == str(project_id)]
 
     def update_cluster(self, project_id: Optional[str], cluster_id: str, **updates) -> IssueCluster:
@@ -612,15 +627,22 @@ class InMemoryStore:
     def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
         """
         Store a CodingPlan in the in-memory store.
+
+        Raises:
+            ValueError: If plan.project_id is not set.
         """
-        self.coding_plans[plan.cluster_id] = plan
+        if not plan.project_id:
+            raise ValueError("CodingPlan.project_id is required for storage")
+        key = (plan.project_id, plan.cluster_id)
+        self.coding_plans[key] = plan
         return plan
 
-    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+    def get_coding_plan(self, project_id: str, cluster_id: str) -> Optional[CodingPlan]:
         """
-        Retrieve a CodingPlan by cluster_id.
+        Retrieve a CodingPlan by project_id and cluster_id.
         """
-        return self.coding_plans.get(cluster_id)
+        key = (project_id, cluster_id)
+        return self.coding_plans.get(key)
 
     # Config (Reddit)
     def set_reddit_subreddits(self, subreddits: List[str], project_id: ProjectId) -> List[str]:
@@ -804,8 +826,44 @@ class InMemoryStore:
         project_config = self.posthog_config.get(pid_str, {})
         return project_config.get(key)
 
-        self.datadog_webhook_secrets = {}
-        self.datadog_monitors = {}
+    # GitHub Sync State
+    def set_github_sync_state(
+        self, project_id: str, repo: str, last_synced: str, issue_count: int
+    ) -> None:
+        """
+        Store GitHub sync state for a project/repo.
+
+        Parameters:
+            project_id (str): Project identifier.
+            repo (str): Repository in owner/repo format.
+            last_synced (str): ISO timestamp of last sync.
+            issue_count (int): Number of issues synced.
+        """
+        if not hasattr(self, "github_sync_state"):
+            self.github_sync_state: Dict[Tuple[str, str], Dict[str, str]] = {}
+        key = (project_id, repo)
+        self.github_sync_state[key] = {
+            "last_synced": last_synced,
+            "issue_count": str(issue_count),
+        }
+
+    def get_github_sync_state(
+        self, project_id: str, repo: str
+    ) -> Optional[Dict[str, str]]:
+        """
+        Get GitHub sync state for a project/repo.
+
+        Parameters:
+            project_id (str): Project identifier.
+            repo (str): Repository in owner/repo format.
+
+        Returns:
+            Optional[Dict[str, str]]: Sync state with 'last_synced' and 'issue_count', or None.
+        """
+        if not hasattr(self, "github_sync_state"):
+            self.github_sync_state = {}
+        key = (project_id, repo)
+        return self.github_sync_state.get(key)
 
     # Config (Datadog)
     def set_datadog_webhook_secret(self, secret: str, project_id: ProjectId) -> str:
@@ -913,6 +971,23 @@ class InMemoryStore:
 
     def get_all_jobs(self) -> List[AgentJob]:
         return list(self.agent_jobs.values())
+
+    def get_all_jobs_for_project(self, project_id: str) -> List[AgentJob]:
+        """
+        Return all AgentJob records for the specified project.
+
+        Parameters:
+            project_id (str): Project identifier to filter jobs by.
+
+        Returns:
+            List[AgentJob]: Jobs belonging to the project, sorted by created_at desc.
+        """
+        jobs = [
+            job for job in self.agent_jobs.values()
+            if str(job.project_id) == project_id
+        ]
+        jobs.sort(key=lambda x: x.created_at, reverse=True)
+        return jobs
 
     def clear_jobs(self):
         """
@@ -1249,17 +1324,18 @@ class RedisStore:
         return f"cluster_jobs:{project_id}:recent"
 
     @staticmethod
-    def _coding_plan_key(cluster_id: str) -> str:
+    def _coding_plan_key(project_id: str, cluster_id: str) -> str:
         """
         Get the Redis key for the coding plan of the specified cluster.
-        
+
         Parameters:
+            project_id (str): Project identifier for namespace isolation.
             cluster_id (str): Cluster identifier.
-        
+
         Returns:
-            str: Redis key in the format "coding_plan:{clusterId}".
+            str: Redis key in the format "coding_plan:{project_id}:{cluster_id}".
         """
-        return f"coding_plan:{cluster_id}"
+        return f"coding_plan:{project_id}:{cluster_id}"
 
     def ping(self) -> bool:
         """
@@ -1286,23 +1362,39 @@ class RedisStore:
     def add_coding_plan(self, plan: CodingPlan) -> CodingPlan:
         """
         Persist a CodingPlan associated with its cluster.
-        
+
         Parameters:
-            plan (CodingPlan): The coding plan to store; its cluster_id is used as the storage key.
-        
+            plan (CodingPlan): The coding plan to store; must have project_id and cluster_id set.
+
         Returns:
             CodingPlan: The same CodingPlan that was stored.
+
+        Raises:
+            ValueError: If plan.project_id is not set.
         """
-        key = self._coding_plan_key(plan.cluster_id)
+        if not plan.project_id:
+            raise ValueError("CodingPlan.project_id is required for storage")
+        key = self._coding_plan_key(plan.project_id, plan.cluster_id)
         self.client.set(key, plan.model_dump_json())
         return plan
 
-    def get_coding_plan(self, cluster_id: str) -> Optional[CodingPlan]:
+    def get_coding_plan(self, project_id: str, cluster_id: str) -> Optional[CodingPlan]:
         """
         Retrieve a CodingPlan from Redis.
+
+        Parameters:
+            project_id (str): Project identifier for namespace isolation.
+            cluster_id (str): Cluster identifier.
+
+        Returns:
+            Optional[CodingPlan]: The coding plan if found, None otherwise.
         """
-        key = self._coding_plan_key(cluster_id)
+        key = self._coding_plan_key(project_id, cluster_id)
         data = self.client.get(key)
+        if not data:
+            # Fallback to old key format without project_id
+            old_key = f"coding_plan:{cluster_id}"
+            data = self.client.get(old_key)
         if not data:
             return None
         return CodingPlan.model_validate_json(data)
@@ -1487,19 +1579,24 @@ class RedisStore:
 
         return FeedbackItem(**data)
 
-    def get_all_feedback_items(self, project_id: Optional[str] = None) -> List[FeedbackItem]:
+    def get_all_feedback_items(self, project_id: str) -> List[FeedbackItem]:
         """
         Retrieve all stored FeedbackItem objects for a project ordered by their creation time.
-        
+
         Uses batched fetching for better performance when using Upstash REST.
         Skips entries whose stored IDs are not valid UUIDs or whose referenced items cannot be loaded.
-        
+
+        Parameters:
+            project_id (str): Project identifier (required for multi-project isolation).
+
         Returns:
             List[FeedbackItem]: Feedback items present in storage, ordered by creation timestamp.
+
+        Raises:
+            ValueError: If project_id is not provided.
         """
-        if project_id is None:
-            # Compatibility: return all items when project scope not provided
-            return self._get_all_feedback_items_global()
+        if not project_id:
+            raise ValueError("project_id is required for get_all_feedback_items")
 
         ids = self._zrange(self._feedback_created_key(project_id), 0, -1)
         if not ids:
@@ -1575,35 +1672,6 @@ class RedisStore:
                 items.append(FeedbackItem(**parsed))
             except (ValueError, TypeError) as e:
                 logger.debug("Failed to parse unclustered FeedbackItem: %s", e)
-                continue
-        return items
-
-    def _get_all_feedback_items_global(self) -> List[FeedbackItem]:
-        """
-        Compatibility helper: return all feedback items across projects (legacy behavior).
-        """
-        items: List[FeedbackItem] = []
-        # Scan keys matching feedback:*:* (project-scoped) and feedback:* (legacy)
-        keys = list(self._scan_iter("feedback:*"))
-        for key in keys:
-            data = self._hgetall(key)
-            if not data:
-                continue
-            if isinstance(data.get("created_at"), str):
-                try:
-                    data["created_at"] = _iso_to_dt(data["created_at"])
-                except ValueError:
-                    logger.debug("Failed to parse created_at for key %s", key)
-            if isinstance(data.get("metadata"), str):
-                try:
-                    data["metadata"] = json.loads(data["metadata"])
-                except json.JSONDecodeError:
-                    logger.debug("Failed to parse metadata JSON for key %s", key)
-                    data["metadata"] = {}
-            try:
-                items.append(FeedbackItem(**data))
-            except (ValueError, TypeError) as e:
-                logger.debug("Failed to parse FeedbackItem from key %s: %s", key, e)
                 continue
         return items
 
@@ -1815,19 +1883,31 @@ class RedisStore:
 
     def get_cluster(self, project_id: str, cluster_id: str) -> Optional[IssueCluster]:
         key = self._cluster_key(project_id, cluster_id)
-        # Try HGETALL first
+        # Try HGETALL first with new project-scoped key
         data = self._hgetall(key)
-        
+
         if not data:
-            # Fallback to GET (legacy)
+            # Fallback to GET with new key (legacy JSON format)
             raw = self._get(key)
             if raw:
                 try:
                     data = json.loads(raw)
                 except json.JSONDecodeError:
+                    pass
+
+        if not data:
+            # Fallback to OLD key format without project_id (for existing data)
+            old_key = f"cluster:{cluster_id}"
+            data = self._hgetall(old_key)
+            if not data:
+                raw = self._get(old_key)
+                if raw:
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        return None
+                else:
                     return None
-            else:
-                return None
         
         # Parse fields
         for field in ("created_at", "updated_at"):
@@ -1852,42 +1932,51 @@ class RedisStore:
         if "feedback_ids" not in data or not data["feedback_ids"]:
             items_key = self._cluster_items_key(project_id, cluster_id)
             ids = self._smembers(items_key)
+            # Fallback to old key format if empty
+            if not ids:
+                old_items_key = f"cluster:items:{cluster_id}"
+                ids = self._smembers(old_items_key)
             data["feedback_ids"] = ids
 
         return IssueCluster(**data)
 
-    def get_all_clusters(self, project_id: Optional[str] = None) -> List[IssueCluster]:
+    def get_all_clusters(self, project_id: str) -> List[IssueCluster]:
         """
-        Retrieve IssueCluster objects for a project or for all projects.
-        
+        Retrieve IssueCluster objects for a project.
+
         Parameters:
-            project_id (Optional[str]): If provided, returns clusters scoped to this project sorted by created_at descending.
-                If omitted, returns clusters across all projects.
-        
+            project_id (str): Project identifier (required for multi-project isolation).
+
         Returns:
-            List[IssueCluster]: A list of IssueCluster instances for the requested scope. Malformed or unparsable cluster records are skipped.
+            List[IssueCluster]: A list of IssueCluster instances sorted by created_at descending.
+
+        Raises:
+            ValueError: If project_id is not provided.
         """
-        if project_id is None:
-            # Compatibility: return all clusters across projects
-            clusters: List[IssueCluster] = []
-            # Scan for all project cluster index keys: clusters:*:all
-            for key in self._scan_iter("clusters:*:all"):
-                # Extract project_id from key pattern clusters:<project_id>:all
-                parts = key.split(":")
-                if len(parts) >= 2:
-                    pid = parts[1]
-                    # Recursively call with specific project_id to use batching
-                    clusters.extend(self.get_all_clusters(pid))
-            return clusters
+        if not project_id:
+            raise ValueError("project_id is required for get_all_clusters")
 
         # Use ZRANGE with rev=True to get clusters sorted by created_at descending
         ids = self._zrange(self._cluster_all_key(project_id), 0, -1, rev=True)
+
+        # Fallback: check old key format if project-scoped key is empty
+        use_old_keys = False
         if not ids:
-            return []
+            # Try old key format: clusters:all (global, no project_id)
+            old_ids = self._smembers("clusters:all")
+            if old_ids:
+                ids = list(old_ids)
+                use_old_keys = True
+            else:
+                return []
 
         # Batch fetch all cluster hashes using pipelining
-        hash_keys = [self._cluster_key(project_id, cid) for cid in ids]
-        items_keys = [self._cluster_items_key(project_id, cid) for cid in ids]
+        if use_old_keys:
+            hash_keys = [f"cluster:{cid}" for cid in ids]
+            items_keys = [f"cluster:items:{cid}" for cid in ids]
+        else:
+            hash_keys = [self._cluster_key(project_id, cid) for cid in ids]
+            items_keys = [self._cluster_items_key(project_id, cid) for cid in ids]
 
         # Fetch all hashes in one batch
         hash_results = self._hgetall_batch(hash_keys)
@@ -2220,6 +2309,55 @@ class RedisStore:
         except json.JSONDecodeError:
             return None
 
+    # GitHub Sync State
+    @staticmethod
+    def _github_sync_state_key(project_id: str, repo: str) -> str:
+        """Get Redis key for GitHub sync state."""
+        # Normalize repo to avoid key collisions
+        safe_repo = repo.replace("/", ":")
+        return f"github_sync_state:{project_id}:{safe_repo}"
+
+    def set_github_sync_state(
+        self, project_id: str, repo: str, last_synced: str, issue_count: int
+    ) -> None:
+        """
+        Store GitHub sync state for a project/repo in Redis.
+
+        Parameters:
+            project_id (str): Project identifier.
+            repo (str): Repository in owner/repo format.
+            last_synced (str): ISO timestamp of last sync.
+            issue_count (int): Number of issues synced.
+        """
+        key = self._github_sync_state_key(project_id, repo)
+        state = {
+            "last_synced": last_synced,
+            "issue_count": str(issue_count),
+        }
+        self._set(key, json.dumps(state))
+
+    def get_github_sync_state(
+        self, project_id: str, repo: str
+    ) -> Optional[Dict[str, str]]:
+        """
+        Get GitHub sync state for a project/repo from Redis.
+
+        Parameters:
+            project_id (str): Project identifier.
+            repo (str): Repository in owner/repo format.
+
+        Returns:
+            Optional[Dict[str, str]]: Sync state with 'last_synced' and 'issue_count', or None.
+        """
+        key = self._github_sync_state_key(project_id, repo)
+        raw = self._get(key)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
     # Config (Datadog)
     def set_datadog_webhook_secret(self, secret: str, project_id: UUID) -> str:
         """
@@ -2452,10 +2590,39 @@ class RedisStore:
         jobs.sort(key=lambda x: x.created_at, reverse=True)
         return jobs
 
+    def get_all_jobs_for_project(self, project_id: str) -> List[AgentJob]:
+        """
+        Return all AgentJob records for the specified project.
+
+        This is more efficient than get_all_jobs() + filtering because it
+        filters at the storage layer, reducing memory usage.
+
+        Parameters:
+            project_id (str): Project identifier to filter jobs by.
+
+        Returns:
+            List[AgentJob]: Jobs belonging to the project, sorted by created_at desc.
+        """
+        # Scan for all job keys and filter by project
+        job_keys = list(self._scan_iter("job:*"))
+        jobs: List[AgentJob] = []
+        for key in job_keys:
+            try:
+                # key format is job:uuid
+                jid = key.split(":")[-1]
+                job = self.get_job(UUID(jid))
+                if job and str(job.project_id) == project_id:
+                    jobs.append(job)
+            except ValueError:
+                continue
+        # Sort by created_at desc
+        jobs.sort(key=lambda x: x.created_at, reverse=True)
+        return jobs
+
     def clear_jobs(self):
         """
         Remove all stored AgentJob entries and their cluster indexes from the backend.
-        
+
         This deletes keys matching `job:*` (individual job hashes) and `cluster:jobs:*` (cluster-specific job sorted sets) from the configured store.
         """
         job_keys = (
@@ -3100,13 +3267,21 @@ def get_feedback_item(project_id: str, item_id: UUID) -> Optional[FeedbackItem]:
     return _STORE.get_feedback_item(project_id, item_id)
 
 
-def get_all_feedback_items(project_id: Optional[str] = None) -> List[FeedbackItem]:
+def get_all_feedback_items(project_id: str) -> List[FeedbackItem]:
     """
-    Retrieve stored feedback items. When project_id is None, returns all items (legacy/compat).
-    
+    Retrieve stored feedback items for a project.
+
+    Parameters:
+        project_id (str): Project identifier (required for multi-project isolation).
+
     Returns:
-        A list of FeedbackItem objects, one entry per stored feedback item.
+        A list of FeedbackItem objects for the specified project.
+
+    Raises:
+        ValueError: If project_id is not provided.
     """
+    if not project_id:
+        raise ValueError("project_id is required for get_all_feedback_items")
     return _STORE.get_all_feedback_items(project_id)
 
 
@@ -3191,10 +3366,21 @@ def get_cluster_by_id(cluster_id: str) -> Optional[IssueCluster]:
     return None
 
 
-def get_all_clusters(project_id: Optional[str] = None) -> List[IssueCluster]:
+def get_all_clusters(project_id: str) -> List[IssueCluster]:
     """
-    Compatibility wrapper: when project_id is None, return all clusters (legacy behavior).
+    Retrieve all clusters for a project.
+
+    Parameters:
+        project_id (str): Project identifier (required for multi-project isolation).
+
+    Returns:
+        List[IssueCluster]: Clusters for the specified project.
+
+    Raises:
+        ValueError: If project_id is not provided.
     """
+    if not project_id:
+        raise ValueError("project_id is required for get_all_clusters")
     return _STORE.get_all_clusters(project_id)
 
 
@@ -3258,26 +3444,6 @@ def clear_clusters(project_id: Optional[str] = None):
     _STORE.clear_clusters(project_id)
 
 
-def set_reddit_subreddits(subreddits: List[str]) -> List[str]:
-    """
-    Placeholder that enforces using a project-scoped API when setting subreddit configuration.
-    
-    Raises:
-        TypeError: always raised to indicate a required `project_id` parameter.
-    """
-    raise TypeError("set_reddit_subreddits requires project_id")
-
-
-def get_reddit_subreddits() -> Optional[List[str]]:
-    """
-    Raise an error because a project identifier is required to retrieve subreddit configuration.
-    
-    Raises:
-        TypeError: Always raised indicating that `project_id` is required.
-    """
-    raise TypeError("get_reddit_subreddits requires project_id")
-
-
 def clear_config():
     # Primarily for tests
     """
@@ -3307,6 +3473,20 @@ def get_jobs_by_cluster(cluster_id: str) -> List[AgentJob]:
 
 def get_all_jobs() -> List[AgentJob]:
     return _STORE.get_all_jobs()
+
+
+def get_all_jobs_for_project(project_id: str) -> List[AgentJob]:
+    """
+    Return all AgentJob records for the specified project.
+
+    Parameters:
+        project_id (str): Project identifier to filter jobs by.
+
+    Returns:
+        List[AgentJob]: Jobs belonging to the project, sorted by created_at desc.
+    """
+    return _STORE.get_all_jobs_for_project(project_id)
+
 
 def append_job_log(job_id: UUID, message: str) -> None:
     if hasattr(_STORE, "append_job_log"):
@@ -3774,18 +3954,59 @@ def get_datadog_monitors_for_project(project_id: ProjectId) -> Optional[List[str
     """
     return _STORE.get_datadog_monitors(project_id)
 
+
+# GitHub Sync State API
+def set_github_sync_state(
+    project_id: str, repo: str, last_synced: str, issue_count: int
+) -> None:
+    """
+    Store GitHub sync state for a project/repo.
+
+    Parameters:
+        project_id (str): Project identifier.
+        repo (str): Repository in owner/repo format.
+        last_synced (str): ISO timestamp of last sync.
+        issue_count (int): Number of issues synced.
+    """
+    _STORE.set_github_sync_state(project_id, repo, last_synced, issue_count)
+
+
+def get_github_sync_state(project_id: str, repo: str) -> Optional[Dict[str, str]]:
+    """
+    Get GitHub sync state for a project/repo.
+
+    Parameters:
+        project_id (str): Project identifier.
+        repo (str): Repository in owner/repo format.
+
+    Returns:
+        Optional[Dict[str, str]]: Sync state with 'last_synced' and 'issue_count', or None.
+    """
+    return _STORE.get_github_sync_state(project_id, repo)
+
+
 # Coding Plan API
 def add_coding_plan(plan: CodingPlan) -> CodingPlan:
     """
     Store a CodingPlan in the backend.
+
+    The plan must have project_id set for proper namespace isolation.
     """
     return _STORE.add_coding_plan(plan)
 
-def get_coding_plan(cluster_id: str) -> Optional[CodingPlan]:
+
+def get_coding_plan(project_id: str, cluster_id: str) -> Optional[CodingPlan]:
     """
-    Retrieve a CodingPlan by cluster_id.
+    Retrieve a CodingPlan by project_id and cluster_id.
+
+    Parameters:
+        project_id (str): Project identifier for namespace isolation.
+        cluster_id (str): Cluster identifier.
+
+    Returns:
+        Optional[CodingPlan]: The coding plan if found, None otherwise.
     """
-    return _STORE.get_coding_plan(cluster_id)
+    return _STORE.get_coding_plan(project_id, cluster_id)
 
 def clear_coding_plans():
     """

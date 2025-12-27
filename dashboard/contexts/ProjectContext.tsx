@@ -92,6 +92,25 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Get current project object
   const currentProject = projects.find(p => p.id === currentProjectId) || null;
 
+  // Auto-select first project if currentProjectId doesn't match any project
+  useEffect(() => {
+    if (!isLoading && projects.length > 0 && !currentProject && currentProjectId) {
+      // currentProjectId is set but doesn't match any project - fallback to first project
+      console.log('[ProjectContext] Auto-selecting first project because currentProjectId is invalid');
+      setCurrentProjectId(projects[0].id);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, projects[0].id);
+      }
+    } else if (!isLoading && projects.length > 0 && !currentProjectId) {
+      // No currentProjectId at all - select first project
+      console.log('[ProjectContext] Auto-selecting first project');
+      setCurrentProjectId(projects[0].id);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, projects[0].id);
+      }
+    }
+  }, [isLoading, projects, currentProject, currentProjectId]);
+
   // Switch to a different project
   const switchProject = useCallback((projectId: string) => {
     setCurrentProjectId(projectId);
