@@ -215,7 +215,7 @@ export default function ClusterDetailPage() {
     if (!selectedJobForLogs?.id || !isTailingLogs) return;
     const interval = setInterval(
       () => fetchJobLogs(selectedJobForLogs.id),
-      2000
+      500 // Poll every 500ms for near real-time logs
     );
     return () => clearInterval(interval);
   }, [selectedJobForLogs?.id, isTailingLogs, fetchJobLogs]);
@@ -269,6 +269,11 @@ export default function ClusterDetailPage() {
     setSelectedJobForLogs(job);
     setLogText('');
     setLogDrawerOpen(true);
+
+    // Auto-start tailing for running/pending jobs
+    const shouldTail = job.status === 'running' || job.status === 'pending';
+    setIsTailingLogs(shouldTail);
+
     try {
       await fetchJobLogs(job.id);
     } catch (err) {
