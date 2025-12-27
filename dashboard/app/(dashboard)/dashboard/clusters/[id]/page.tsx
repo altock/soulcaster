@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import type { AgentJob, ClusterDetail, CodingPlan } from '@/types';
@@ -55,27 +55,33 @@ export default function ClusterDetailPage() {
   const [logText, setLogText] = useState<string>('');
   const [isTailingLogs, setIsTailingLogs] = useState(false);
 
+  // AbortController ref to cancel in-flight requests
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   // Fetch functions (defined before effects that use them)
-  const fetchCluster = useCallback(async () => {
+  const fetchCluster = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`/api/clusters/${clusterId}`);
+      const response = await fetch(`/api/clusters/${clusterId}`, { signal });
       if (!response.ok) {
         throw new Error('Failed to fetch cluster');
       }
       const data = await response.json();
       setCluster(data);
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return; // Request was cancelled, ignore
+      }
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
   }, [clusterId]);
 
-  const fetchPlan = useCallback(async () => {
+  const fetchPlan = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await fetch(`/api/clusters/${clusterId}/plan`);
+      const response = await fetch(`/api/clusters/${clusterId}/plan`, { signal });
       if (response.ok) {
         const data = await response.json();
         setCodingPlan(data);
@@ -83,28 +89,35 @@ export default function ClusterDetailPage() {
         setCodingPlan(null);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return; // Request was cancelled, ignore
+      }
       console.error('Failed to fetch plan:', err);
     }
   }, [clusterId]);
 
-  const fetchFixJobs = useCallback(async () => {
+  const fetchFixJobs = useCallback(async (signal?: AbortSignal) => {
     try {
       setJobsError(null);
-      const response = await fetch(`/api/clusters/${clusterId}/jobs`);
+      const response = await fetch(`/api/clusters/${clusterId}/jobs`, { signal });
       if (!response.ok) {
         throw new Error('Failed to fetch fix jobs');
       }
       const data = (await response.json()) as AgentJob[];
       setFixJobs(Array.isArray(data) ? data : []);
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return; // Request was cancelled, ignore
+      }
       setJobsError(err instanceof Error ? err.message : 'Failed to fetch fix jobs');
     }
   }, [clusterId]);
 
   const fetchJobLogs = useCallback(
-    async (jobId: string) => {
+    async (jobId: string, signal?: AbortSignal) => {
       const response = await fetch(
-        `/api/jobs/${encodeURIComponent(jobId)}/job-logs`
+        `/api/jobs/${encodeURIComponent(jobId)}/job-logs`,
+        { signal }
       );
       if (!response.ok) {
         throw new Error('Failed to fetch logs');
@@ -126,12 +139,32 @@ export default function ClusterDetailPage() {
     []
   );
 
-  // Initial data fetch
+  // Initial data fetch with AbortController to cancel in-flight requests
   useEffect(() => {
-    fetchCluster();
-    fetchPlan();
-    fetchFixJobs();
-  }, [fetchCluster, fetchPlan, fetchFixJobs]);
+    // Abort any previous in-flight requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Clear stale data immediately when clusterId changes
+    setCluster(null);
+    setCodingPlan(null);
+    setFixJobs([]);
+    setError(null);
+    setJobsError(null);
+
+    // Create new AbortController for this fetch cycle
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    fetchCluster(controller.signal);
+    fetchPlan(controller.signal);
+    fetchFixJobs(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [clusterId, fetchCluster, fetchPlan, fetchFixJobs]);
 
   // Poll cluster status when fixing
   useEffect(() => {

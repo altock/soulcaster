@@ -221,20 +221,34 @@ export default function IntegrationsDirectory({
   const handleToggle =
     (integration: IntegrationId) =>
     async (enabled: boolean) => {
-      const res = await fetch(
-        `${BACKEND_URL}/config/${integration}/enabled?project_id=${resolvedProjectId}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled }),
-        }
-      );
-      if (!res.ok) throw new Error(`Failed to update ${integration} status`);
-
+      // Optimistically update UI
+      const previousState = integrationConfigs[integration]?.enabled;
       setIntegrationConfigs((prev) => ({
         ...prev,
         [integration]: { ...prev[integration], enabled },
       }));
+
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/config/${integration}/enabled?project_id=${resolvedProjectId}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+          }
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to update ${integration} status`);
+        }
+      } catch (error) {
+        // Revert to previous state on failure
+        setIntegrationConfigs((prev) => ({
+          ...prev,
+          [integration]: { ...prev[integration], enabled: previousState ?? false },
+        }));
+        console.error(`Failed to toggle ${integration}:`, error);
+        throw error; // Re-throw so the caller can handle it if needed
+      }
     };
 
   // Save handlers for each integration
