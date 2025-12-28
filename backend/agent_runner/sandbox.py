@@ -718,7 +718,7 @@ class SandboxKilocodeRunner(AgentRunner):
                      job.id,
                      status="running",
                      logs="Initializing sandbox environment...",
-                     updated_at=datetime.now(timezone.utc),
+                     updated_at=datetime.now(UTC),
                  )
              except Exception as update_err:
                  logger.error(f"Failed to update job status: {update_err}")
@@ -851,13 +851,13 @@ class SandboxKilocodeRunner(AgentRunner):
                         # Extract only the URL on the same line, ignore subsequent log messages
                         pr_url = text.split("__SOULCASTER_PR_URL__=", 1)[1].split('\n')[0].strip()
                         if pr_url:
-                            asyncio.create_task(asyncio.to_thread(update_job, job.id, pr_url=pr_url, updated_at=datetime.now(timezone.utc)))
+                            asyncio.create_task(asyncio.to_thread(update_job, job.id, pr_url=pr_url, updated_at=datetime.now(UTC)))
                             asyncio.create_task(asyncio.to_thread(
                                 update_cluster,
                                 str(job.project_id),
                                 job.cluster_id,
                                 github_pr_url=pr_url,
-                                updated_at=datetime.now(timezone.utc),
+                                updated_at=datetime.now(UTC),
                             ))
                     except Exception:
                         pass
@@ -897,7 +897,7 @@ class SandboxKilocodeRunner(AgentRunner):
                     job.id,
                     status="success",
                     logs=success_logs,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                 )
                 # Mark cluster as completed and clear any previous error.
                 try:
@@ -905,7 +905,7 @@ class SandboxKilocodeRunner(AgentRunner):
                     cluster_updates = {
                         "status": "pr_opened" if (refreshed and refreshed.pr_url) else "new",
                         "error_message": None,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
                     await asyncio.to_thread(
                         update_cluster,
@@ -991,7 +991,7 @@ class SandboxKilocodeRunner(AgentRunner):
             job_id,
             status="failed",
             logs=f"{current_logs}\nError: {error}",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
         )
         
         # Update cluster status so UI can show the button again
@@ -1004,7 +1004,7 @@ class SandboxKilocodeRunner(AgentRunner):
                     job.cluster_id,
                     status="failed",
                     error_message=error,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                 )
             except Exception as e:
                 logger.error(f"Failed to update cluster status: {e}")
