@@ -220,7 +220,6 @@ def _run_vector_clustering(
             top_k=20,
             min_score=VECTOR_CLUSTERING_THRESHOLD,
             exclude_ids=[str(item.id)],
-            project_id=project_id,
         )
         existing_matches[str(item.id)] = similar
 
