@@ -211,6 +211,7 @@ def _run_vector_clustering(
     embeddings_list = [emb.tolist() for emb in embeddings]
 
     # Phase 1: Query vector DB for existing similar items (read-only, no consistency issues)
+    # Use project_id namespace for isolation between projects
     existing_matches = {}
     for i, item in enumerate(items):
         similar = vector_store.find_similar(

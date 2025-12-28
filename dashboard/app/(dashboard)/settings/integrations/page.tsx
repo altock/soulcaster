@@ -1,6 +1,6 @@
 'use client';
 
-import IntegrationsDirectory from '@/components/integrations/IntegrationsDirectory';
+import SourceConfig from '@/components/SourceConfig';
 import { ExternalLinkIcon, InfoIcon } from '@/components/ui/Icons';
 
 export default function IntegrationsPage() {
@@ -33,9 +33,9 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      {/* Integration Cards Grid */}
+      {/* Source Configuration */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <IntegrationsDirectory />
+        <SourceConfig />
 
         {/* Documentation Footer */}
         <div className="mt-16 border-t border-white/10 pt-8">

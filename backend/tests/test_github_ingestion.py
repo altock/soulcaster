@@ -20,9 +20,8 @@ from store import (
 client = TestClient(app)
 
 
-def setup_function():
-    # Reset in-memory sync metadata between tests
-    backend_main.GITHUB_SYNC_STATE.clear()
+# Note: GitHub sync state is now stored in Redis per-project, so no global
+# cleanup is needed. Test isolation is provided by project_context fixture.
 
 
 def test_issue_to_feedback_item_shape(project_context):
@@ -93,7 +92,7 @@ def test_sync_github_repo_first_sync(project_context, monkeypatch):
     assert data["archived_issues"] == 0
 
     # Ensure only open feedback stored
-    items = get_all_feedback_items()
+    items = get_all_feedback_items(str(pid))
     assert len(items) == 2
 
     # All items should be in unclustered
@@ -104,6 +103,8 @@ def test_sync_github_repo_first_sync(project_context, monkeypatch):
 def test_sync_github_repo_incremental(project_context, monkeypatch):
     """Incremental sync (with since param) uses state='all' to detect closed issues."""
     pid = project_context["project_id"]
+    # Use unique repo name to avoid sync state collision with other tests
+    unique_repo = f"org/incremental-test-{uuid4().hex[:8]}"
     calls = {"first_since": None, "second_since": None, "first_state": None, "second_state": None}
 
     issue_open = {
@@ -112,7 +113,7 @@ def test_sync_github_repo_incremental(project_context, monkeypatch):
         "title": "First sync issue",
         "body": "First body",
         "state": "open",
-        "html_url": "https://github.com/org/repo/issues/12",
+        "html_url": f"https://github.com/{unique_repo}/issues/12",
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-02T00:00:00Z",
         "labels": [],
@@ -130,12 +131,13 @@ def test_sync_github_repo_incremental(project_context, monkeypatch):
         calls["second_state"] = kwargs.get("state")
         return []
 
+    owner, repo_name = unique_repo.split("/")
     monkeypatch.setattr("main.fetch_repo_issues", first_fetch)
-    first_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    first_resp = client.post(f"/ingest/github/sync/{unique_repo}?project_id={pid}")
     assert first_resp.status_code == 200
 
     monkeypatch.setattr("main.fetch_repo_issues", second_fetch)
-    second_resp = client.post(f"/ingest/github/sync/org/repo?project_id={pid}")
+    second_resp = client.post(f"/ingest/github/sync/{unique_repo}?project_id={pid}")
     assert second_resp.status_code == 200
 
     # First sync (no since) should use state="open"
@@ -640,7 +642,7 @@ def test_remove_from_unclustered_batch(monkeypatch):
 
 def test_sync_github_repo_uses_batch_operations(project_context, monkeypatch):
     pid = project_context["project_id"]
-    backend_main.GITHUB_SYNC_STATE.clear()
+    # Note: GitHub sync state is now stored in Redis per-project
 
     issue_open = {
         "id": 200,

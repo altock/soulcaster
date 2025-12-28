@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 import type { AgentJob } from '@/types';
 
 type JobLogsPayload = {
@@ -9,15 +11,20 @@ type JobLogsPayload = {
 };
 
 export default function PrsPage() {
+  const { currentProjectId } = useProject();
   const [jobs, setJobs] = useState<AgentJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobLogs, setJobLogs] = useState<string | null>(null);
 
-  const fetchJobs = async () => {
+  const fetchJobs = async (signal?: AbortSignal) => {
+    if (!currentProjectId) return;
     try {
-      const res = await fetch('/api/jobs');
+      const res = await fetch(`/api/jobs?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+        signal, // Allow request cancellation
+      });
       if (res.ok) {
         const data = await res.json();
         setJobs(data);
@@ -26,6 +33,10 @@ export default function PrsPage() {
         setError('Failed to fetch jobs');
       }
     } catch (err) {
+      // Don't set error if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       console.error('Failed to fetch jobs:', err);
       setError('Failed to fetch jobs. Check your connection.');
     } finally {
@@ -34,46 +45,83 @@ export default function PrsPage() {
   };
 
   useEffect(() => {
+    if (!currentProjectId) return;
+
+    // Clear stale state immediately when project changes
+    setJobs([]);
+    setError(null);
+    setLoading(true);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
     let intervalId: NodeJS.Timeout | null = null;
 
     // Await initial fetch before starting interval to avoid race conditions
     const init = async () => {
-      await fetchJobs();
-      // Only start polling after initial fetch completes
-      intervalId = setInterval(fetchJobs, 5000);
+      try {
+        await fetchJobs(abortController.signal);
+        // Only start polling if not aborted
+        if (!abortController.signal.aborted) {
+          intervalId = setInterval(() => {
+            fetchJobs(abortController.signal);
+          }, 5000);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          // Request was cancelled - this is expected during project switch
+          console.log('[PRsPage] Initial fetch cancelled');
+          return;
+        }
+        console.error('[PRsPage] Error in init:', err);
+      }
     };
 
     init();
+
+    // Cleanup: abort requests and clear interval
     return () => {
+      abortController.abort();
       if (intervalId) clearInterval(intervalId);
     };
-  }, []);
+  }, [currentProjectId]);
 
   useEffect(() => {
-    if (!selectedJobId) {
+    if (!selectedJobId || !currentProjectId) {
       setJobLogs(null);
       return;
     }
 
-    let cancelled = false;
+    // Create AbortController to cancel request on cleanup
+    const abortController = new AbortController();
+
     const fetchLogs = async () => {
       try {
-        const res = await fetch(`/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?cursor=0&limit=200`);
+        const res = await fetch(
+          `/api/jobs/${encodeURIComponent(selectedJobId)}/job-logs?project_id=${currentProjectId}&cursor=0&limit=200`,
+          {
+            cache: 'no-store', // Prevent browser caching
+            signal: abortController.signal,
+          }
+        );
         if (!res.ok) return;
         const payload = (await res.json()) as JobLogsPayload;
-        if (!cancelled) {
-          setJobLogs(payload.chunks?.join('') || '');
-        }
+        setJobLogs(payload.chunks?.join('') || '');
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          // Request was cancelled - this is expected
+          return;
+        }
         console.error('Failed to fetch job logs:', error);
       }
     };
 
     fetchLogs();
+
+    // Cleanup: abort request
     return () => {
-      cancelled = true;
+      abortController.abort();
     };
-  }, [selectedJobId]);
+  }, [selectedJobId, currentProjectId]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -126,9 +174,26 @@ export default function PrsPage() {
         )}
 
         {loading && jobs.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500 mx-auto mb-4"></div>
-            <p className="text-slate-400">Loading jobs...</p>
+          <div className="grid gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-white/5 rounded-xl border border-white/10 p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                    <Skeleton className="h-9 w-36 rounded-lg" />
+                  </div>
+                  <Skeleton className="h-8 w-20 rounded-lg" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : jobs.length === 0 && !error ? (
           <div className="bg-emerald-950/20 rounded-3xl border border-white/10 backdrop-blur-sm p-16 text-center relative overflow-hidden">

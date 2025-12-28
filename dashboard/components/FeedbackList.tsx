@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import FeedbackCard from './FeedbackCard';
+import { SkeletonCard } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 import type { FeedbackItem, FeedbackSource, GitHubRepo } from '@/types';
 
 interface FeedbackListProps {
@@ -16,28 +19,90 @@ interface FeedbackListProps {
  * @returns The component's rendered JSX containing filters, a loading indicator, an empty-state message, or a grid of feedback cards.
  */
 export default function FeedbackList({ refreshTrigger, onRequestShowSources }: FeedbackListProps) {
+  const { currentProjectId } = useProject();
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [sourceFilter, setSourceFilter] = useState<FeedbackSource | 'all'>('all');
   const [repoFilter, setRepoFilter] = useState<string>('all');
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
 
+  // Fetch repos when project changes
   useEffect(() => {
-    fetchRepos();
-  }, []);
+    if (!currentProjectId) return;
 
+    // Clear stale state immediately when project changes
+    setRepos([]);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
+
+    const loadRepos = async () => {
+      try {
+        await fetchRepos(abortController.signal);
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log('[FeedbackList] Repos fetch cancelled');
+          return;
+        }
+        console.error('[FeedbackList] Error loading repos:', err);
+      }
+    };
+
+    loadRepos();
+
+    // Cleanup: abort requests on unmount or project change
+    return () => {
+      abortController.abort();
+    };
+  }, [currentProjectId]);
+
+  // Fetch feedback when filters or project changes
   useEffect(() => {
-    fetchFeedback();
-  }, [sourceFilter, repoFilter, refreshTrigger]);
+    if (!currentProjectId) return;
 
-  const fetchRepos = async () => {
+    // Clear stale state immediately when filters change
+    setItems([]);
+    setLoading(true);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
+
+    const loadFeedback = async () => {
+      try {
+        await fetchFeedback(abortController.signal);
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log('[FeedbackList] Feedback fetch cancelled');
+          return;
+        }
+        console.error('[FeedbackList] Error loading feedback:', err);
+      }
+    };
+
+    loadFeedback();
+
+    // Cleanup: abort requests on unmount or filter/project change
+    return () => {
+      abortController.abort();
+    };
+  }, [sourceFilter, repoFilter, refreshTrigger, currentProjectId]);
+
+  const fetchRepos = async (signal?: AbortSignal) => {
+    if (!currentProjectId) return;
     try {
-      const response = await fetch('/api/config/github/repos');
+      const response = await fetch(`/api/config/github/repos?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+        signal, // Allow request cancellation
+      });
       if (response.ok) {
         const data = await response.json();
         setRepos(data.repos || []);
       }
     } catch (err) {
+      // Don't handle errors if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       console.error('Failed to fetch repos:', err);
     }
   };
@@ -62,17 +127,21 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
     }
   }, [sourceFilter]);
 
-  const fetchFeedback = async () => {
+  const fetchFeedback = async (signal?: AbortSignal) => {
+    if (!currentProjectId) return;
     try {
       setLoading(true);
-      const queryParams = new URLSearchParams({ limit: '50' });
+      const queryParams = new URLSearchParams({ limit: '50', project_id: currentProjectId });
       if (sourceFilter !== 'all') {
         queryParams.append('source', sourceFilter);
       }
       if (repoFilter !== 'all') {
         queryParams.append('repo', repoFilter);
       }
-      const response = await fetch(`/api/feedback?${queryParams}`);
+      const response = await fetch(`/api/feedback?${queryParams}`, {
+        cache: 'no-store', // Prevent browser caching
+        signal, // Allow request cancellation
+      });
       if (!response.ok) {
         // Handle gracefully - show empty state instead of error for expected cases
         // like missing project_id or no data
@@ -83,6 +152,10 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
       const data = await response.json();
       setItems(data.items || []);
     } catch (err) {
+      // Don't handle errors if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       console.error('Error fetching feedback:', err);
       // Show empty state instead of error for better UX
       setItems([]);
@@ -93,8 +166,10 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading feedback...</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <SkeletonCard key={i} />
+        ))}
       </div>
     );
   }
@@ -162,10 +237,10 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
               ? 'Get started by connecting a feedback source or submitting manual feedback.'
               : `No ${sourceFilter} feedback items yet.`}
           </p>
-          {sourceFilter === 'all' && onRequestShowSources && (
+          {sourceFilter === 'all' && (
             <div className="mt-6">
-              <button
-                onClick={onRequestShowSources}
+              <Link
+                href="/settings/integrations"
                 className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-500 text-black rounded-full hover:bg-emerald-400 transition-all font-medium shadow-[0_0_15px_rgba(16,185,129,0.3)]"
               >
                 <svg
@@ -182,8 +257,8 @@ export default function FeedbackList({ refreshTrigger, onRequestShowSources }: F
                     d="M12 6v6m0 0v6m0-6h6m-6 0H6"
                   />
                 </svg>
-                Connect GitHub Repository
-              </button>
+                Configure Integrations
+              </Link>
             </div>
           )}
         </div>
