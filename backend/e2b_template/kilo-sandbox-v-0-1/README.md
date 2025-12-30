@@ -29,8 +29,14 @@ npm install e2b
 # For development
 npm run e2b:build:dev
 
+# Force a full rebuild (bypass cached layers)
+E2B_SKIP_CACHE=1 npm run e2b:build:dev
+
 # For production
 npm run e2b:build:prod
+
+# Force a full rebuild (bypass cached layers)
+E2B_SKIP_CACHE=1 npm run e2b:build:prod
 ```
 
 ## Using the Template in a Sandbox

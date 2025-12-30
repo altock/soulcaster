@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { ClusterListItem } from '@/types';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useProject } from '@/contexts/ProjectContext';
 
 type ClusterJobStatus = {
   id: string;
@@ -25,6 +27,7 @@ type ClusterJobStatus = {
  */
 export default function ClustersListPage() {
   const router = useRouter();
+  const { currentProjectId } = useProject();
   const [clusters, setClusters] = useState<ClusterListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,34 +59,72 @@ export default function ClustersListPage() {
   };
 
   useEffect(() => {
-    const loadData = async () => {
-      await fetchClusters();
-      await fetchLatestJob();
-    };
-    loadData();
-  }, []);
+    if (!currentProjectId) return;
 
-  const fetchClusters = async () => {
+    // Clear stale state immediately when project changes
+    setClusters([]);
+    setLatestJob(null);
+    setLoading(true);
+    setError(null);
+
+    // Create AbortController to cancel requests on cleanup
+    const abortController = new AbortController();
+
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchClusters(abortController.signal),
+          fetchLatestJob(abortController.signal),
+        ]);
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          // Request was cancelled - this is expected during project switch
+          console.log('[ClustersPage] Request cancelled');
+          return;
+        }
+        console.error('[ClustersPage] Error loading data:', err);
+      }
+    };
+
+    loadData();
+
+    // Cleanup: abort all pending requests when project changes or component unmounts
+    return () => {
+      abortController.abort();
+    };
+  }, [currentProjectId]);
+
+  const fetchClusters = async (signal?: AbortSignal) => {
+    if (!currentProjectId) return;
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch('/api/clusters');
+      const response = await fetch(`/api/clusters?project_id=${currentProjectId}`, {
+        cache: 'no-store', // Prevent browser caching
+        signal, // Allow request cancellation
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch clusters');
       }
       const data = await response.json();
       setClusters(data);
     } catch (err) {
+      // Don't set error state if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchLatestJob = async () => {
+  const fetchLatestJob = async (signal?: AbortSignal) => {
+    if (!currentProjectId) return;
     try {
-      const response = await fetch('/api/clusters/jobs?limit=1', {
+      const response = await fetch(`/api/clusters/jobs?project_id=${currentProjectId}&limit=1`, {
         cache: 'no-store',
+        signal, // Allow request cancellation
       });
       if (response.ok) {
         const data = await response.json();
@@ -94,6 +135,10 @@ export default function ClustersListPage() {
       }
       console.error('Failed to fetch cluster jobs status');
     } catch (err) {
+      // Don't log error if request was aborted
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
       console.error('Failed to fetch cluster jobs status:', err);
     }
     setLatestJob(null);
@@ -101,9 +146,10 @@ export default function ClustersListPage() {
   };
 
   const triggerClustering = async () => {
+    if (!currentProjectId) return;
     try {
       setIsTriggering(true);
-      const response = await fetch('/api/clusters/jobs', {
+      const response = await fetch(`/api/clusters/jobs?project_id=${currentProjectId}`, {
         method: 'POST',
       });
       if (!response.ok) {
@@ -157,9 +203,46 @@ export default function ClustersListPage() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+      <div className="min-h-screen bg-matrix-black pb-12 pt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
+            <div>
+              <Skeleton className="h-8 w-48 mb-2" />
+              <Skeleton className="h-4 w-72 hidden sm:block" />
+            </div>
+            <Skeleton className="h-8 w-32 rounded-full" />
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+            <table className="w-full table-fixed text-left text-sm">
+              <thead className="bg-white/5">
+                <tr>
+                  <th className="w-[55%] sm:w-[45%] px-3 sm:px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="hidden sm:table-cell sm:w-[25%] px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="w-[25%] sm:w-[15%] px-2 sm:px-4 py-3"><Skeleton className="h-3 w-12" /></th>
+                  <th className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3"><Skeleton className="h-3 w-8" /></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <tr key={i}>
+                    <td className="px-3 sm:px-4 py-4">
+                      <Skeleton className="h-5 w-full max-w-[200px] mb-1" />
+                      <Skeleton className="h-3 w-full max-w-[160px] hidden sm:block" />
+                    </td>
+                    <td className="hidden sm:table-cell px-4 py-4">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="px-2 sm:px-4 py-4">
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    </td>
+                    <td className="px-2 sm:px-4 py-4 text-center">
+                      <Skeleton className="h-4 w-6 mx-auto" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
@@ -233,7 +316,7 @@ export default function ClustersListPage() {
           </div>
           <div className="mt-4 flex gap-3">
             <button
-              onClick={fetchClusters}
+              onClick={() => fetchClusters()}
               className="inline-flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg border border-red-500/30 transition-colors text-sm font-medium"
             >
               <svg

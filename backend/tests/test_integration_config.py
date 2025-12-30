@@ -519,3 +519,51 @@ def test_set_sentry_enabled_requires_project_id():
     )
 
     assert response.status_code == 400
+
+
+# ============================================================
+# GENERIC GET ENABLED ENDPOINT TESTS
+# ============================================================
+
+def test_get_integration_enabled_sentry_default_true(project_context):
+    """GET /config/sentry/enabled should return enabled=True by default."""
+    pid = project_context["project_id"]
+
+    response = client.get(f"/config/sentry/enabled?project_id={pid}")
+
+    assert response.status_code == 200
+    assert response.json() == {"enabled": True}
+
+
+def test_get_integration_enabled_after_set(project_context):
+    """GET /config/sentry/enabled should reflect the value after POST."""
+    pid = project_context["project_id"]
+
+    # Disable Sentry
+    client.post(
+        f"/config/sentry/enabled?project_id={pid}",
+        json={"enabled": False}
+    )
+
+    # Verify via GET /config/sentry/enabled
+    response = client.get(f"/config/sentry/enabled?project_id={pid}")
+
+    assert response.status_code == 200
+    assert response.json() == {"enabled": False}
+
+
+def test_get_integration_enabled_invalid_integration(project_context):
+    """GET /config/invalid/enabled should return 400."""
+    pid = project_context["project_id"]
+
+    response = client.get(f"/config/invalid/enabled?project_id={pid}")
+
+    assert response.status_code == 400
+    assert "Invalid integration" in response.json()["detail"]
+
+
+def test_get_integration_enabled_requires_project_id():
+    """GET /config/sentry/enabled should return 400 if project_id is missing."""
+    response = client.get("/config/sentry/enabled")
+
+    assert response.status_code == 400

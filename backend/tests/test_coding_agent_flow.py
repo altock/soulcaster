@@ -58,7 +58,7 @@ def test_start_fix_creates_plan_and_job(mock_runner_start, mock_generate_plan, s
     # Actually, planner.generate_plan is synchronous.
     from models import CodingPlan
     real_plan = CodingPlan(
-        id="plan-abc", cluster_id=cid, title="Generated Plan", description="Desc",
+        id="plan-abc", project_id=str(pid), cluster_id=cid, title="Generated Plan", description="Desc",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
@@ -114,7 +114,7 @@ def test_get_plan_endpoint(sample_data):
     # Add plan
     from models import CodingPlan
     plan = CodingPlan(
-        id="p1", cluster_id=cid, title="P1", description="D", 
+        id="p1", project_id=str(pid), cluster_id=cid, title="P1", description="D",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
@@ -132,7 +132,7 @@ def test_manual_plan_generation(mock_gen, sample_data):
     
     from models import CodingPlan
     mock_gen.return_value = CodingPlan(
-        id="p2", cluster_id=cid, title="Gen", description="D", 
+        id="p2", project_id=str(pid), cluster_id=cid, title="Gen", description="D",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )

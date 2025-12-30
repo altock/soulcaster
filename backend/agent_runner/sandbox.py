@@ -718,7 +718,7 @@ class SandboxKilocodeRunner(AgentRunner):
                      job.id,
                      status="running",
                      logs="Initializing sandbox environment...",
-                     updated_at=datetime.now(timezone.utc),
+                     updated_at=datetime.now(UTC),
                  )
              except Exception as update_err:
                  logger.error(f"Failed to update job status: {update_err}")
@@ -839,28 +839,35 @@ class SandboxKilocodeRunner(AgentRunner):
              await buffered_log("Executing agent script...")
              logger.info("Starting execution of agent script...")
              
-             async def handle_stdout(output):
-                 text = str(output)
-                 # Capture PR URL signal emitted by the agent script so we can persist it.
-                 if "__SOULCASTER_PR_URL__=" in text:
-                     try:
-                         # Extract only the URL on the same line, ignore subsequent log messages
-                         pr_url = text.split("__SOULCASTER_PR_URL__=", 1)[1].split('\n')[0].strip()
-                         if pr_url:
-                             await asyncio.to_thread(update_job, job.id, pr_url=pr_url, updated_at=datetime.now(timezone.utc))
-                             await asyncio.to_thread(
-                                 update_cluster,
-                                 str(job.project_id),
-                                 job.cluster_id,
-                                 github_pr_url=pr_url,
-                                 updated_at=datetime.now(timezone.utc),
-                             )
-                     except Exception:
-                         pass
-                 await buffered_log(text)
+             def handle_stdout(output):
+                text = str(output)
+                # Write directly to job_logs_manager for real-time logs
+                line = text if text.endswith("\n") else f"{text}\n"
+                job_logs_manager.append_log(job.id, line)
 
-             async def handle_stderr(output):
-                 await buffered_log(f"[ERR] {str(output)}")
+                # Capture PR URL signal emitted by the agent script so we can persist it.
+                if "__SOULCASTER_PR_URL__=" in text:
+                    try:
+                        # Extract only the URL on the same line, ignore subsequent log messages
+                        pr_url = text.split("__SOULCASTER_PR_URL__=", 1)[1].split('\n')[0].strip()
+                        if pr_url:
+                            asyncio.create_task(asyncio.to_thread(update_job, job.id, pr_url=pr_url, updated_at=datetime.now(UTC)))
+                            asyncio.create_task(asyncio.to_thread(
+                                update_cluster,
+                                str(job.project_id),
+                                job.cluster_id,
+                                github_pr_url=pr_url,
+                                updated_at=datetime.now(UTC),
+                            ))
+                    except Exception:
+                        pass
+
+             def handle_stderr(output):
+                text = str(output)
+                line = f"[ERR] {text}"
+                if not line.endswith("\n"):
+                    line += "\n"
+                job_logs_manager.append_log(job.id, line)
 
              timeout_env = (os.getenv("SANDBOX_AGENT_TIMEOUT_SECONDS") or "").strip()
              timeout_seconds: int | None
@@ -873,7 +880,7 @@ class SandboxKilocodeRunner(AgentRunner):
 
              try:
                  proc = await sandbox.commands.run(
-                     "python3 /tmp/agent_script.py",
+                     "python3 -u /tmp/agent_script.py",  # -u for unbuffered output
                      on_stdout=handle_stdout,
                      on_stderr=handle_stderr,
                      timeout=timeout_seconds,
@@ -882,38 +889,38 @@ class SandboxKilocodeRunner(AgentRunner):
                  await flush_logs(force=True)
 
              if proc.exit_code == 0:
-                  latest_job = await asyncio.to_thread(get_job, job.id)
-                  existing_logs = (latest_job.logs or "") if latest_job else ""
-                  success_logs = (existing_logs + "\n" if existing_logs else "") + "Success."
-                  await asyncio.to_thread(
-                      update_job,
-                      job.id,
-                      status="success",
-                      logs=success_logs,
-                      updated_at=datetime.now(timezone.utc),
-                  )
-                  # Mark cluster as completed and clear any previous error.
-                  try:
-                      refreshed = await asyncio.to_thread(get_job, job.id)
-                      cluster_updates = {
-                          "status": "pr_opened" if (refreshed and refreshed.pr_url) else "new",
-                          "error_message": None,
-                          "updated_at": datetime.now(timezone.utc),
-                      }
-                      await asyncio.to_thread(
-                          update_cluster,
-                          str(job.project_id),
-                          job.cluster_id,
-                          **cluster_updates,
-                      )
-                  except Exception as e:
-                      logger.warning("Failed to update cluster %s on success: %s", job.cluster_id, e)
+                latest_job = await asyncio.to_thread(get_job, job.id)
+                existing_logs = (latest_job.logs or "") if latest_job else ""
+                success_logs = (existing_logs + "\n" if existing_logs else "") + "Success."
+                await asyncio.to_thread(
+                    update_job,
+                    job.id,
+                    status="success",
+                    logs=success_logs,
+                    updated_at=datetime.now(UTC),
+                )
+                # Mark cluster as completed and clear any previous error.
+                try:
+                    refreshed = await asyncio.to_thread(get_job, job.id)
+                    cluster_updates = {
+                        "status": "pr_opened" if (refreshed and refreshed.pr_url) else "new",
+                        "error_message": None,
+                        "updated_at": datetime.now(UTC),
+                    }
+                    await asyncio.to_thread(
+                        update_cluster,
+                        str(job.project_id),
+                        job.cluster_id,
+                        **cluster_updates,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to update cluster %s on success: %s", job.cluster_id, e)
 
-                  # Archive logs to Blob
-                  if not await self._archive_logs_to_blob(job.id):
-                      logger.warning(f"Job {job.id} completed but log archival failed")
+                # Archive logs to Blob
+                if not await self._archive_logs_to_blob(job.id):
+                    logger.warning(f"Job {job.id} completed but log archival failed")
              else:
-                  await self._fail_job(job.id, f"Agent script exited with code {proc.exit_code}")
+                await self._fail_job(job.id, f"Agent script exited with code {proc.exit_code}")
 
         except Exception as e:
             # Some transports (notably long-running streaming callbacks) can error with
@@ -984,7 +991,7 @@ class SandboxKilocodeRunner(AgentRunner):
             job_id,
             status="failed",
             logs=f"{current_logs}\nError: {error}",
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
         )
         
         # Update cluster status so UI can show the button again
@@ -997,7 +1004,7 @@ class SandboxKilocodeRunner(AgentRunner):
                     job.cluster_id,
                     status="failed",
                     error_message=error,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(UTC),
                 )
             except Exception as e:
                 logger.error(f"Failed to update cluster status: {e}")

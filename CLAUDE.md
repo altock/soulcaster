@@ -67,6 +67,29 @@ cd dashboard && npm run lint
 cd dashboard && npm run type-check
 ```
 
+## Pre-Commit Checklist
+
+**IMPORTANT**: Always run tests and checks before committing or pushing:
+
+### Backend
+```bash
+cd backend && uv run pytest --tb=line -q    # Run all tests
+python3 -m py_compile <file>.py             # Check syntax
+```
+
+### Dashboard
+```bash
+cd dashboard && npm run type-check          # TypeScript type checking
+cd dashboard && npm run build               # Production build test
+cd dashboard && npm run lint                # ESLint
+```
+
+**Never commit or push without verifying**:
+1. ✅ Tests pass (or document known failures)
+2. ✅ No syntax/import errors
+3. ✅ TypeScript type check passes
+4. ✅ Production build succeeds
+
 ## Key Files
 
 **Backend**:

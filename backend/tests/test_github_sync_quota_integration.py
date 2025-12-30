@@ -16,7 +16,6 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-import main as backend_main
 from main import app
 from models import FeedbackItem, Project, User
 from store import (
@@ -29,9 +28,8 @@ from store import (
 client = TestClient(app)
 
 
-def setup_function():
-    """Reset GitHub sync state between tests."""
-    backend_main.GITHUB_SYNC_STATE.clear()
+# Note: GitHub sync state is now stored in Redis per-project, so no global
+# cleanup is needed. Each test uses a unique project_id for isolation.
 
 
 @pytest.fixture
@@ -308,7 +306,7 @@ def test_multiple_syncs_with_same_cuid_project(cuid_project, monkeypatch):
     assert response2.status_code == 200
 
     # Both should succeed with project lookup
-    all_items = get_all_feedback_items()
+    all_items = get_all_feedback_items(project_id)
     assert len(all_items) == 2  # Should have ingested 2 items total
 
 
@@ -383,7 +381,7 @@ def test_dashboard_to_github_sync_full_flow():
     assert data["new_issues"] == 1
 
     # Verify the issue was ingested with correct project_id
-    all_items = get_all_feedback_items()
+    all_items = get_all_feedback_items(dashboard_project_id)
     assert len(all_items) == 1
     assert all_items[0].project_id == dashboard_project_id
 

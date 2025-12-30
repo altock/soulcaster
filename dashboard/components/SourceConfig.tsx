@@ -5,6 +5,7 @@ import type { GitHubRepo } from '@/types';
 import IntegrationsDirectory, { type IntegrationId } from '@/components/integrations/IntegrationsDirectory';
 import RequestIntegrationDialog from '@/components/integrations/RequestIntegrationDialog';
 import SearchInput from '@/components/ui/SearchInput';
+import { useProject } from '@/contexts/ProjectContext';
 
 type SourceType = 'reddit' | 'github' | IntegrationId;
 
@@ -16,6 +17,7 @@ type SourceType = 'reddit' | 'github' | IntegrationId;
  * @returns The JSX element for the SourceConfig administration panel.
  */
 export default function SourceConfig() {
+  const { currentProjectId } = useProject();
   const [selectedSource, setSelectedSource] = useState<SourceType | null>(null);
   const [sourceQuery, setSourceQuery] = useState('');
 
@@ -37,15 +39,18 @@ export default function SourceConfig() {
   const [repoError, setRepoError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadSubreddits();
-    loadRepos();
-  }, []);
+    if (currentProjectId) {
+      loadSubreddits();
+      loadRepos();
+    }
+  }, [currentProjectId]);
 
   const loadSubreddits = async () => {
+    if (!currentProjectId) return;
     setLoadingSubs(true);
     setSubsError(null);
     try {
-      const res = await fetch('/api/config/reddit/subreddits', { cache: 'no-store' });
+      const res = await fetch(`/api/config/reddit/subreddits?project_id=${currentProjectId}`, { cache: 'no-store' });
       const data = await res.json();
       setSubreddits(data.subreddits ?? []);
     } catch (err) {
@@ -56,10 +61,11 @@ export default function SourceConfig() {
   };
 
   const loadRepos = async () => {
+    if (!currentProjectId) return;
     setLoadingRepos(true);
     setRepoError(null);
     try {
-      const res = await fetch('/api/config/github/repos', { cache: 'no-store' });
+      const res = await fetch(`/api/config/github/repos?project_id=${currentProjectId}`, { cache: 'no-store' });
       const data = await res.json();
       setRepos(data.repos ?? []);
     } catch (err) {
@@ -75,42 +81,42 @@ export default function SourceConfig() {
       icon: '🗨️',
       title: 'Reddit Integration',
       description: 'Monitor subreddits (JSON polling, no OAuth)',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'github' as const,
       icon: '⚙️',
       title: 'GitHub Issues',
       description: 'Sync open-source repository issues automatically',
-      enabled: true,
+      comingSoon: false,
     },
     {
       type: 'sentry' as const,
       icon: '⚠️',
       title: 'Sentry',
       description: 'Capture errors and performance issues',
-      enabled: false,
+      comingSoon: false,
     },
     {
       type: 'splunk' as const,
       icon: '🔍',
       title: 'Splunk',
       description: 'Monitor logs and trigger alerts via webhook',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'datadog' as const,
       icon: '🐕',
       title: 'Datadog',
       description: 'Receive monitor alerts and metrics',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'posthog' as const,
       icon: '📊',
       title: 'PostHog',
       description: 'Track product analytics events',
-      enabled: false,
+      comingSoon: true,
     },
   ];
 
@@ -153,11 +159,12 @@ export default function SourceConfig() {
   };
 
   const saveSubreddits = async () => {
+    if (!currentProjectId) return;
     setSavingSubs(true);
     setSubsMessage(null);
     setSubsError(null);
     try {
-      const res = await fetch('/api/config/reddit/subreddits', {
+      const res = await fetch(`/api/config/reddit/subreddits?project_id=${currentProjectId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subreddits }),
@@ -177,13 +184,13 @@ export default function SourceConfig() {
 
   const addRepo = async () => {
     const repoString = newRepo.trim();
-    if (!repoString) return;
+    if (!repoString || !currentProjectId) return;
 
     setAddingRepo(true);
     setRepoMessage(null);
     setRepoError(null);
     try {
-      const res = await fetch('/api/config/github/repos', {
+      const res = await fetch(`/api/config/github/repos?project_id=${currentProjectId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repo: repoString }),
@@ -203,10 +210,11 @@ export default function SourceConfig() {
   };
 
   const removeRepo = async (fullName: string) => {
+    if (!currentProjectId) return;
     setRepoMessage(null);
     setRepoError(null);
     try {
-      const res = await fetch(`/api/config/github/repos/${encodeURIComponent(fullName)}`, {
+      const res = await fetch(`/api/config/github/repos/${encodeURIComponent(fullName)}?project_id=${currentProjectId}`, {
         method: 'DELETE',
       });
       if (!res.ok) {
@@ -221,11 +229,12 @@ export default function SourceConfig() {
   };
 
   const syncRepo = async (fullName: string) => {
+    if (!currentProjectId) return;
     setSyncingRepo(fullName);
     setRepoMessage(null);
     setRepoError(null);
     try {
-      const res = await fetch(`/api/ingest/github/sync/${encodeURIComponent(fullName)}`, {
+      const res = await fetch(`/api/ingest/github/sync/${encodeURIComponent(fullName)}?project_id=${currentProjectId}`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -246,11 +255,12 @@ export default function SourceConfig() {
   };
 
   const syncAllRepos = async () => {
+    if (!currentProjectId) return;
     setSyncingRepo('all');
     setRepoMessage(null);
     setRepoError(null);
     try {
-      const res = await fetch('/api/ingest/github/sync', {
+      const res = await fetch(`/api/ingest/github/sync?project_id=${currentProjectId}`, {
         method: 'POST',
       });
       const data = await res.json();
@@ -312,18 +322,18 @@ export default function SourceConfig() {
             <button
               key={source.type}
               type="button"
-              disabled={!source.enabled}
+              disabled={source.comingSoon}
               onClick={() => {
-                if (source.enabled) setSelectedSource(source.type);
+                if (!source.comingSoon) setSelectedSource(source.type);
               }}
               className={`p-4 border-2 rounded-2xl text-left transition-all ${isSelected
                 ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
                 : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
-                } ${!source.enabled ? 'opacity-50 cursor-not-allowed hover:border-white/5 hover:bg-black/20' : ''}`}
+                } ${source.comingSoon ? 'opacity-50 cursor-not-allowed hover:border-white/5 hover:bg-black/20' : ''}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="text-2xl">{source.icon}</div>
-                {!source.enabled && (
+                {source.comingSoon && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/10">
                     Coming soon
                   </span>
@@ -344,7 +354,7 @@ export default function SourceConfig() {
         </div>
       )}
 
-      {selectedSource === 'reddit' && sources.find((s) => s.type === 'reddit')?.enabled && (
+      {selectedSource === 'reddit' && !sources.find((s) => s.type === 'reddit')?.comingSoon && (
         <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -388,8 +398,9 @@ export default function SourceConfig() {
               <button
                 type="button"
                 onClick={async () => {
+                  if (!currentProjectId) return;
                   try {
-                    const res = await fetch('/api/admin/trigger-poll', {
+                    const res = await fetch(`/api/admin/trigger-poll?project_id=${currentProjectId}`, {
                       method: 'POST',
                     });
                     const data = await res.json();

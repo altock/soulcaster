@@ -66,7 +66,10 @@ from store import (
     update_job,
     get_jobs_by_cluster,
     get_all_jobs,
+    get_all_jobs_for_project,
     get_job_logs,
+    get_github_sync_state,
+    set_github_sync_state,
     create_user_with_default_project,
     create_project,
     get_projects_for_user,
@@ -147,9 +150,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# GitHub sync state tracking: (project_id, repo_name) -> sync metadata
-# Note: project_id is stored as string to match endpoint usage
-GITHUB_SYNC_STATE: Dict[Tuple[str, str], Dict[str, str]] = {}
+# GitHub sync state is now stored in Redis via store.set_github_sync_state / get_github_sync_state
+# This provides persistence across restarts and consistency across instances
 
 
 @app.get("/")
@@ -920,8 +922,8 @@ async def ingest_github_sync(
 
     owner, repo = repo_name.split("/", 1)
     repo_full_name = f"{owner}/{repo}"
-    state_key = (project_id, repo_full_name)
-    since = GITHUB_SYNC_STATE.get(state_key, {}).get("last_synced")
+    sync_state = get_github_sync_state(project_id, repo_full_name)
+    since = sync_state.get("last_synced") if sync_state else None
     logger.info(f"Syncing {repo_full_name}, since={since}")
 
     overall_start = time.monotonic()
@@ -1076,10 +1078,12 @@ async def ingest_github_sync(
         _kickoff_clustering(project_id)
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    GITHUB_SYNC_STATE[state_key] = {
-        "last_synced": now_iso,
-        "issue_count": str(len(new_items) + len(items_to_update)),
-    }
+    set_github_sync_state(
+        project_id=project_id,
+        repo=repo_full_name,
+        last_synced=now_iso,
+        issue_count=len(new_items) + len(items_to_update),
+    )
 
     logger.info(
         "Sync complete: %d new, %d updated, %d archived in %.2fs",
@@ -1577,6 +1581,54 @@ def set_sentry_levels(payload: SentryLevelsConfig, project_id: Optional[str] = Q
 # ============================================================
 # GENERIC INTEGRATION ENABLED STATE ENDPOINT
 # ============================================================
+
+@app.get("/config/{integration}/enabled")
+def get_integration_enabled(
+    integration: str,
+    project_id: Optional[str] = Query(None)
+):
+    """
+    Get the enabled state for any integration.
+
+    Supports: splunk, datadog, posthog, sentry
+
+    Parameters:
+        integration (str): Integration name (splunk, datadog, posthog, sentry).
+        project_id (str): Project identifier.
+
+    Returns:
+        dict: {"enabled": bool}
+
+    Raises:
+        HTTPException: 400 if integration is not supported.
+    """
+    pid = _require_project_id(project_id)
+
+    valid_integrations = ["splunk", "datadog", "posthog", "sentry"]
+    if integration not in valid_integrations:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid integration: {integration}. Must be one of {valid_integrations}"
+        )
+
+    # Route to appropriate config function
+    if integration == "splunk":
+        enabled = get_splunk_config_value(pid, "enabled")
+    elif integration == "datadog":
+        enabled = get_datadog_config_value(pid, "enabled")
+    elif integration == "posthog":
+        enabled = get_posthog_config_value(pid, "enabled")
+    elif integration == "sentry":
+        enabled = get_sentry_config_value(pid, "enabled")
+    else:
+        enabled = None
+
+    # Default to True if not explicitly set
+    if enabled is None:
+        enabled = True
+
+    return {"enabled": enabled}
+
 
 @app.post("/config/{integration}/enabled")
 def set_integration_enabled(
@@ -2336,8 +2388,8 @@ def get_cluster_plan(cluster_id: str, project_id: Optional[str] = Query(None)):
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
-    # 2. Get existing plan
-    plan = get_coding_plan(cluster_id)
+    # 2. Get existing plan (project-scoped)
+    plan = get_coding_plan(pid, cluster_id)
     if not plan:
         # Optionally, we could auto-generate here if missing.
         # For now, return 404 so UI can show "Generate" button.
@@ -2431,8 +2483,8 @@ async def start_cluster_fix(
                 updated_at=datetime.now(timezone.utc),
             )
 
-    # 1. Get or generate plan
-    plan = get_coding_plan(cluster_id)
+    # 1. Get or generate plan (project-scoped)
+    plan = get_coding_plan(pid_str, cluster_id)
     if not plan:
         # Auto-generate if missing
         plan = generate_plan(cluster, items_for_context)
@@ -2605,15 +2657,15 @@ class UpdateJobRequest(BaseModel):
 def list_jobs(project_id: Optional[str] = Query(None)):
     """
     List AgentJob records for the specified project.
-    
+
     Parameters:
         project_id (UUID): Project identifier used to scope the returned jobs. If omitted or None, an HTTP 400 error is raised.
-    
+
     Returns:
         jobs (List[AgentJob]): List of jobs that belong to the given project.
     """
     pid = _require_project_id(project_id)
-    return [job for job in get_all_jobs() if str(job.project_id) == pid]
+    return get_all_jobs_for_project(pid)
 
 
 @app.post("/jobs")

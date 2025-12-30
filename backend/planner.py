@@ -52,6 +52,7 @@ def generate_plan(cluster: IssueCluster, feedback_items: list[FeedbackItem]) -> 
         # Fallback for when no API key is present (e.g. tests)
         return CodingPlan(
             id=str(uuid4()),
+            project_id=str(cluster.project_id),
             cluster_id=cluster.id,
             title=f"Fix: {cluster.title}",
             description=(
@@ -109,6 +110,7 @@ Output requirements:
 
         return CodingPlan(
             id=str(uuid4()),
+            project_id=str(cluster.project_id),
             cluster_id=cluster.id,
             title=parsed_plan.title,
             description=parsed_plan.description,
@@ -121,6 +123,7 @@ Output requirements:
         # Return a fallback plan indicating failure
         return CodingPlan(
             id=str(uuid4()),
+            project_id=str(cluster.project_id),
             cluster_id=cluster.id,
             title=f"Error planning fix for: {cluster.title}",
             description=f"Plan generation failed: {str(e)}",

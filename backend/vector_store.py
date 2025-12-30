@@ -236,9 +236,9 @@ class VectorStore:
     def __init__(self):
         """
         Initialize the VectorStore connection to Upstash Vector.
-        
+
         Reads UPSTASH_VECTOR_REST_URL and UPSTASH_VECTOR_REST_TOKEN from the environment, logs a warning if either credential is missing, raises RuntimeError if the Upstash Vector client (`Index`) is not available, and creates the Index instance used for subsequent store operations.
-        
+
         Raises:
             RuntimeError: If the Upstash Vector client library is not installed or `Index` is None.
         """
@@ -260,16 +260,16 @@ class VectorStore:
         feedback_id: str,
         embedding: List[float],
         metadata: FeedbackVectorMetadata,
-        project_id: str,
+        project_id: Optional[str] = None,
     ) -> None:
         """
         Upsert a single feedback embedding and its metadata into the vector store.
 
         Parameters:
-        	feedback_id (str): Unique identifier for the feedback item.
-        	embedding (List[float]): The embedding vector for the feedback.
-        	metadata (FeedbackVectorMetadata): Metadata associated with the feedback. `title` and `source` are stored as provided; `cluster_id` and `created_at` are stored as empty strings if `None`.
-        	project_id (str): Project ID used as the namespace for tenant isolation.
+            feedback_id (str): Unique identifier for the feedback item.
+            embedding (List[float]): The embedding vector for the feedback.
+            metadata (FeedbackVectorMetadata): Metadata associated with the feedback.
+            project_id (Optional[str]): Project ID for namespace isolation.
         """
         self.index.upsert(
             vectors=[
@@ -284,13 +284,13 @@ class VectorStore:
                     },
                 }
             ],
-            namespace=project_id,
+            namespace=project_id or "",
         )
 
     def upsert_feedback_batch(
         self,
         items: List[Dict],
-        project_id: str,
+        project_id: Optional[str] = None,
     ) -> None:
         """
         Upserts multiple feedback embeddings and their metadata into the vector index.
@@ -298,11 +298,11 @@ class VectorStore:
         Each item in `items` must be a dict with keys:
         - `id` (str): unique identifier for the feedback item.
         - `embedding` (List[float]): embedding vector.
-        - `metadata` (FeedbackVectorMetadata): metadata whose `title`, `source`, `cluster_id`, and `created_at` will be stored (empty strings are used when `cluster_id` or `created_at` are None).
+        - `metadata` (FeedbackVectorMetadata): metadata.
 
         Parameters:
-            items (List[Dict]): List of items to upsert, each containing `id`, `embedding`, and `metadata`.
-            project_id (str): Project ID used as the namespace for tenant isolation.
+            items (List[Dict]): List of items to upsert.
+            project_id (Optional[str]): Project ID for namespace isolation.
         """
         vectors = [
             {
@@ -317,35 +317,35 @@ class VectorStore:
             }
             for item in items
         ]
-        self.index.upsert(vectors=vectors, namespace=project_id)
+        self.index.upsert(vectors=vectors, namespace=project_id or "")
 
     def find_similar(
         self,
         embedding: List[float],
-        project_id: str,
         top_k: int = 10,
         min_score: float = 0.0,
         exclude_ids: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
     ) -> List[SimilarFeedback]:
         """
         Finds feedback items similar to a query embedding using the vector index.
 
         Parameters:
             embedding (List[float]): Query embedding vector.
-            project_id (str): Project ID used as the namespace for tenant isolation.
-            top_k (int): Maximum number of candidates to consider from the index.
-            min_score (float): Minimum similarity score to include (0.0 to 1.0).
-            exclude_ids (Optional[List[str]]): Feedback IDs to exclude from the results.
+            top_k (int): Maximum number of candidates to consider.
+            min_score (float): Minimum similarity score to include.
+            exclude_ids (Optional[List[str]]): Feedback IDs to exclude.
+            project_id (Optional[str]): Project ID for namespace isolation.
 
         Returns:
-            List[SimilarFeedback]: Matching feedback items that meet the criteria, ordered by descending similarity score.
+            List[SimilarFeedback]: Matching feedback items ordered by similarity.
         """
         results = self.index.query(
             vector=embedding,
             top_k=top_k,
             include_metadata=True,
             include_vectors=False,
-            namespace=project_id,
+            namespace=project_id or "",
         )
 
         exclude_set = set(exclude_ids or [])
@@ -374,8 +374,8 @@ class VectorStore:
         self,
         embedding: List[float],
         cluster_id: str,
-        project_id: str,
         top_k: int = 10,
+        project_id: Optional[str] = None,
     ) -> List[SimilarFeedback]:
         """
         Find similar feedback vectors that belong to the specified cluster.
@@ -383,11 +383,11 @@ class VectorStore:
         Parameters:
             embedding (List[float]): Query embedding vector to search with.
             cluster_id (str): Cluster identifier to restrict results to.
-            project_id (str): Project ID used as the namespace for tenant isolation.
             top_k (int): Maximum number of matching items to return.
+            project_id (Optional[str]): Project ID for namespace isolation.
 
         Returns:
-            List[SimilarFeedback]: SimilarFeedback objects from the given cluster ordered by descending similarity, up to `top_k`.
+            List[SimilarFeedback]: SimilarFeedback objects from the given cluster.
         """
         # Query more items since we'll filter by cluster
         results = self.index.query(
@@ -395,7 +395,7 @@ class VectorStore:
             top_k=top_k * 3,
             include_metadata=True,
             include_vectors=False,
-            namespace=project_id,
+            namespace=project_id or "",
         )
 
         similar = []
@@ -455,25 +455,23 @@ class VectorStore:
         return embeddings
 
     def update_cluster_assignment(
-        self, feedback_id: str, cluster_id: str, project_id: str
+        self, feedback_id: str, cluster_id: str, project_id: Optional[str] = None
     ) -> None:
         """
         Update the cluster assignment for a single feedback item.
 
         Parameters:
-        	feedback_id (str): ID of the feedback vector to update.
-        	cluster_id (str): Cluster identifier to assign to the feedback.
-        	project_id (str): Project ID used as the namespace for tenant isolation.
+            feedback_id (str): ID of the feedback vector to update.
+            cluster_id (str): Cluster identifier to assign.
+            project_id (Optional[str]): Project ID for namespace isolation.
 
         Raises:
-        	ValueError: If the feedback item with `feedback_id` is not found in the vector store.
+            ValueError: If the feedback item is not found.
         """
+        ns = project_id or ""
         # Fetch current vector and metadata
         existing = self.index.fetch(
-            ids=[feedback_id],
-            include_metadata=True,
-            include_vectors=True,
-            namespace=project_id,
+            ids=[feedback_id], include_metadata=True, include_vectors=True, namespace=ns
         )
 
         if not existing or len(existing) == 0:
@@ -500,25 +498,23 @@ class VectorStore:
                     "metadata": new_metadata,
                 }
             ],
-            namespace=project_id,
+            namespace=ns,
         )
 
     def update_cluster_assignment_batch(
-        self, assignments: List[Dict[str, str]], project_id: str
+        self, assignments: List[Dict[str, str]], project_id: Optional[str] = None
     ) -> None:
         """
         Update the stored cluster assignment for multiple feedback vectors.
 
         Parameters:
-            assignments (List[Dict[str, str]]): List of mappings with keys "feedback_id" and "cluster_id" specifying the new cluster assignment for each feedback item.
-            project_id (str): Project ID used as the namespace for tenant isolation.
+            assignments (List[Dict[str, str]]): List with "feedback_id" and "cluster_id" keys.
+            project_id (Optional[str]): Project ID for namespace isolation.
         """
+        ns = project_id or ""
         feedback_ids = [a["feedback_id"] for a in assignments]
         existing = self.index.fetch(
-            ids=feedback_ids,
-            include_metadata=True,
-            include_vectors=True,
-            namespace=project_id,
+            ids=feedback_ids, include_metadata=True, include_vectors=True, namespace=ns
         )
 
         updates = []
@@ -548,43 +544,37 @@ class VectorStore:
             )
 
         if updates:
-            self.index.upsert(vectors=updates, namespace=project_id)
+            self.index.upsert(vectors=updates, namespace=ns)
 
-    def delete_feedback(self, feedback_id: str, project_id: str) -> None:
+    def delete_feedback(
+        self, feedback_id: str, project_id: Optional[str] = None
+    ) -> None:
         """
         Delete a single feedback embedding and its metadata from the vector store.
 
         Parameters:
             feedback_id (str): Identifier of the feedback item to remove.
-            project_id (str): Project ID used as the namespace for tenant isolation.
+            project_id (Optional[str]): Project ID for namespace isolation.
         """
-        self.index.delete(ids=[feedback_id], namespace=project_id)
+        self.index.delete(ids=[feedback_id], namespace=project_id or "")
 
-    def delete_feedback_batch(self, feedback_ids: List[str], project_id: str) -> None:
+    def delete_feedback_batch(
+        self, feedback_ids: List[str], project_id: Optional[str] = None
+    ) -> None:
         """
         Delete multiple feedback embeddings from the vector store.
 
         Parameters:
-            feedback_ids (List[str]): List of feedback item IDs to remove from the vector index.
-            project_id (str): Project ID used as the namespace for tenant isolation.
+            feedback_ids (List[str]): List of feedback item IDs to remove.
+            project_id (Optional[str]): Project ID for namespace isolation.
         """
-        self.index.delete(ids=feedback_ids, namespace=project_id)
-
-    def reset_namespace(self, project_id: str) -> None:
-        """
-        Delete all vectors in a specific project namespace.
-
-        Parameters:
-            project_id (str): Project ID whose namespace should be cleared.
-        """
-        self.index.delete_namespace(project_id)
+        self.index.delete(ids=feedback_ids, namespace=project_id or "")
 
     def reset(self) -> None:
         """
         Reset the entire vector store, permanently deleting all stored vectors and metadata.
-
+        
         This operation clears the remote index and cannot be undone; use with caution.
-        WARNING: This resets ALL namespaces. For project-specific reset, use reset_namespace().
         """
         self.index.reset()
 
@@ -592,39 +582,49 @@ class VectorStore:
 def cluster_with_vector_db(
     feedback_id: str,
     embedding: List[float],
-    project_id: str,
+    source: str,
+    title: str,
     threshold: float = VECTOR_CLUSTERING_THRESHOLD,
     vector_store: Optional[VectorStore] = None,
+    project_id: Optional[str] = None,
     cluster_centroids: Optional[Dict[str, List[float]]] = None,
 ) -> ClusteringResult:
     """
-    Assigns a feedback embedding to an existing cluster or creates a new cluster based on similarity to stored embeddings.
+    Assigns a feedback embedding to an existing cluster or creates a new cluster.
 
-    Searches the vector store for items with similarity >= threshold (excluding the provided feedback_id). If a matching item already has a cluster assignment, checks similarity against the cluster's centroid (if available) to prevent semantic drift. Only joins if centroid similarity also meets threshold. If matches exist but none are clustered, creates a new cluster that groups those matched item IDs. If no matches are found, creates a new cluster for the single feedback item.
+    Searches the vector store for items with similarity >= threshold (excluding the provided feedback_id).
+    If a matching item already has a cluster assignment, checks similarity against the cluster's centroid
+    (if available) to prevent semantic drift. Only joins if centroid similarity also meets threshold.
+    If matches exist but none are clustered, creates a new cluster that groups those matched item IDs.
+    If no matches are found, creates a new cluster for the single feedback item.
+
+    Uses project_id namespace for isolation between projects.
 
     Parameters:
         feedback_id (str): Identifier of the feedback being clustered.
         embedding (List[float]): Embedding vector for the feedback.
-        project_id (str): Project ID used as the namespace for tenant isolation.
+        source (str): Source identifier for the feedback.
+        title (str): Title or short text for the feedback.
         threshold (float): Similarity cutoff used to consider items as candidates for clustering.
         vector_store (Optional[VectorStore]): VectorStore instance to query; if omitted a new instance is created.
+        project_id (Optional[str]): Project ID used as the namespace for tenant isolation.
         cluster_centroids (Optional[Dict[str, List[float]]]): Map of cluster_id to centroid embedding.
             When provided, joining a cluster requires similarity to centroid >= threshold.
             This prevents semantic drift where items chain together via transitive similarity.
 
     Returns:
-        ClusteringResult: Result containing the assigned `cluster_id`, whether a new cluster was created (`is_new_cluster`), the similarity score when joining an existing cluster (`similarity`), and `grouped_feedback_ids` when a new cluster groups other items.
+        ClusteringResult: Result with cluster_id, is_new_cluster, similarity, grouped_feedback_ids.
     """
     if vector_store is None:
         vector_store = VectorStore()
 
-    # Find similar items (exclude self)
+    # Find similar items (exclude self) - scoped to project namespace
     similar = vector_store.find_similar(
         embedding=embedding,
-        project_id=project_id,
         top_k=20,
         min_score=threshold,
         exclude_ids=[feedback_id],
+        project_id=project_id,
     )
 
     # Debug logging to understand clustering behavior
