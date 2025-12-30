@@ -25,6 +25,7 @@
     "@google/genai": "^1.33.0",
     "@prisma/adapter-pg": "^7.1.0",
     "@prisma/client": "^7.1.0",
+    "@sentry/nextjs": "^10.32.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^24.10.4",
     "@types/react": "^19.2.7",
