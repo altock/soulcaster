@@ -143,7 +143,7 @@ export default function IntegrationsDirectory({
       icon: '⚠️',
       description: 'Capture errors and performance issues',
       enabled: false,
-      comingSoon: true,
+      comingSoon: false,
       fields: [
         {
           id: 'webhook_secret',
