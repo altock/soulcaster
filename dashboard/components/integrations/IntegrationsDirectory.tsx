@@ -142,7 +142,7 @@ export default function IntegrationsDirectory({
       name: 'Sentry',
       icon: '⚠️',
       description: 'Capture errors and performance issues',
-      enabled: false,
+      enabled: true,
       comingSoon: false,
       fields: [
         {
