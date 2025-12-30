@@ -81,42 +81,42 @@ export default function SourceConfig() {
       icon: '🗨️',
       title: 'Reddit Integration',
       description: 'Monitor subreddits (JSON polling, no OAuth)',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'github' as const,
       icon: '⚙️',
       title: 'GitHub Issues',
       description: 'Sync open-source repository issues automatically',
-      enabled: true,
+      comingSoon: false,
     },
     {
       type: 'sentry' as const,
       icon: '⚠️',
       title: 'Sentry',
       description: 'Capture errors and performance issues',
-      enabled: true,
+      comingSoon: false,
     },
     {
       type: 'splunk' as const,
       icon: '🔍',
       title: 'Splunk',
       description: 'Monitor logs and trigger alerts via webhook',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'datadog' as const,
       icon: '🐕',
       title: 'Datadog',
       description: 'Receive monitor alerts and metrics',
-      enabled: false,
+      comingSoon: true,
     },
     {
       type: 'posthog' as const,
       icon: '📊',
       title: 'PostHog',
       description: 'Track product analytics events',
-      enabled: false,
+      comingSoon: true,
     },
   ];
 
@@ -322,18 +322,18 @@ export default function SourceConfig() {
             <button
               key={source.type}
               type="button"
-              disabled={!source.enabled}
+              disabled={source.comingSoon}
               onClick={() => {
-                if (source.enabled) setSelectedSource(source.type);
+                if (!source.comingSoon) setSelectedSource(source.type);
               }}
               className={`p-4 border-2 rounded-2xl text-left transition-all ${isSelected
                 ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_20px_rgba(16,185,129,0.1)]'
                 : 'border-white/5 bg-black/20 hover:border-white/10 hover:bg-black/30'
-                } ${!source.enabled ? 'opacity-50 cursor-not-allowed hover:border-white/5 hover:bg-black/20' : ''}`}
+                } ${source.comingSoon ? 'opacity-50 cursor-not-allowed hover:border-white/5 hover:bg-black/20' : ''}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="text-2xl">{source.icon}</div>
-                {!source.enabled && (
+                {source.comingSoon && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-300 border border-white/10">
                     Coming soon
                   </span>
@@ -354,7 +354,7 @@ export default function SourceConfig() {
         </div>
       )}
 
-      {selectedSource === 'reddit' && sources.find((s) => s.type === 'reddit')?.enabled && (
+      {selectedSource === 'reddit' && !sources.find((s) => s.type === 'reddit')?.comingSoon && (
         <div className="border-t border-white/10 pt-4 space-y-4 relative z-10">
           <div className="flex items-start justify-between gap-3">
             <div>
