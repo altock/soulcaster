@@ -42,3 +42,35 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: 'Failed to fetch cluster' }, { status: 500 });
   }
 }
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const projectId = await requireProjectId(request);
+    const body = await request.json();
+
+    if (!id || !/^[a-zA-Z0-9-]+$/.test(id)) {
+      return NextResponse.json({ error: 'Invalid cluster ID' }, { status: 400 });
+    }
+
+    const response = await fetch(`${backendUrl}/clusters/${id}?project_id=${projectId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Backend returned ${response.status} for cluster update ${id}: ${errorText}`);
+      return NextResponse.json({ error: 'Failed to update cluster' }, { status: response.status });
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('Error updating cluster:', error);
+    return NextResponse.json({ error: 'Failed to update cluster' }, { status: 500 });
+  }
+}
