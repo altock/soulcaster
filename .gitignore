@@ -167,3 +167,6 @@ documentation/temp/
 
 #Macbook
 .DS_Store
+
+# Git worktrees (should be created outside repo, but ignore if created inside)
+worktrees/
