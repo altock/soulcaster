@@ -218,7 +218,7 @@ def test_datadog_monitor_filter_applied(project_context, sample_datadog_event, m
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "skipped"
+    assert response.json()["status"] == "filtered"
 
     # No item should be created
     items = get_all_feedback_items(str(pid))

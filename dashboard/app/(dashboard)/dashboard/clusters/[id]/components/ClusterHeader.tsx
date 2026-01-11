@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import type { ClusterDetail, FeedbackSource } from '@/types';
 
 interface ClusterHeaderProps {
@@ -13,6 +14,10 @@ export default function ClusterHeader({
   selectedRepo,
   onRepoSelect,
 }: ClusterHeaderProps) {
+  const [isEditingRepo, setIsEditingRepo] = useState(false);
+  const [newRepoUrl, setNewRepoUrl] = useState(cluster.github_repo_url || '');
+  const [isSavingRepo, setIsSavingRepo] = useState(false);
+
   const getStatusBadgeClass = (status: ClusterDetail['status']) => {
     const baseClass =
       'px-3 py-1 text-xs font-bold rounded-md uppercase tracking-wider border';
@@ -102,23 +107,92 @@ export default function ClusterHeader({
               ))}
             </dd>
           </div>
-          {cluster.github_repo_url && (
-            <div>
-              <dt className="text-xs font-medium text-emerald-400 uppercase tracking-wider mb-1">
-                Target Repo
-              </dt>
-              <dd>
-                <a
-                  href={cluster.github_repo_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-emerald-400 hover:text-emerald-300 text-xs break-all"
-                >
-                  {cluster.github_repo_url.replace('https://github.com/', '')}
-                </a>
-              </dd>
-            </div>
-          )}
+          <div>
+            <dt className="text-xs font-medium text-emerald-400 uppercase tracking-wider mb-1">
+              Target Repo
+            </dt>
+            <dd>
+              {isEditingRepo ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newRepoUrl}
+                    onChange={(e) => setNewRepoUrl(e.target.value)}
+                    placeholder="https://github.com/owner/repo"
+                    className="bg-black/50 border border-white/10 rounded px-2 py-1 text-xs text-white w-full focus:outline-none focus:border-emerald-500/50"
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter') {
+                        setIsSavingRepo(true);
+                        try {
+                          const res = await fetch(`/api/clusters/${cluster.id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ github_repo_url: newRepoUrl }),
+                          });
+                          if (!res.ok) throw new Error('Failed to update');
+                          window.location.reload();
+                        } catch (err) {
+                          alert('Failed to update repo URL');
+                        } finally {
+                          setIsSavingRepo(false);
+                          setIsEditingRepo(false);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setIsEditingRepo(false);
+                        setNewRepoUrl(cluster.github_repo_url || '');
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      setIsEditingRepo(false);
+                      setNewRepoUrl(cluster.github_repo_url || '');
+                    }}
+                    className="text-slate-500 hover:text-slate-300"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="w-4 h-4"
+                    >
+                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <div className="group flex items-center gap-2">
+                  {cluster.github_repo_url ? (
+                    <a
+                      href={cluster.github_repo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-emerald-400 hover:text-emerald-300 text-xs break-all"
+                    >
+                      {cluster.github_repo_url.replace('https://github.com/', '')}
+                    </a>
+                  ) : (
+                    <span className="text-slate-500 text-xs italic">None set</span>
+                  )}
+                  <button
+                    onClick={() => setIsEditingRepo(true)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-emerald-400"
+                    title="Edit target repository"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="w-3 h-3"
+                    >
+                      <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+                      <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0010 3H4.75A2.75 2.75 0 002 5.75v9.5A2.75 2.75 0 004.75 18h9.5A2.75 2.75 0 0017 15.25V10a.75.75 0 00-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </dd>
+          </div>
         </div>
 
         {/* Repository Filter */}
